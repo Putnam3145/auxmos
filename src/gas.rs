@@ -40,7 +40,7 @@ pub fn gas_specific_heats() -> &'static Vec<f32> {
 	&GAS_INFO.gas_specific_heat
 }
 
-/// Returns a reference to the total number of gases findable. Only used by gas mixtures; should probably stay that way.
-pub fn total_num_gases() -> &'static u32 {
-	&GAS_INFO.total_num_gases
+/// Returns the total number of gases in use. Only used by gas mixtures; should probably stay that way.
+pub fn total_num_gases() -> u32 {
+	GAS_INFO.total_num_gases
 }

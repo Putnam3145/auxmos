@@ -35,10 +35,12 @@ lazy_static! {
 	};
 }
 
+/// Returns a static reference to a vector of all the specific heats of the gases.
 pub fn gas_specific_heats() -> &'static Vec<f32> {
 	&GAS_INFO.gas_specific_heat
 }
 
-pub fn total_num_gases() -> u32 {
-	GAS_INFO.total_num_gases
+/// Returns a reference to the total number of gases findable. Only used by gas mixtures; should probably stay that way.
+pub fn total_num_gases() -> &'static u32 {
+	&GAS_INFO.total_num_gases
 }

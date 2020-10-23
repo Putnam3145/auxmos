@@ -14,13 +14,14 @@ struct GasMixture {
 	moles_archived: CsVec<f32>,
 	temperature: f32,
 	temperature_archived: f32,
-	volume: f32,
+	pub volume: f32,
 	last_share: f32,
 	pub min_heat_capacity: f32,
 	immutable: bool,
 }
 
 impl GasMixture {
+	/// Makes an empty gas mixture.
 	fn new() -> Self {
 		GasMixture {
 			moles: CsVec::empty(total_num_gases() as usize),
@@ -33,6 +34,7 @@ impl GasMixture {
 			immutable: false,
 		}
 	}
+	/// Makes an empty gas mixture with the given volume.
 	fn from_vol(vol: f32) -> Self {
 		let mut ret: GasMixture = GasMixture::new();
 		ret.volume = vol;
@@ -72,6 +74,7 @@ impl GasMixture {
 		self.moles = &self.moles + &giver.moles;
 		self.temperature = tot_energy / self.heat_capacity();
 	}
+	/// Returns a gas mixture that contains a given percentage of this mixture's moles; if this mix is mutable, also removes those moles from the original.
 	fn remove_ratio(&mut self, mut ratio: f32) -> GasMixture {
 		let mut removed = GasMixture::from_vol(self.volume);
 		if ratio <= 0.0 {
@@ -88,9 +91,11 @@ impl GasMixture {
 		}
 		removed
 	}
+	/// As remove_ratio, but a raw number of moles instead of a ratio.
 	fn remove(&mut self, amount: f32) -> GasMixture {
 		self.remove_ratio(amount / self.total_moles())
 	}
+	/// Copies from a given gas mixture, if we're mutable.
 	fn copy_from_mutable(&mut self, sample: &GasMixture) {
 		if self.immutable {
 			return;
@@ -98,6 +103,13 @@ impl GasMixture {
 		self.moles = sample.moles.clone();
 		self.temperature = sample.temperature;
 	}
+	/**
+	 * A naive solution to the discrete poisson equation, used for processing turf atmospherics.
+	 * Yeah, turf atmospherics is just diffusion by default with LINDA, plus eventually skipping the rest with excited groups.
+	 * Assuming those work, of course.
+	 * Shouldn't diverge due to the atmos_adjacent_turfs+1 denominator, but you can't trust these things.
+	 * It seems to have worked all this time, though.
+	 */
 	fn share(&mut self, sharer: &mut GasMixture, atmos_adjacent_turfs: i32) -> f32 {
 		let temperature_delta = self.temperature_archived - sharer.temperature_archived;
 		let abs_temperature_delta = temperature_delta.abs();
@@ -177,6 +189,11 @@ impl GasMixture {
 		}
 		0.0
 	}
+	/**
+	 * A very simple finite difference solution to the heat transfer equation.
+	 * Works well enough for our purposes, though perhaps called less often
+	 * than it ought to be while we're working in Rust.
+	 */
 	fn temperature_share(&mut self, sharer: &mut GasMixture, conduction_coefficient: f32) -> f32 {
 		let temperature_delta = self.temperature_archived - sharer.temperature_archived;
 		if temperature_delta.abs() > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER {
@@ -200,6 +217,10 @@ impl GasMixture {
 		}
 		sharer.temperature
 	}
+	/*
+	 * As above, but you may put in any arbitrary coefficient, temp, heat capacity.
+	 * Only used for superconductivity as of right now.
+	 */
 	fn temperature_share_non_gas(
 		&mut self,
 		conduction_coefficient: f32,
@@ -224,6 +245,7 @@ impl GasMixture {
 		}
 		sharer_temperature
 	}
+	/// Returns -2 if gases are extremely similar, -1 if they have a temp difference, otherwise index of first gas with large difference found.
 	fn compare(&self, sample: &GasMixture) -> i32 {
 		for (i, (our_moles, their_moles)) in self
 			.moles
@@ -246,11 +268,13 @@ impl GasMixture {
 		}
 		-2
 	}
+	/// Clears the moles from the gas.
 	fn clear(&mut self) {
 		if !self.immutable {
 			self.moles.clear();
 		}
 	}
+	/// Multiplies every gas molage with this value.
 	fn multiply(&mut self, multiplier: f32) {
 		if !self.immutable {
 			self.moles *= multiplier;

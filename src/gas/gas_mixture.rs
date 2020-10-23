@@ -125,16 +125,16 @@ impl GasMixture {
 		let mut moved_moles: f32 = 0.0;
 		let mut abs_moved_moles: f32 = 0.0;
 
-		let deltas = self.moles_archived.clone() + -sharer.moles_archived.clone();
+		let deltas = &self.moles_archived + -sharer.moles_archived.clone();
 		let heat_caps: Vec<f32> = deltas
 			.iter()
 			.map(|(idx, val)| val * gas_specific_heats()[idx])
 			.collect();
 		if !self.immutable {
-			self.moles = self.moles.clone() + -deltas.clone();
+			self.moles = &self.moles + -deltas.clone();
 		}
 		if !sharer.immutable {
-			sharer.moles = sharer.moles.clone() + deltas.clone();
+			sharer.moles = &sharer.moles + &deltas;
 		}
 		moved_moles = deltas.data().iter().sum();
 		abs_moved_moles = deltas.data().iter().map(|a| a.abs()).sum();

@@ -9,25 +9,21 @@ use super::gas_specific_heats;
 use super::total_num_gases;
 
 #[derive(Clone)]
-struct GasMixture {
+pub struct GasMixture {
 	moles: CsVec<f32>,
-	moles_archived: CsVec<f32>,
 	temperature: f32,
-	temperature_archived: f32,
 	pub volume: f32,
 	last_share: f32,
 	pub min_heat_capacity: f32,
 	immutable: bool,
 }
 
-impl GasMixture {
+pub impl GasMixture {
 	/// Makes an empty gas mixture.
 	fn new() -> Self {
 		GasMixture {
 			moles: CsVec::empty(total_num_gases() as usize),
-			moles_archived: CsVec::empty(total_num_gases() as usize),
 			temperature: 0.0,
-			temperature_archived: 0.0,
 			volume: 0.0,
 			last_share: 0.0,
 			min_heat_capacity: 0.0,
@@ -44,10 +40,6 @@ impl GasMixture {
 	fn heat_capacity(&self) -> f32 {
 		self.moles.dot_dense(gas_specific_heats()) // dot product is what we're doing here anyway
 	}
-	/// As heat_capacity, but using the archive, for consistency during processing.
-	fn heat_capacity_archived(&self) -> f32 {
-		self.moles_archived.dot_dense(gas_specific_heats())
-	}
 	/// The total mole count of the mixture. Moles.
 	fn total_moles(&self) -> f32 {
 		self.moles.data().iter().fold(0.0, |tot, gas| tot + gas)
@@ -59,11 +51,6 @@ impl GasMixture {
 	/// Thermal energy. Joules?
 	fn thermal_energy(&self) -> f32 {
 		self.heat_capacity() * self.temperature
-	}
-	/// Sets the mole archive, for consistency during processing.
-	fn archive(&mut self) {
-		self.moles_archived = self.moles.clone();
-		self.temperature_archived = self.temperature;
 	}
 	/// Merges one gas mixture into another.
 	fn merge(&mut self, giver: &GasMixture) {
@@ -109,7 +96,7 @@ impl GasMixture {
 	 * Assuming those work, of course.
 	 * Shouldn't diverge due to the atmos_adjacent_turfs+1 denominator, but you can't trust these things.
 	 * It seems to have worked all this time, though.
-	 */
+	 *
 	fn share(&mut self, sharer: &mut GasMixture, atmos_adjacent_turfs: i32) -> f32 {
 		let temperature_delta = self.temperature_archived - sharer.temperature_archived;
 		let abs_temperature_delta = temperature_delta.abs();
@@ -244,7 +231,7 @@ impl GasMixture {
 			}
 		}
 		sharer_temperature
-	}
+	}*/
 	/// Returns -2 if gases are extremely similar, -1 if they have a temp difference, otherwise index of first gas with large difference found.
 	fn compare(&self, sample: &GasMixture) -> i32 {
 		for (i, (our_moles, their_moles)) in self
@@ -279,5 +266,21 @@ impl GasMixture {
 		if !self.immutable {
 			self.moles *= multiplier;
 		}
+	}
+}
+
+use std::ops::{Add,Mul};
+
+impl Add for GasMixture {
+	fn add(self,rhs: GasMixture) -> GasMixture {
+		self.merge(&rhs);
+		self
+	}
+}
+
+impl Mul for GasMixture {
+	fn mul(self,rhs: f32) -> GasMixture {
+		self.multiply(rhs);
+		self
 	}
 }

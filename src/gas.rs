@@ -33,6 +33,12 @@ lazy_static! {
 			total_num_gases,
 		}
 	};
+	pub static ref STR_ID_EXTOOLS_POINTER: u32 = {
+		let v = Value::from_string("_extools_pointer_gasmixture");
+		unsafe {
+			v.value.data.id
+		}
+	};
 }
 
 /// Returns a static reference to a vector of all the specific heats of the gases.
@@ -43,4 +49,47 @@ pub fn gas_specific_heats() -> &'static Vec<f32> {
 /// Returns the total number of gases in use. Only used by gas mixtures; should probably stay that way.
 pub fn total_num_gases() -> u32 {
 	GAS_INFO.total_num_gases
+}
+
+use gas_mixture::GasMixture;
+
+pub struct GasMixtures {}
+
+use std::cell::RefCell;
+
+impl GasMixtures {
+	thread_local! {
+		static GAS_MIXTURES: Vec<RefCell<GasMixture>> = Vec::new(); // not with capacity 200000 because I'm only storing it on the one thread, then channeling it around
+		static NEXT_GAS_IDS: Vec<usize> = Vec::new();
+	}
+	/// Returns a RefCell, not a mix directly; thing that called this can decide whether to borrow mutably or not.
+	pub fn get_gas_mix(id : usize) -> &'static RefCell<GasMixture> {
+		&GasMixtures::GAS_MIXTURES.with(|g| *g.get(id).unwrap())
+	}
+	pub fn register_gasmix(mix : &Value) {
+		GasMixtures::NEXT_GAS_IDS.with(|next_gas_ids| {
+			if next_gas_ids.is_empty() {
+				GasMixtures::GAS_MIXTURES.with(|g| {
+					*g.push(RefCell::new(GasMixture::new()));
+					mix.set("_extools_pointer_gasmixture", g.len() as f32);
+				});
+			} else {
+				let idx = next_gas_ids.pop().unwrap();
+				GasMixtures::GAS_MIXTURES.with(|g| {
+					let mut gas_replacing = *g.get(idx).unwrap().borrow_mut();
+					gas_replacing = GasMixture::new();
+					mix.set("_extools_pointer_gasmixture", g.len() as f32);
+				});
+			}
+		})
+	}
+	pub fn unregister_gasmix(mix: &Value) {
+		let idx = mix.get("_extools_pointer_gasmixture").unwrap().as_number().unwrap() as usize;
+		if idx != 0 {
+			GasMixtures::NEXT_GAS_IDS.with(|next_gas_ids| {
+				next_gas_ids.push(idx);
+			});
+		}
+		mix.set("_extools_pointer_gasmixture",&Value::null());
+	}
 }

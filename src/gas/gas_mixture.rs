@@ -13,47 +13,67 @@ pub struct GasMixture {
 	moles: CsVec<f32>,
 	temperature: f32,
 	pub volume: f32,
-	last_share: f32,
 	pub min_heat_capacity: f32,
 	immutable: bool,
 }
 
-pub impl GasMixture {
+impl GasMixture {
 	/// Makes an empty gas mixture.
-	fn new() -> Self {
+	pub fn new() -> Self {
 		GasMixture {
 			moles: CsVec::empty(total_num_gases() as usize),
 			temperature: 0.0,
 			volume: 0.0,
-			last_share: 0.0,
 			min_heat_capacity: 0.0,
 			immutable: false,
 		}
 	}
 	/// Makes an empty gas mixture with the given volume.
-	fn from_vol(vol: f32) -> Self {
+	pub fn from_vol(vol: f32) -> Self {
 		let mut ret: GasMixture = GasMixture::new();
 		ret.volume = vol;
 		ret
 	}
+	pub fn get_temperature(&self) -> f32 {
+		self.temperature
+	}
+	pub fn set_temperature(&mut self, temp: f32) {
+		if !self.immutable {
+			self.temperature = temp;
+		}
+	}
+	pub fn get_gases(&self) -> &[usize] {
+		self.moles.indices()
+	}
+	pub fn get_moles(&self, idx: usize) -> f32 {
+		self.moles[idx]
+	}
+	pub fn mark_immutable(&mut self) {
+		self.immutable = true;
+	}
+	pub fn set_moles(&mut self, idx: usize, amt: f32) {
+		if !self.immutable {
+			self.moles[idx] = amt;
+		}
+	}
 	/// The heat capacity of the material. [joules?]/mole-kelvin.
-	fn heat_capacity(&self) -> f32 {
+	pub fn heat_capacity(&self) -> f32 {
 		self.moles.dot_dense(gas_specific_heats()) // dot product is what we're doing here anyway
 	}
 	/// The total mole count of the mixture. Moles.
-	fn total_moles(&self) -> f32 {
+	pub fn total_moles(&self) -> f32 {
 		self.moles.data().iter().fold(0.0, |tot, gas| tot + gas)
 	}
 	/// Pressure. Kilopascals.
-	fn return_pressure(&self) -> f32 {
+	pub fn return_pressure(&self) -> f32 {
 		self.total_moles() * R_IDEAL_GAS_EQUATION * self.temperature / self.volume
 	}
 	/// Thermal energy. Joules?
-	fn thermal_energy(&self) -> f32 {
+	pub fn thermal_energy(&self) -> f32 {
 		self.heat_capacity() * self.temperature
 	}
 	/// Merges one gas mixture into another.
-	fn merge(&mut self, giver: &GasMixture) {
+	pub fn merge(&mut self, giver: &GasMixture) {
 		if self.immutable {
 			return;
 		}
@@ -62,7 +82,7 @@ pub impl GasMixture {
 		self.temperature = tot_energy / self.heat_capacity();
 	}
 	/// Returns a gas mixture that contains a given percentage of this mixture's moles; if this mix is mutable, also removes those moles from the original.
-	fn remove_ratio(&mut self, mut ratio: f32) -> GasMixture {
+	pub fn remove_ratio(&mut self, mut ratio: f32) -> GasMixture {
 		let mut removed = GasMixture::from_vol(self.volume);
 		if ratio <= 0.0 {
 			return removed;
@@ -79,11 +99,11 @@ pub impl GasMixture {
 		removed
 	}
 	/// As remove_ratio, but a raw number of moles instead of a ratio.
-	fn remove(&mut self, amount: f32) -> GasMixture {
+	pub fn remove(&mut self, amount: f32) -> GasMixture {
 		self.remove_ratio(amount / self.total_moles())
 	}
 	/// Copies from a given gas mixture, if we're mutable.
-	fn copy_from_mutable(&mut self, sample: &GasMixture) {
+	pub fn copy_from_mutable(&mut self, sample: &GasMixture) {
 		if self.immutable {
 			return;
 		}
@@ -97,7 +117,10 @@ pub impl GasMixture {
 	 * Shouldn't diverge due to the atmos_adjacent_turfs+1 denominator, but you can't trust these things.
 	 * It seems to have worked all this time, though.
 	 *
+	 */
+	#[deprecated(since = "0.1.0", note = "Replaced by TurfGrid::process_turfs")]
 	fn share(&mut self, sharer: &mut GasMixture, atmos_adjacent_turfs: i32) -> f32 {
+		/*
 		let temperature_delta = self.temperature_archived - sharer.temperature_archived;
 		let abs_temperature_delta = temperature_delta.abs();
 		let old_self_heat_capacity: f32;
@@ -174,18 +197,24 @@ pub impl GasMixture {
 				* R_IDEAL_GAS_EQUATION
 				/ self.volume;
 		}
+		*/
 		0.0
 	}
 	/**
 	 * A very simple finite difference solution to the heat transfer equation.
 	 * Works well enough for our purposes, though perhaps called less often
 	 * than it ought to be while we're working in Rust.
+	 * Differs from the original by not using archive, since we don't put the archive into the gas mix itself anymore.
 	 */
-	fn temperature_share(&mut self, sharer: &mut GasMixture, conduction_coefficient: f32) -> f32 {
-		let temperature_delta = self.temperature_archived - sharer.temperature_archived;
+	pub fn temperature_share(
+		&mut self,
+		sharer: &mut GasMixture,
+		conduction_coefficient: f32,
+	) -> f32 {
+		let temperature_delta = self.temperature - sharer.temperature;
 		if temperature_delta.abs() > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER {
-			let self_heat_capacity = self.heat_capacity_archived();
-			let sharer_heat_capacity = sharer.heat_capacity_archived();
+			let self_heat_capacity = self.heat_capacity();
+			let sharer_heat_capacity = sharer.heat_capacity();
 
 			if sharer_heat_capacity > MINIMUM_HEAT_CAPACITY
 				&& self_heat_capacity > MINIMUM_HEAT_CAPACITY
@@ -208,15 +237,15 @@ pub impl GasMixture {
 	 * As above, but you may put in any arbitrary coefficient, temp, heat capacity.
 	 * Only used for superconductivity as of right now.
 	 */
-	fn temperature_share_non_gas(
+	pub fn temperature_share_non_gas(
 		&mut self,
 		conduction_coefficient: f32,
 		sharer_temperature: f32,
 		sharer_heat_capacity: f32,
 	) -> f32 {
-		let temperature_delta = self.temperature_archived - sharer_temperature;
+		let temperature_delta = self.temperature - sharer_temperature;
 		if temperature_delta.abs() > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER {
-			let self_heat_capacity = self.heat_capacity_archived();
+			let self_heat_capacity = self.heat_capacity();
 
 			if sharer_heat_capacity > MINIMUM_HEAT_CAPACITY
 				&& self_heat_capacity > MINIMUM_HEAT_CAPACITY
@@ -231,9 +260,9 @@ pub impl GasMixture {
 			}
 		}
 		sharer_temperature
-	}*/
+	}
 	/// Returns -2 if gases are extremely similar, -1 if they have a temp difference, otherwise index of first gas with large difference found.
-	fn compare(&self, sample: &GasMixture) -> i32 {
+	pub fn compare(&self, sample: &GasMixture) -> i32 {
 		for (i, (our_moles, their_moles)) in self
 			.moles
 			.data()
@@ -256,30 +285,34 @@ pub impl GasMixture {
 		-2
 	}
 	/// Clears the moles from the gas.
-	fn clear(&mut self) {
+	pub fn clear(&mut self) {
 		if !self.immutable {
 			self.moles.clear();
 		}
 	}
 	/// Multiplies every gas molage with this value.
-	fn multiply(&mut self, multiplier: f32) {
+	pub fn multiply(&mut self, multiplier: f32) {
 		if !self.immutable {
 			self.moles *= multiplier;
 		}
 	}
 }
 
-use std::ops::{Add,Mul};
+use std::ops::{Add, Mul};
 
-impl Add for GasMixture {
-	fn add(self,rhs: GasMixture) -> GasMixture {
-		self.merge(&rhs);
+impl Add<&GasMixture> for GasMixture {
+	type Output = Self;
+
+	fn add(self, rhs: &GasMixture) -> Self {
+		self.merge(rhs);
 		self
 	}
 }
 
-impl Mul for GasMixture {
-	fn mul(self,rhs: f32) -> GasMixture {
+impl Mul<f32> for GasMixture {
+	type Output = Self;
+
+	fn mul(self, rhs: f32) -> Self {
 		self.multiply(rhs);
 		self
 	}

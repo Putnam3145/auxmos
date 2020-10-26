@@ -81,44 +81,98 @@ lazy_static! {
 }
 
 impl GasMixtures {
-	fn get_gas_mix_by_id(id: usize) -> &'static GasMixture {
-		GAS_MIXTURES.read().unwrap().get(id).unwrap()
+	fn with_gas_mixture<F>(id: usize, f: F) -> Result<Value, Runtime>
+	where
+		F: FnOnce(&GasMixture) -> Result<Value, Runtime>,
+	{
+		f(GAS_MIXTURES.read().unwrap().get(id).unwrap())
 	}
-	fn get_gas_mix_by_id_mut(id: usize) -> &'static mut GasMixture {
-		GAS_MIXTURES.read().unwrap().get_mut(id).unwrap()
+	fn with_gas_mixture_mut<F>(id: usize, f: F) -> Result<Value, Runtime>
+	where
+		F: FnOnce(&mut GasMixture) -> Result<Value, Runtime>,
+	{
+		f(GAS_MIXTURES.write().unwrap().get_mut(id).unwrap())
+	}
+	fn with_gas_mixtures<F>(ids: &[usize], f: F) -> Result<Value, Runtime>
+	where
+		F: FnOnce(&[&GasMixture]) -> Result<Value, Runtime>,
+	{
+		let gas_mixtures = GAS_MIXTURES.read().unwrap();
+		f(&ids
+			.iter()
+			.map(|id| gas_mixtures.get(*id).unwrap())
+			.collect::<Vec<&GasMixture>>())
+	}
+	fn with_gas_mixtures_mut<F>(ids: &[usize], f: F) -> Result<Value, Runtime>
+	where
+		F: FnOnce(&[&mut GasMixture]) -> Result<Value, Runtime>,
+	{
+		let gas_mixtures = GAS_MIXTURES.write().unwrap();
+		f(&ids
+			.iter()
+			.map(|id| gas_mixtures.get_mut(*id).unwrap())
+			.collect::<Vec<&mut GasMixture>>())
 	}
 	pub fn register_gasmix(mix: &Value) {
 		if NEXT_GAS_IDS.read().unwrap().is_empty() {
 			let gas_mixtures = GAS_MIXTURES.write().unwrap();
 			gas_mixtures.push(GasMixture::new());
-			mix.set("_extools_pointer_gasmixture", g.len() - 1 as f32);
+			mix.set(
+				"_extools_pointer_gasmixture",
+				(gas_mixtures.len() - 1) as f32,
+			);
 		} else {
-			let next_gas_ids = NEXT_GAS_IDS.write().unwrap();
-			let idx = next_gas_ids.pop().unwrap();
-			let gas_mixtures = GAS_MIXTURES.write().unwrap();
-			let gas_replacing = gas_mixtures.get_mut(idx).unwrap();
-			*gas_replacing = GasMixture::new();
+			let idx = NEXT_GAS_IDS.write().unwrap().pop().unwrap();
+			*GAS_MIXTURES.write().unwrap().get_mut(idx).unwrap() = GasMixture::new();
 			mix.set("_extools_pointer_gasmixture", idx as f32);
 		}
 	}
-	pub fn unregister_gasmix(mix: &Value) {
-		let idx = mix
-			.get("_extools_pointer_gasmixture")
-			.unwrap()
-			.as_number()
-			.unwrap() as usize;
-		if idx >= 0 {
-			NEXT_GAS_IDS.write().unwrap().push(idx);
+	pub fn unregister_gasmix(mix: &Value) -> Result<bool, Runtime> {
+		let idx = mix.get_number("_extools_pointer_gasmixture")?;
+		if idx >= 0.0 {
+			NEXT_GAS_IDS.write().unwrap().push(idx as usize);
 		}
 		mix.set("_extools_pointer_gasmixture", &Value::null());
+		Ok(true)
 	}
 }
 
-pub fn get_mix(mix: &Value) -> &'static GasMixture {
-	GasMixtures::get_gas_mix_by_id(mix.get_number("_extools_pointer_gasmixture").unwrap() as usize)
+pub fn with_mix<F>(mix: &Value, f: F) -> Result<Value, Runtime>
+where
+	F: FnOnce(&GasMixture) -> Result<Value, Runtime>,
+{
+	GasMixtures::with_gas_mixture(mix.get_number("_extools_pointer_gasmixture")? as usize, f)
 }
-pub fn get_mix_mut(mix: &Value) -> &'static mut GasMixture {
-	GasMixtures::get_gas_mix_by_id_mut(
-		mix.get_number("_extools_pointer_gasmixture").unwrap() as usize
+
+pub fn with_mix_mut<F>(mix: &Value, f: F) -> Result<Value, Runtime>
+where
+	F: FnOnce(&mut GasMixture) -> Result<Value, Runtime>,
+{
+	GasMixtures::with_gas_mixture_mut(mix.get_number("_extools_pointer_gasmixture")? as usize, f)
+}
+
+pub fn with_mixes<F>(mixes: &[&Value], f: F) -> Result<Value, Runtime>
+where
+	F: FnOnce(&[&GasMixture]) -> Result<Value, Runtime>,
+{
+	GasMixtures::with_gas_mixtures(
+		&mixes
+			.iter()
+			.map(|mix| mix.get_number("_extools_pointer_gasmixture").unwrap() as usize)
+			.collect::<Vec<usize>>(),
+		f,
+	)
+}
+
+pub fn with_mixes_mut<F>(mixes: &[&Value], f: F) -> Result<Value, Runtime>
+where
+	F: FnOnce(&[&mut GasMixture]) -> Result<Value, Runtime>,
+{
+	GasMixtures::with_gas_mixtures_mut(
+		&mixes
+			.iter()
+			.map(|mix| mix.get_number("_extools_pointer_gasmixture").unwrap() as usize)
+			.collect::<Vec<usize>>(),
+		f,
 	)
 }

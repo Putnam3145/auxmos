@@ -3,15 +3,15 @@ pub mod gas_mixture;
 use dm::*;
 use std::collections::HashMap;
 
-struct Gases<'a> {
+struct Gases {
 	pub gas_ids: HashMap<u32, usize>,
 	pub gas_specific_heat: Vec<f32>,
-	pub gas_id_to_type: Vec<Value<'a>>,
+	pub gas_id_to_type: Vec<Value>,
 	pub total_num_gases: usize,
 }
 
 lazy_static! {
-	static ref GAS_INFO: Gases<'static> = {
+	static ref GAS_INFO: Gases = {
 		let gas_types_list: dm::List =
 			dm::List::from(Proc::find("/proc/gas_types").unwrap().call(&[]).unwrap());
 		let mut gas_ids: HashMap<u32, usize> = HashMap::new();
@@ -59,7 +59,7 @@ pub fn gas_id_from_type(path: &Value) -> Result<usize, Runtime> {
 	}
 }
 
-pub fn gas_id_to_type(id: usize) -> Result<Value<'static>, Runtime> {
+pub fn gas_id_to_type(id: usize) -> Result<Value, Runtime> {
 	if GAS_INFO.gas_id_to_type.len() < id {
 		Ok(GAS_INFO.gas_id_to_type[id].clone())
 	} else {
@@ -70,6 +70,8 @@ pub fn gas_id_to_type(id: usize) -> Result<Value<'static>, Runtime> {
 use gas_mixture::GasMixture;
 
 use std::sync::RwLock;
+
+use std::cell::RefCell;
 
 pub struct GasMixtures {}
 
@@ -83,39 +85,52 @@ lazy_static! {
 impl GasMixtures {
 	fn with_gas_mixture<F>(id: usize, f: F) -> Result<Value, Runtime>
 	where
-		F: FnOnce(&GasMixture) -> Result<Value, Runtime>,
+		F: Fn(&GasMixture) -> Result<Value, Runtime>,
 	{
 		f(GAS_MIXTURES.read().unwrap().get(id).unwrap())
 	}
 	fn with_gas_mixture_mut<F>(id: usize, f: F) -> Result<Value, Runtime>
 	where
-		F: FnOnce(&mut GasMixture) -> Result<Value, Runtime>,
+		F: Fn(&mut GasMixture) -> Result<Value, Runtime>,
 	{
 		f(GAS_MIXTURES.write().unwrap().get_mut(id).unwrap())
 	}
-	fn with_gas_mixtures<F>(ids: &[usize], f: F) -> Result<Value, Runtime>
+	fn with_gas_mixtures<F>(src: usize, arg: usize, f: F) -> Result<Value, Runtime>
 	where
-		F: FnOnce(&[&GasMixture]) -> Result<Value, Runtime>,
+		F: Fn(&GasMixture, &GasMixture) -> Result<Value, Runtime>,
 	{
 		let gas_mixtures = GAS_MIXTURES.read().unwrap();
-		f(&ids
-			.iter()
-			.map(|id| gas_mixtures.get(*id).unwrap())
-			.collect::<Vec<&GasMixture>>())
+		f(
+			gas_mixtures.get(src).unwrap(),
+			gas_mixtures.get(arg).unwrap(),
+		)
 	}
-	fn with_gas_mixtures_mut<F>(ids: &[usize], f: F) -> Result<Value, Runtime>
+	fn with_gas_mixtures_mut<F>(src: usize, arg: usize, f: F) -> Result<Value, Runtime>
 	where
-		F: FnOnce(&[&mut GasMixture]) -> Result<Value, Runtime>,
+		F: Fn(&mut GasMixture, &mut GasMixture) -> Result<Value, Runtime>,
 	{
-		let gas_mixtures = GAS_MIXTURES.write().unwrap();
-		f(&ids
-			.iter()
-			.map(|id| gas_mixtures.get_mut(*id).unwrap())
-			.collect::<Vec<&mut GasMixture>>())
+		let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
+		let mut src_mix: &mut GasMixture;
+		let mut arg_mix: &mut GasMixture;
+		if src > arg {
+			let split_idx = arg + 1;
+			let (left, right) = gas_mixtures.split_at_mut(split_idx);
+			arg_mix = left.last_mut().unwrap();
+			src_mix = right.get_mut(src - split_idx).unwrap();
+		} else if src < arg {
+			let split_idx = src + 1;
+			let (left, right) = gas_mixtures.split_at_mut(split_idx);
+			src_mix = left.last_mut().unwrap();
+			arg_mix = right.get_mut(arg - split_idx).unwrap();
+		} else {
+			src_mix = gas_mixtures.get_mut(src).unwrap();
+			return f(src_mix, &mut src_mix.clone());
+		}
+		f(src_mix, arg_mix)
 	}
 	pub fn register_gasmix(mix: &Value) {
 		if NEXT_GAS_IDS.read().unwrap().is_empty() {
-			let gas_mixtures = GAS_MIXTURES.write().unwrap();
+			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 			gas_mixtures.push(GasMixture::new());
 			mix.set(
 				"_extools_pointer_gasmixture",
@@ -139,40 +154,36 @@ impl GasMixtures {
 
 pub fn with_mix<F>(mix: &Value, f: F) -> Result<Value, Runtime>
 where
-	F: FnOnce(&GasMixture) -> Result<Value, Runtime>,
+	F: Fn(&GasMixture) -> Result<Value, Runtime>,
 {
 	GasMixtures::with_gas_mixture(mix.get_number("_extools_pointer_gasmixture")? as usize, f)
 }
 
 pub fn with_mix_mut<F>(mix: &Value, f: F) -> Result<Value, Runtime>
 where
-	F: FnOnce(&mut GasMixture) -> Result<Value, Runtime>,
+	F: Fn(&mut GasMixture) -> Result<Value, Runtime>,
 {
 	GasMixtures::with_gas_mixture_mut(mix.get_number("_extools_pointer_gasmixture")? as usize, f)
 }
 
-pub fn with_mixes<F>(mixes: &[&Value], f: F) -> Result<Value, Runtime>
+pub fn with_mixes<F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<Value, Runtime>
 where
-	F: FnOnce(&[&GasMixture]) -> Result<Value, Runtime>,
+	F: Fn(&GasMixture, &GasMixture) -> Result<Value, Runtime>,
 {
 	GasMixtures::with_gas_mixtures(
-		&mixes
-			.iter()
-			.map(|mix| mix.get_number("_extools_pointer_gasmixture").unwrap() as usize)
-			.collect::<Vec<usize>>(),
+		src_mix.get_number("_extools_pointer_gasmixture")? as usize,
+		arg_mix.get_number("_extools_pointer_gasmixture")? as usize,
 		f,
 	)
 }
 
-pub fn with_mixes_mut<F>(mixes: &[&Value], f: F) -> Result<Value, Runtime>
+pub fn with_mixes_mut<F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<Value, Runtime>
 where
-	F: FnOnce(&[&mut GasMixture]) -> Result<Value, Runtime>,
+	F: Fn(&mut GasMixture, &mut GasMixture) -> Result<Value, Runtime>,
 {
 	GasMixtures::with_gas_mixtures_mut(
-		&mixes
-			.iter()
-			.map(|mix| mix.get_number("_extools_pointer_gasmixture").unwrap() as usize)
-			.collect::<Vec<usize>>(),
+		src_mix.get_number("_extools_pointer_gasmixture")? as usize,
+		arg_mix.get_number("_extools_pointer_gasmixture")? as usize,
 		f,
 	)
 }

@@ -303,7 +303,7 @@ use std::ops::{Add, Mul};
 impl Add<&GasMixture> for GasMixture {
 	type Output = Self;
 
-	fn add(self, rhs: &GasMixture) -> Self {
+	fn add(mut self, rhs: &GasMixture) -> Self {
 		self.merge(rhs);
 		self
 	}
@@ -312,7 +312,7 @@ impl Add<&GasMixture> for GasMixture {
 impl Mul<f32> for GasMixture {
 	type Output = Self;
 
-	fn mul(self, rhs: f32) -> Self {
+	fn mul(mut self, rhs: f32) -> Self {
 		self.multiply(rhs);
 		self
 	}

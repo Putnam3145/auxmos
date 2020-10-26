@@ -68,8 +68,8 @@ fn _merge_hook() {
 	if args.is_empty() {
 		Err(runtime!("Tried merging nothing into a gas mixture"))
 	} else {
-		with_mixes_mut(&[src, &args[0]], |mixes| {
-			mixes[0].merge(mixes[1]);
+		with_mixes_mut(src, &args[0], |src_mix, giver_mix| {
+			src_mix.merge(giver_mix);
 			Ok(Value::null())
 		})
 	}
@@ -80,8 +80,8 @@ fn _remove_ratio_hook() {
 	if args.len() < 2 {
 		Err(runtime!("remove_ratio called with fewer than 2 arguments"))
 	} else {
-		with_mixes_mut(&[src, &args[0]], |mixes| {
-			mixes[1].copy_from_mutable(&mixes[0].remove_ratio(args[1].as_number().unwrap_or(0.0)));
+		with_mixes_mut(src, &args[0], |src_mix, into_mix| {
+			into_mix.copy_from_mutable(&src_mix.remove_ratio(args[1].as_number().unwrap_or(0.0)));
 			Ok(Value::null())
 		})
 	}
@@ -92,8 +92,8 @@ fn _remove_hook() {
 	if args.len() < 2 {
 		Err(runtime!("remove called with fewer than 2 arguments"))
 	} else {
-		with_mixes_mut(&[src, &args[0]], |mixes| {
-			mixes[1].copy_from_mutable(&mixes[0].remove(args[1].as_number().unwrap_or(0.0)));
+		with_mixes_mut(src, &args[0], |src_mix, into_mix| {
+			into_mix.copy_from_mutable(&src_mix.remove(args[1].as_number().unwrap_or(0.0)));
 			Ok(Value::null())
 		})
 	}
@@ -104,8 +104,8 @@ fn _copy_from_hook() {
 	if args.is_empty() {
 		Err(runtime!("Tried copying a gas mix from nothing"))
 	} else {
-		with_mixes_mut(&[src, &args[0]], |mixes| {
-			mixes[0].copy_from_mutable(&mixes[1]);
+		with_mixes_mut(src, &args[0], |src_mix, giver_mix| {
+			src_mix.copy_from_mutable(giver_mix);
 			Ok(Value::null())
 		})
 	}
@@ -115,14 +115,14 @@ fn _copy_from_hook() {
 fn _temperature_share_hook() {
 	let arg_num = args.len();
 	match arg_num {
-		2 => with_mixes_mut(&[src, &args[0]], |mixes| {
-			Ok(Value::from(mixes[0].temperature_share(
-				mixes[1],
+		2 => with_mixes_mut(src, &args[0], |src_mix, share_mix| {
+			Ok(Value::from(src_mix.temperature_share(
+				share_mix,
 				args[1].as_number().unwrap_or(0.0),
 			)))
 		}),
 		4 => with_mix_mut(src, |mix| {
-			Ok(Value::from(gas.temperature_share_non_gas(
+			Ok(Value::from(mix.temperature_share_non_gas(
 				args[0].as_number().unwrap_or(0.0),
 				args[1].as_number().unwrap_or(0.0),
 				args[2].as_number().unwrap_or(0.0),
@@ -208,9 +208,7 @@ fn _scrub_into_hook() {
 	if args.len() < 2 {
 		Err(runtime!("Incorrect arg len for scrub_into (less than 2)."))
 	} else {
-		with_mixes_mut(&[src, &args[0]], |mixes| {
-			let src_gas = mixes[0];
-			let dest_gas = mixes[1];
+		with_mixes_mut(src, &args[0], |src_gas, dest_gas| {
 			let mixes_to_scrub = args[1].as_list().unwrap();
 			let mut buffer = gas::gas_mixture::GasMixture::from_vol(gas::constants::CELL_VOLUME);
 			buffer.set_temperature(src_gas.get_temperature());
@@ -250,8 +248,8 @@ fn _compare_hook() {
 	if args.is_empty() {
 		Err(runtime!("Tried comparing a gas mix to nothing"))
 	} else {
-		with_mixes(&[src, &args[0]], |mixes| {
-			let res = mixes[0].compare(mixes[1]);
+		with_mixes(src, &args[0], |gas_one, gas_two| {
+			let res = gas_one.compare(gas_two);
 			match res {
 				-1 => Ok(Value::from_string("temp")),
 				-2 => Ok(Value::from_string("")),

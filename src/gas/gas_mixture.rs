@@ -8,6 +8,16 @@ use super::gas_specific_heats;
 
 use super::total_num_gases;
 
+/**
+ * The data structure representing a Space Station 13 gas mixture.
+ * Unlike Monstermos, this doesn't have the archive built-in; instead,
+ * the archive is a feature of the turf grid, only existing during
+ * turf processing.
+ * Also missing is last_share; due to the usage of Rust,
+ * processing no longer requires sleeping turfs. Instead, we're using
+ * a proper, fully-simulated FDM system, much like LINDA but without
+ * sleeping turfs.
+*/
 #[derive(Clone)]
 pub struct GasMixture {
 	moles: CsVec<f32>,
@@ -34,23 +44,29 @@ impl GasMixture {
 		ret.volume = vol;
 		ret
 	}
+	/// Returns the temperature of the mix. T
 	pub fn get_temperature(&self) -> f32 {
 		self.temperature
 	}
+	/// Sets the temperature, if the mix isn't immutable. T
 	pub fn set_temperature(&mut self, temp: f32) {
 		if !self.immutable {
 			self.temperature = temp;
 		}
 	}
+	/// Returns a slice representing the non-zero gases in the mix.
 	pub fn get_gases(&self) -> &[usize] {
 		self.moles.indices()
 	}
+	/// Returns (by value) the amount of moles of a given index the mix has. M
 	pub fn get_moles(&self, idx: usize) -> f32 {
 		self.moles[idx]
 	}
+	/// Sets the mix to be internally immutable. Rust doesn't know about any of this, obviously.
 	pub fn mark_immutable(&mut self) {
 		self.immutable = true;
 	}
+	/// If mix is not immutable, sets the gas at the given `idx` to the given `amt`.
 	pub fn set_moles(&mut self, idx: usize, amt: f32) {
 		if !self.immutable {
 			self.moles[idx] = amt;
@@ -300,20 +316,24 @@ impl GasMixture {
 
 use std::ops::{Add, Mul};
 
+/// Takes a copy of the mix, merges the right hand side, then returns the copy.
 impl Add<&GasMixture> for GasMixture {
 	type Output = Self;
 
-	fn add(mut self, rhs: &GasMixture) -> Self {
-		self.merge(rhs);
-		self
+	fn add(self, rhs: &GasMixture) -> Self {
+		let mut ret = self.clone();
+		ret.merge(rhs);
+		ret
 	}
 }
 
+/// Makes a copy of the given mix, multiplied by a scalar.
 impl Mul<f32> for GasMixture {
 	type Output = Self;
 
-	fn mul(mut self, rhs: f32) -> Self {
-		self.multiply(rhs);
-		self
+	fn mul(self, rhs: f32) -> Self {
+		let mut ret = self.clone();
+		ret.multiply(rhs);
+		ret
 	}
 }

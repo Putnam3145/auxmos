@@ -45,6 +45,7 @@ pub fn total_num_gases() -> usize {
 	GAS_INFO.total_num_gases
 }
 
+/// Returns the appropriate index to be used by the game for a given gas datum.
 pub fn gas_id_from_type(path: &Value) -> Result<usize, Runtime> {
 	let id: u32;
 	unsafe {
@@ -59,6 +60,7 @@ pub fn gas_id_from_type(path: &Value) -> Result<usize, Runtime> {
 	}
 }
 
+/// Takes an index and returns a Value representing the datum typepath of gas datum stored in that index.
 pub fn gas_id_to_type(id: usize) -> Result<Value, Runtime> {
 	if GAS_INFO.gas_id_to_type.len() < id {
 		Ok(GAS_INFO.gas_id_to_type[id].clone())
@@ -71,17 +73,21 @@ use gas_mixture::GasMixture;
 
 use std::sync::RwLock;
 
-use std::cell::RefCell;
-
 pub struct GasMixtures {}
 
+/*
+	This is where the gases live.
+	This is just a big vector, acting as a gas mixture pool.
+	As you can see, it can be accessed by any thread at any time;
+	of course, it has a RwLock preventing this, and you can't access the
+	vector directly. Seriously, please don't. I have the wrapper functions for a reason.
+*/
 lazy_static! {
 	static ref GAS_MIXTURES: RwLock<Vec<GasMixture>> = RwLock::new(Vec::with_capacity(200000));
 }
 lazy_static! {
 	static ref NEXT_GAS_IDS: RwLock<Vec<usize>> = RwLock::new(Vec::new());
 }
-
 impl GasMixtures {
 	fn with_gas_mixture<F>(id: usize, f: F) -> Result<Value, Runtime>
 	where
@@ -128,6 +134,7 @@ impl GasMixtures {
 		}
 		f(src_mix, arg_mix)
 	}
+	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
 	pub fn register_gasmix(mix: &Value) {
 		if NEXT_GAS_IDS.read().unwrap().is_empty() {
 			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
@@ -142,6 +149,7 @@ impl GasMixtures {
 			mix.set("_extools_pointer_gasmixture", idx as f32);
 		}
 	}
+	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
 	pub fn unregister_gasmix(mix: &Value) -> Result<bool, Runtime> {
 		let idx = mix.get_number("_extools_pointer_gasmixture")?;
 		if idx >= 0.0 {
@@ -152,6 +160,7 @@ impl GasMixtures {
 	}
 }
 
+/// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.
 pub fn with_mix<F>(mix: &Value, f: F) -> Result<Value, Runtime>
 where
 	F: Fn(&GasMixture) -> Result<Value, Runtime>,
@@ -159,6 +168,7 @@ where
 	GasMixtures::with_gas_mixture(mix.get_number("_extools_pointer_gasmixture")? as usize, f)
 }
 
+/// As with_mix, but mutable.
 pub fn with_mix_mut<F>(mix: &Value, f: F) -> Result<Value, Runtime>
 where
 	F: Fn(&mut GasMixture) -> Result<Value, Runtime>,
@@ -166,6 +176,7 @@ where
 	GasMixtures::with_gas_mixture_mut(mix.get_number("_extools_pointer_gasmixture")? as usize, f)
 }
 
+/// As with_mix, but with two mixes.
 pub fn with_mixes<F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<Value, Runtime>
 where
 	F: Fn(&GasMixture, &GasMixture) -> Result<Value, Runtime>,
@@ -177,6 +188,7 @@ where
 	)
 }
 
+/// As with_mix_mut, but with two mixes.
 pub fn with_mixes_mut<F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<Value, Runtime>
 where
 	F: Fn(&mut GasMixture, &mut GasMixture) -> Result<Value, Runtime>,

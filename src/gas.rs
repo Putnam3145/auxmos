@@ -13,7 +13,7 @@ struct Gases {
 lazy_static! {
 	static ref GAS_INFO: Gases = {
 		let gas_types_list: dm::List =
-			dm::List::from(Proc::find("/proc/gas_types").unwrap().call(&[]).unwrap());
+			Proc::find("/proc/gas_types").unwrap().call(&[]).unwrap().as_list().unwrap();
 		let mut gas_ids: HashMap<u32, usize> = HashMap::new();
 		let mut gas_specific_heat: Vec<f32> = Vec::new();
 		let mut gas_id_to_type: Vec<Value> = Vec::new();

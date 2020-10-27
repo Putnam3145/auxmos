@@ -1,12 +1,10 @@
 extern crate sprs;
 
-use sprs::CsVec;
+use itertools::Itertools;
 
 use super::constants::*;
 
 use super::gas_specific_heats;
-
-use super::total_num_gases;
 
 /**
  * The data structure representing a Space Station 13 gas mixture.
@@ -20,7 +18,7 @@ use super::total_num_gases;
 */
 #[derive(Clone)]
 pub struct GasMixture {
-	moles: CsVec<f32>,
+	moles: Vec<f32>,
 	temperature: f32,
 	pub volume: f32,
 	pub min_heat_capacity: f32,
@@ -31,7 +29,7 @@ impl GasMixture {
 	/// Makes an empty gas mixture.
 	pub fn new() -> Self {
 		GasMixture {
-			moles: CsVec::empty(total_num_gases() as usize),
+			moles: Vec::new(),
 			temperature: 0.0,
 			volume: 0.0,
 			min_heat_capacity: 0.0,
@@ -55,8 +53,12 @@ impl GasMixture {
 		}
 	}
 	/// Returns a slice representing the non-zero gases in the mix.
-	pub fn get_gases(&self) -> &[usize] {
-		self.moles.indices()
+	pub fn get_gases(&self) -> Vec<usize> {
+		self.moles
+			.iter()
+			.enumerate()
+			.filter_map(|(i, n)| if *n > 0.0 { Some(i) } else { None })
+			.collect()
 	}
 	/// Returns (by value) the amount of moles of a given index the mix has. M
 	pub fn get_moles(&self, idx: usize) -> f32 {
@@ -69,16 +71,22 @@ impl GasMixture {
 	/// If mix is not immutable, sets the gas at the given `idx` to the given `amt`.
 	pub fn set_moles(&mut self, idx: usize, amt: f32) {
 		if !self.immutable {
+			if self.moles.len() <= idx {
+				self.moles.resize(idx + 1, 0.0);
+			}
 			self.moles[idx] = amt;
 		}
 	}
 	/// The heat capacity of the material. [joules?]/mole-kelvin.
 	pub fn heat_capacity(&self) -> f32 {
-		self.moles.dot_dense(gas_specific_heats()) // dot product is what we're doing here anyway
+		self.moles
+			.iter()
+			.zip(gas_specific_heats().iter())
+			.fold(0.0, |acc, (gas, cap)| acc + (gas * cap))
 	}
 	/// The total mole count of the mixture. Moles.
 	pub fn total_moles(&self) -> f32 {
-		self.moles.data().iter().fold(0.0, |tot, gas| tot + gas)
+		self.moles.iter().sum()
 	}
 	/// Pressure. Kilopascals.
 	pub fn return_pressure(&self) -> f32 {
@@ -94,7 +102,13 @@ impl GasMixture {
 			return;
 		}
 		let tot_energy = self.thermal_energy() + giver.thermal_energy();
-		self.moles = &self.moles + &giver.moles;
+		self.moles = self
+			.moles
+			.iter()
+			.copied()
+			.zip_longest(giver.moles.iter().copied())
+			.map(|i| (i.reduce(|a, b| a + b)))
+			.collect();
 		self.temperature = tot_energy / self.heat_capacity();
 	}
 	/// Returns a gas mixture that contains a given percentage of this mixture's moles; if this mix is mutable, also removes those moles from the original.
@@ -106,11 +120,12 @@ impl GasMixture {
 		if ratio >= 1.0 {
 			ratio = 1.0;
 		}
-		removed.temperature = self.temperature;
-		removed.moles = self.moles.clone();
-		removed.moles *= ratio;
+		removed.copy_from_mutable(self);
+		removed.multiply(ratio);
 		if !self.immutable {
-			self.moles = &self.moles + -(removed.moles.clone());
+			for (our_moles, removed_moles) in self.moles.iter_mut().zip(removed.moles.iter()) {
+				*our_moles -= removed_moles;
+			}
 		}
 		removed
 	}
@@ -279,12 +294,7 @@ impl GasMixture {
 	}
 	/// Returns -2 if gases are extremely similar, -1 if they have a temp difference, otherwise index of first gas with large difference found.
 	pub fn compare(&self, sample: &GasMixture) -> i32 {
-		for (i, (our_moles, their_moles)) in self
-			.moles
-			.data()
-			.iter()
-			.zip(sample.moles.data().iter())
-			.enumerate()
+		for (i, (our_moles, their_moles)) in self.moles.iter().zip(sample.moles.iter()).enumerate()
 		{
 			let delta = our_moles - their_moles;
 			if delta > MINIMUM_MOLES_DELTA_TO_MOVE && delta > our_moles * MINIMUM_AIR_RATIO_TO_MOVE
@@ -309,7 +319,9 @@ impl GasMixture {
 	/// Multiplies every gas molage with this value.
 	pub fn multiply(&mut self, multiplier: f32) {
 		if !self.immutable {
-			self.moles *= multiplier;
+			for amt in self.moles.iter_mut() {
+				*amt *= multiplier;
+			}
 		}
 	}
 }
@@ -335,5 +347,36 @@ impl Mul<f32> for GasMixture {
 		let mut ret = self.clone();
 		ret.multiply(rhs);
 		ret
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn test_merge() {
+		let mut into = GasMixture::new();
+		into.set_moles(0, 82.0);
+		into.set_moles(1, 22.0);
+		into.set_temperature(293.15);
+		let mut source = GasMixture::new();
+		source.set_moles(3, 100.0);
+		source.set_temperature(313.15);
+		into.merge(&source);
+		// make sure that the merge successfuly moved the moles
+		assert_eq!(into.get_moles(3), 100.0);
+		assert_eq!(source.get_moles(3), 100.0); // source is not modified by merge
+										/*
+										make sure that the merge successfuly changed the temperature of the mix merged into
+										test gases have heat capacities of 2,080 and 20,000 respectively, so total thermal energies of
+										609,752 and 6,263,000 respectively once multiplied by temperatures. add those together,
+										then divide by new total heat capacity:
+										(609,752 + 6,263,000)/(2,080 + 20,000) =
+										6,872,752 / 2,2080 ~
+										311.265942
+										so we compare to see if it's relatively close to 311.266, cause of floating point precision
+										*/
+		assert!((into.get_temperature() - 313.266).abs() < 0.01);
 	}
 }

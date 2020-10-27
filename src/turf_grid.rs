@@ -99,3 +99,9 @@ fn _hook_adjacent_turfs() {
 		}
 	})
 }
+
+
+#[hook("/datum/controller/subsystem/air/proc/process_active_turfs_extools")]
+fn _process_turf_hook() {
+	TurfGrid::process_turfs();
+}

@@ -7,6 +7,8 @@ use dm::*;
 
 use gas::{gas_id_from_type, gas_id_to_type, with_mix, with_mix_mut, with_mixes, with_mixes_mut};
 
+use gas::constants::*;
+
 #[hook("/datum/gas_mixture/proc/__gasmixture_register")]
 fn _register_gasmixture_hook() {
 	gas::GasMixtures::register_gasmix(src);
@@ -135,9 +137,9 @@ fn _temperature_share_hook() {
 #[hook("/datum/gas_mixture/proc/get_mixes")]
 fn _get_mixes_hook() {
 	with_mix(src, |mix| {
-		let mut mixes_list: List = List::new();
+		let mixes_list: List = List::new();
 		for gas in mix.get_gases() {
-			mixes_list.append(*gas as f32);
+			mixes_list.append(gas as f32);
 		}
 		Ok(Value::from(mixes_list))
 	})
@@ -269,4 +271,26 @@ fn _multiply_hook() {
 		});
 		Ok(Value::null())
 	})
+}
+
+#[hook("/datum/gas_mixture/proc/react")]
+fn _react_hook() {
+	let mut ret: i32 = 0;
+	let n = Value::null();
+	let holder = args.first().unwrap_or(&n);
+	let mut reactions: Vec<&gas::reaction::Reaction> = Vec::new();
+	with_mix(src, |mix| {
+		reactions = gas::reactions()
+			.iter()
+			.filter(|r| r.check_conditions(mix))
+			.collect();
+		Ok(Value::null())
+	})?;
+	for reaction in reactions.iter() {
+		ret |= reaction.react(src, holder)?.as_number()? as i32;
+		if ret & STOP_REACTIONS == STOP_REACTIONS {
+			return Ok(Value::from(ret as f32));
+		}
+	}
+	Ok(Value::from(ret as f32))
 }

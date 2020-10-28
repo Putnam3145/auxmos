@@ -4,7 +4,9 @@ use itertools::Itertools;
 
 use super::constants::*;
 
-use super::gas_specific_heats;
+use super::{gas_specific_heats, reactions};
+
+use super::reaction::Reaction;
 
 /**
  * The data structure representing a Space Station 13 gas mixture.
@@ -16,7 +18,7 @@ use super::gas_specific_heats;
  * a proper, fully-simulated FDM system, much like LINDA but without
  * sleeping turfs.
 */
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct GasMixture {
 	moles: Vec<f32>,
 	temperature: f32,
@@ -142,96 +144,6 @@ impl GasMixture {
 		self.temperature = sample.temperature;
 	}
 	/**
-	 * A naive solution to the discrete poisson equation, used for processing turf atmospherics.
-	 * Yeah, turf atmospherics is just diffusion by default with LINDA, plus eventually skipping the rest with excited groups.
-	 * Assuming those work, of course.
-	 * Shouldn't diverge due to the atmos_adjacent_turfs+1 denominator, but you can't trust these things.
-	 * It seems to have worked all this time, though.
-	 *
-	 */
-	#[deprecated(since = "0.1.0", note = "Replaced by TurfGrid::process_turfs")]
-	fn share(&mut self, sharer: &mut GasMixture, atmos_adjacent_turfs: i32) -> f32 {
-		/*
-		let temperature_delta = self.temperature_archived - sharer.temperature_archived;
-		let abs_temperature_delta = temperature_delta.abs();
-		let old_self_heat_capacity: f32;
-		let old_sharer_heat_capacity: f32;
-		if abs_temperature_delta > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER {
-			old_self_heat_capacity = self.heat_capacity();
-			old_sharer_heat_capacity = sharer.heat_capacity();
-		} else {
-			old_self_heat_capacity = 0.0;
-			old_sharer_heat_capacity = 0.0;
-		}
-		let mut moved_moles: f32 = 0.0;
-		let mut abs_moved_moles: f32 = 0.0;
-
-		let deltas = &self.moles_archived + -sharer.moles_archived.clone();
-		let heat_caps: Vec<f32> = deltas
-			.iter()
-			.map(|(idx, val)| val * gas_specific_heats()[idx])
-			.collect();
-		if !self.immutable {
-			self.moles = &self.moles + -deltas.clone();
-		}
-		if !sharer.immutable {
-			sharer.moles = &sharer.moles + &deltas;
-		}
-		moved_moles = deltas.data().iter().sum();
-		abs_moved_moles = deltas.data().iter().map(|a| a.abs()).sum();
-		let heat_capacity_self_to_sharer: f32 = heat_caps
-			.iter()
-			.map(|&a| if a > 0.0 { a } else { 0.0 })
-			.sum();
-		let heat_capacity_sharer_to_self: f32 = heat_caps
-			.iter()
-			.map(|&a| if a < 0.0 { -a } else { 0.0 })
-			.sum();
-		self.last_share = abs_moved_moles;
-
-		if abs_temperature_delta > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER {
-			let new_self_heat_capacity = old_self_heat_capacity + heat_capacity_sharer_to_self
-				- heat_capacity_self_to_sharer;
-			let new_sharer_heat_capacity = old_sharer_heat_capacity + heat_capacity_self_to_sharer
-				- heat_capacity_sharer_to_self;
-
-			//transfer of thermal energy (via changed heat capacity) between self and sharer
-			if !self.immutable && new_self_heat_capacity > MINIMUM_HEAT_CAPACITY {
-				self.temperature = (old_self_heat_capacity * self.temperature
-					- heat_capacity_self_to_sharer * self.temperature_archived
-					+ heat_capacity_sharer_to_self * sharer.temperature_archived)
-					/ new_self_heat_capacity;
-			}
-
-			if !sharer.immutable && new_sharer_heat_capacity > MINIMUM_HEAT_CAPACITY {
-				sharer.temperature = (old_sharer_heat_capacity * sharer.temperature
-					- heat_capacity_sharer_to_self * sharer.temperature_archived
-					+ heat_capacity_self_to_sharer * self.temperature_archived)
-					/ new_sharer_heat_capacity;
-			}
-			//thermal energy of the system (self and sharer) is unchanged
-
-			if old_sharer_heat_capacity.abs() > MINIMUM_HEAT_CAPACITY {
-				if (new_sharer_heat_capacity / old_sharer_heat_capacity - 1.0).abs() < 0.1 {
-					// <10% change in sharer heat capacity
-					self.temperature_share(sharer, OPEN_HEAT_TRANSFER_COEFFICIENT);
-				}
-			}
-		}
-		if temperature_delta > MINIMUM_TEMPERATURE_TO_MOVE
-			|| abs_moved_moles > MINIMUM_MOLES_DELTA_TO_MOVE
-		{
-			let our_moles = self.total_moles();
-			let their_moles = sharer.total_moles();
-			return (self.temperature_archived * (our_moles + moved_moles)
-				- sharer.temperature_archived * (their_moles - moved_moles))
-				* R_IDEAL_GAS_EQUATION
-				/ self.volume;
-		}
-		*/
-		0.0
-	}
-	/**
 	 * A very simple finite difference solution to the heat transfer equation.
 	 * Works well enough for our purposes, though perhaps called less often
 	 * than it ought to be while we're working in Rust.
@@ -324,6 +236,17 @@ impl GasMixture {
 			}
 		}
 	}
+	/// Checks if the proc can react with any reactions.
+	pub fn can_react(&self) -> bool {
+		reactions().iter().any(|r| r.check_conditions(self))
+	}
+	/// Gets all of the reactions this mix should do.
+	pub fn all_reactable(&self) -> Vec<&'static Reaction> {
+		reactions()
+			.iter()
+			.filter(|r| r.check_conditions(self))
+			.collect()
+	}
 }
 
 use std::ops::{Add, Mul};
@@ -377,6 +300,28 @@ mod tests {
 										311.265942
 										so we compare to see if it's relatively close to 311.266, cause of floating point precision
 										*/
-		assert!((into.get_temperature() - 313.266).abs() < 0.01);
+		assert!(
+			(into.get_temperature() - 311.266).abs() < 0.01,
+			"{} should be near 311.266, is {}",
+			into.get_temperature(),
+			(into.get_temperature() - 311.266)
+		);
+	}
+	#[test]
+	fn test_remove() {
+		// also tests multiply, copy_from_mutable
+		let mut removed = GasMixture::new();
+		removed.set_moles(0, 22.0);
+		removed.set_moles(1, 82.0);
+		let new = removed.remove_ratio(0.5);
+		assert_eq!(removed.compare(&new), -2);
+		assert_eq!(removed.get_moles(0), 11.0);
+		assert_eq!(removed.get_moles(1), 41.0);
+		removed.mark_immutable();
+		let new_two = removed.remove_ratio(0.5);
+		assert_eq!(removed.compare(&new_two), 0);
+		assert_eq!(removed.get_moles(0), 11.0);
+		assert_eq!(removed.get_moles(1), 41.0);
+		assert_eq!(new_two.get_moles(0), 5.5);
 	}
 }

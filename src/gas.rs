@@ -9,13 +9,18 @@ use gas_mixture::GasMixture;
 
 use std::sync::RwLock;
 
+use std::cell::RefCell;
+
 use reaction::Reaction;
 
 struct Gases {
 	pub gas_ids: HashMap<u32, usize>,
 	pub gas_specific_heat: Vec<f32>,
-	pub gas_id_to_type: Vec<Value>,
 	pub total_num_gases: usize,
+}
+
+thread_local! {
+	static GAS_ID_TO_TYPE: RefCell<Vec<Value>> = RefCell::new(Vec::new());
 }
 
 #[cfg(not(test))]
@@ -29,7 +34,6 @@ lazy_static! {
 			.unwrap();
 		let mut gas_ids: HashMap<u32, usize> = HashMap::new();
 		let mut gas_specific_heat: Vec<f32> = Vec::new();
-		let mut gas_id_to_type: Vec<Value> = Vec::new();
 		let total_num_gases: usize = gas_types_list.len() as usize;
 		for i in 0..total_num_gases {
 			let v = gas_types_list.get(i as u32).unwrap();
@@ -37,12 +41,11 @@ lazy_static! {
 				gas_ids.insert(v.value.data.id, i);
 			}
 			gas_specific_heat.push(v.as_number().unwrap_or(20.0));
-			gas_id_to_type.push(v);
+			GAS_ID_TO_TYPE.with(|g| g.borrow_mut().push(v));
 		}
 		Gases {
 			gas_ids,
 			gas_specific_heat,
-			gas_id_to_type,
 			total_num_gases,
 		}
 	};
@@ -118,11 +121,14 @@ pub fn gas_id_from_type(path: &Value) -> Result<usize, Runtime> {
 
 /// Takes an index and returns a Value representing the datum typepath of gas datum stored in that index.
 pub fn gas_id_to_type(id: usize) -> Result<Value, Runtime> {
-	if GAS_INFO.gas_id_to_type.len() < id {
-		Ok(GAS_INFO.gas_id_to_type[id].clone())
-	} else {
-		Err(runtime!(format!("Invalid gas ID: {}", id)))
-	}
+	GAS_ID_TO_TYPE.with(|g| {
+		let gas_id_to_type = g.borrow();
+		if gas_id_to_type.len() < id {
+			Ok(gas_id_to_type[id].clone())
+		} else {
+			Err(runtime!(format!("Invalid gas ID: {}", id)))
+		}
+	})
 }
 
 pub struct GasMixtures {}
@@ -187,7 +193,7 @@ impl GasMixtures {
 		f(src_mix, arg_mix)
 	}
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
-	pub fn register_gasmix(mix: &Value) {
+	pub fn register_gasmix(mix: &Value) -> Result<Value, Runtime> {
 		if NEXT_GAS_IDS.read().unwrap().is_empty() {
 			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 			gas_mixtures.push(GasMixture::new());
@@ -200,15 +206,16 @@ impl GasMixtures {
 			*GAS_MIXTURES.write().unwrap().get_mut(idx).unwrap() = GasMixture::new();
 			mix.set("_extools_pointer_gasmixture", idx as f32);
 		}
+		Ok(Value::null())
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
-	pub fn unregister_gasmix(mix: &Value) -> Result<bool, Runtime> {
+	pub fn unregister_gasmix(mix: &Value) -> Result<Value, Runtime> {
 		let idx = mix.get_number("_extools_pointer_gasmixture")?;
 		if idx >= 0.0 {
 			NEXT_GAS_IDS.write().unwrap().push(idx as usize);
 		}
 		mix.set("_extools_pointer_gasmixture", &Value::null());
-		Ok(true)
+		Ok(Value::null())
 	}
 }
 

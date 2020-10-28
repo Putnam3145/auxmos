@@ -1,7 +1,9 @@
 #[macro_use]
 extern crate lazy_static;
 
-mod gas;
+pub mod gas;
+
+pub mod atmos_grid;
 
 use dm::*;
 
@@ -11,14 +13,12 @@ use gas::constants::*;
 
 #[hook("/datum/gas_mixture/proc/__gasmixture_register")]
 fn _register_gasmixture_hook() {
-	gas::GasMixtures::register_gasmix(src);
-	Ok(Value::null())
+	gas::GasMixtures::register_gasmix(src)
 }
 
 #[hook("/datum/gas_mixture/proc/__gasmixture_unregister")]
 fn _unregister_gasmixture_hook() {
-	gas::GasMixtures::unregister_gasmix(src);
-	Ok(Value::null())
+	gas::GasMixtures::unregister_gasmix(src)
 }
 
 #[hook("/datum/gas_mixture/proc/heat_capacity")]
@@ -280,10 +280,7 @@ fn _react_hook() {
 	let holder = args.first().unwrap_or(&n);
 	let mut reactions: Vec<&gas::reaction::Reaction> = Vec::new();
 	with_mix(src, |mix| {
-		reactions = gas::reactions()
-			.iter()
-			.filter(|r| r.check_conditions(mix))
-			.collect();
+		reactions = mix.all_reactable();
 		Ok(Value::null())
 	})?;
 	for reaction in reactions.iter() {

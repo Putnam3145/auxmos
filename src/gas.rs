@@ -3,6 +3,8 @@ pub mod gas_mixture;
 pub mod reaction;
 use dm::*;
 
+use multi_mut::BTreeMapMultiMut;
+
 use std::collections::HashMap;
 
 use gas_mixture::GasMixture;
@@ -146,51 +148,130 @@ lazy_static! {
 lazy_static! {
 	static ref NEXT_GAS_IDS: RwLock<Vec<usize>> = RwLock::new(Vec::new());
 }
+
+use crate::atmos_grid::turf_gases;
+
 impl GasMixtures {
-	fn with_gas_mixture<F>(id: usize, mut f: F) -> Result<Value, Runtime>
+	fn with_gas_mixture<F>(id: f32, mut f: F) -> Result<Value, Runtime>
 	where
 		F: FnMut(&GasMixture) -> Result<Value, Runtime>,
 	{
-		f(GAS_MIXTURES.read().unwrap().get(id).unwrap())
+		if id.is_sign_negative() {
+			f(&turf_gases().read().unwrap().get(&(-id as u32)).unwrap().mix)
+		} else {
+			f(GAS_MIXTURES.read().unwrap().get(id as usize).unwrap())
+		}
 	}
-	fn with_gas_mixture_mut<F>(id: usize, mut f: F) -> Result<Value, Runtime>
+	fn with_gas_mixture_mut<F>(id: f32, mut f: F) -> Result<Value, Runtime>
 	where
 		F: FnMut(&mut GasMixture) -> Result<Value, Runtime>,
 	{
-		f(GAS_MIXTURES.write().unwrap().get_mut(id).unwrap())
+		if id.is_sign_negative() {
+			f(&mut turf_gases()
+				.write()
+				.unwrap()
+				.get_mut(&(-id as u32))
+				.unwrap()
+				.mix)
+		} else {
+			f(GAS_MIXTURES.write().unwrap().get_mut(id as usize).unwrap())
+		}
 	}
-	fn with_gas_mixtures<F>(src: usize, arg: usize, mut f: F) -> Result<Value, Runtime>
+	fn with_gas_mixtures<F>(src: f32, arg: f32, mut f: F) -> Result<Value, Runtime>
 	where
 		F: FnMut(&GasMixture, &GasMixture) -> Result<Value, Runtime>,
 	{
-		let gas_mixtures = GAS_MIXTURES.read().unwrap();
-		f(
-			gas_mixtures.get(src).unwrap(),
-			gas_mixtures.get(arg).unwrap(),
-		)
+		if src.is_sign_negative() || arg.is_sign_negative() {
+			if src.is_sign_positive() {
+				f(
+					GAS_MIXTURES.read().unwrap().get(src as usize).unwrap(),
+					&turf_gases()
+						.read()
+						.unwrap()
+						.get(&(-arg as u32))
+						.unwrap()
+						.mix,
+				)
+			} else if arg.is_sign_positive() {
+				f(
+					&turf_gases()
+						.read()
+						.unwrap()
+						.get(&(-src as u32))
+						.unwrap()
+						.mix,
+					GAS_MIXTURES.read().unwrap().get(arg as usize).unwrap(),
+				)
+			} else {
+				let gas_mixtures = turf_gases().read().unwrap();
+				f(
+					&gas_mixtures.get(&(-src as u32)).unwrap().mix,
+					&gas_mixtures.get(&(-arg as u32)).unwrap().mix,
+				)
+			}
+		} else {
+			let gas_mixtures = GAS_MIXTURES.read().unwrap();
+			f(
+				gas_mixtures.get(src as usize).unwrap(),
+				gas_mixtures.get(arg as usize).unwrap(),
+			)
+		}
 	}
-	fn with_gas_mixtures_mut<F>(src: usize, arg: usize, mut f: F) -> Result<Value, Runtime>
+	fn with_gas_mixtures_mut<F>(src: f32, arg: f32, mut f: F) -> Result<Value, Runtime>
 	where
 		F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<Value, Runtime>,
 	{
-		let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
-		let src_mix: &mut GasMixture;
-		let arg_mix: &mut GasMixture;
-		if src > arg {
-			let split_idx = arg + 1;
-			let (left, right) = gas_mixtures.split_at_mut(split_idx);
-			arg_mix = left.last_mut().unwrap();
-			src_mix = right.get_mut(src - split_idx).unwrap();
-		} else if src < arg {
-			let split_idx = src + 1;
-			let (left, right) = gas_mixtures.split_at_mut(split_idx);
-			src_mix = left.last_mut().unwrap();
-			arg_mix = right.get_mut(arg - split_idx).unwrap();
+		if src.is_sign_negative() || arg.is_sign_negative() {
+			if src.is_sign_positive() {
+				f(
+					GAS_MIXTURES.write().unwrap().get_mut(src as usize).unwrap(),
+					&mut turf_gases()
+						.write()
+						.unwrap()
+						.get_mut(&(-arg as u32))
+						.unwrap()
+						.mix,
+				)
+			} else if arg.is_sign_positive() {
+				f(
+					GAS_MIXTURES.write().unwrap().get_mut(src as usize).unwrap(),
+					&mut turf_gases()
+						.write()
+						.unwrap()
+						.get_mut(&(-arg as u32))
+						.unwrap()
+						.mix,
+				)
+			} else {
+				let mut gas_lock = turf_gases().write().unwrap();
+				let (src_turf, arg_turf) = gas_lock
+					.get_pair_mut(&(-src as u32), &(-arg as u32))
+					.unwrap();
+
+				f(&mut src_turf.mix, &mut arg_turf.mix)
+			}
 		} else {
-			src_mix = gas_mixtures.get_mut(src).unwrap();
-			return f(src_mix, &mut src_mix.clone());
+			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
+			let src_mix: &mut GasMixture;
+			let arg_mix: &mut GasMixture;
+			let src = src as usize;
+			let arg = arg as usize;
+			if src > arg {
+				let split_idx = arg + 1;
+				let (left, right) = gas_mixtures.split_at_mut(split_idx);
+				arg_mix = left.last_mut().unwrap();
+				src_mix = right.get_mut(src - split_idx).unwrap();
+			} else if src < arg {
+				let split_idx = src + 1;
+				let (left, right) = gas_mixtures.split_at_mut(split_idx);
+				src_mix = left.last_mut().unwrap();
+				arg_mix = right.get_mut(arg - split_idx).unwrap();
+			} else {
+				src_mix = gas_mixtures.get_mut(src).unwrap();
+				return f(src_mix, &mut src_mix.clone());
+			}
+			f(src_mix, arg_mix)
 		}
-		f(src_mix, arg_mix)
 	}
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
 	pub fn register_gasmix(mix: &Value) -> Result<Value, Runtime> {
@@ -224,7 +305,7 @@ pub fn with_mix<F>(mix: &Value, f: F) -> Result<Value, Runtime>
 where
 	F: FnMut(&GasMixture) -> Result<Value, Runtime>,
 {
-	GasMixtures::with_gas_mixture(mix.get_number("_extools_pointer_gasmixture")? as usize, f)
+	GasMixtures::with_gas_mixture(mix.get_number("_extools_pointer_gasmixture")?, f)
 }
 
 /// As with_mix, but mutable.
@@ -232,7 +313,7 @@ pub fn with_mix_mut<F>(mix: &Value, f: F) -> Result<Value, Runtime>
 where
 	F: FnMut(&mut GasMixture) -> Result<Value, Runtime>,
 {
-	GasMixtures::with_gas_mixture_mut(mix.get_number("_extools_pointer_gasmixture")? as usize, f)
+	GasMixtures::with_gas_mixture_mut(mix.get_number("_extools_pointer_gasmixture")?, f)
 }
 
 /// As with_mix, but with two mixes.
@@ -241,8 +322,8 @@ where
 	F: FnMut(&GasMixture, &GasMixture) -> Result<Value, Runtime>,
 {
 	GasMixtures::with_gas_mixtures(
-		src_mix.get_number("_extools_pointer_gasmixture")? as usize,
-		arg_mix.get_number("_extools_pointer_gasmixture")? as usize,
+		src_mix.get_number("_extools_pointer_gasmixture")?,
+		arg_mix.get_number("_extools_pointer_gasmixture")?,
 		f,
 	)
 }
@@ -253,8 +334,8 @@ where
 	F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<Value, Runtime>,
 {
 	GasMixtures::with_gas_mixtures_mut(
-		src_mix.get_number("_extools_pointer_gasmixture")? as usize,
-		arg_mix.get_number("_extools_pointer_gasmixture")? as usize,
+		src_mix.get_number("_extools_pointer_gasmixture")?,
+		arg_mix.get_number("_extools_pointer_gasmixture")?,
 		f,
 	)
 }

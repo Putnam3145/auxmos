@@ -11,13 +11,17 @@ use std::collections::BTreeMap;
 use std::sync::RwLock;
 
 #[derive(Clone, Default)]
-struct TurfMixture {
+pub struct TurfMixture {
 	pub mix: super::gas::gas_mixture::GasMixture,
 	pub adjacency: i8,
 }
 
 lazy_static! {
 	static ref TURF_GASES: RwLock<BTreeMap<u32, TurfMixture>> = RwLock::new(BTreeMap::new());
+}
+
+pub fn turf_gases() -> &'static RwLock<BTreeMap<u32, TurfMixture>> {
+	&TURF_GASES
 }
 
 #[hook("/turf/proc/__update_extools_adjacent_turfs")]
@@ -39,6 +43,26 @@ fn _hook_adjacent_turfs() {
 			src
 		))
 	}
+}
+
+#[hook("/datum/gas_mixture/turf/__gasmixture_register")]
+fn _hook_turf_mix_register(turf: Value) {
+	let id: u32;
+	unsafe {
+		id = turf.value.data.id;
+	}
+	TURF_GASES.write().unwrap().insert(id, Default::default());
+	src.set("_extools_pointer_gasmixture", -(id as f32));
+	Ok(Value::null())
+}
+#[hook("/datum/gas_mixture/turf/__gasmixture_unregister")]
+fn _hook_turf_mix_unregister() {
+	TURF_GASES
+		.write()
+		.unwrap()
+		.remove(&(-src.get_number("_extools_pointer_gasmixture")? as u32));
+	src.set("_extools_pointer_gasmixture", &Value::null());
+	Ok(Value::null())
 }
 
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_extools")]

@@ -109,7 +109,7 @@ impl Reaction {
 		self.priority
 	}
 	/// Calls the reaction with the given arguments.
-	pub fn react(&self, src: &Value, holder: &Value) -> Result<Value, Runtime> {
+	pub fn react(&self, src: &Value, holder: &Value) -> DMResult {
 		REACTION_VALUES.with(|r| {
 			if let Some(reaction) = r.borrow().get(self) {
 				reaction.call("react", &[src, holder])

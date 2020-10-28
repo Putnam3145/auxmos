@@ -122,7 +122,7 @@ pub fn gas_id_from_type(path: &Value) -> Result<usize, Runtime> {
 }
 
 /// Takes an index and returns a Value representing the datum typepath of gas datum stored in that index.
-pub fn gas_id_to_type(id: usize) -> Result<Value, Runtime> {
+pub fn gas_id_to_type(id: usize) -> DMResult {
 	GAS_ID_TO_TYPE.with(|g| {
 		let gas_id_to_type = g.borrow();
 		if gas_id_to_type.len() < id {
@@ -152,9 +152,9 @@ lazy_static! {
 use crate::atmos_grid::turf_gases;
 
 impl GasMixtures {
-	fn with_gas_mixture<F>(id: f32, mut f: F) -> Result<Value, Runtime>
+	fn with_gas_mixture<F>(id: f32, mut f: F) -> DMResult
 	where
-		F: FnMut(&GasMixture) -> Result<Value, Runtime>,
+		F: FnMut(&GasMixture) -> DMResult,
 	{
 		if id.is_sign_negative() {
 			f(&turf_gases().read().unwrap().get(&(-id as u32)).unwrap().mix)
@@ -162,9 +162,9 @@ impl GasMixtures {
 			f(GAS_MIXTURES.read().unwrap().get(id as usize).unwrap())
 		}
 	}
-	fn with_gas_mixture_mut<F>(id: f32, mut f: F) -> Result<Value, Runtime>
+	fn with_gas_mixture_mut<F>(id: f32, mut f: F) -> DMResult
 	where
-		F: FnMut(&mut GasMixture) -> Result<Value, Runtime>,
+		F: FnMut(&mut GasMixture) -> DMResult,
 	{
 		if id.is_sign_negative() {
 			f(&mut turf_gases()
@@ -177,9 +177,9 @@ impl GasMixtures {
 			f(GAS_MIXTURES.write().unwrap().get_mut(id as usize).unwrap())
 		}
 	}
-	fn with_gas_mixtures<F>(src: f32, arg: f32, mut f: F) -> Result<Value, Runtime>
+	fn with_gas_mixtures<F>(src: f32, arg: f32, mut f: F) -> DMResult
 	where
-		F: FnMut(&GasMixture, &GasMixture) -> Result<Value, Runtime>,
+		F: FnMut(&GasMixture, &GasMixture) -> DMResult,
 	{
 		if src.is_sign_negative() || arg.is_sign_negative() {
 			if src.is_sign_positive() {
@@ -217,9 +217,9 @@ impl GasMixtures {
 			)
 		}
 	}
-	fn with_gas_mixtures_mut<F>(src: f32, arg: f32, mut f: F) -> Result<Value, Runtime>
+	fn with_gas_mixtures_mut<F>(src: f32, arg: f32, mut f: F) -> DMResult
 	where
-		F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<Value, Runtime>,
+		F: FnMut(&mut GasMixture, &mut GasMixture) -> DMResult,
 	{
 		if src.is_sign_negative() || arg.is_sign_negative() {
 			if src.is_sign_positive() {
@@ -274,7 +274,7 @@ impl GasMixtures {
 		}
 	}
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
-	pub fn register_gasmix(mix: &Value) -> Result<Value, Runtime> {
+	pub fn register_gasmix(mix: &Value) -> DMResult {
 		if NEXT_GAS_IDS.read().unwrap().is_empty() {
 			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 			gas_mixtures.push(GasMixture::new());
@@ -290,7 +290,7 @@ impl GasMixtures {
 		Ok(Value::null())
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
-	pub fn unregister_gasmix(mix: &Value) -> Result<Value, Runtime> {
+	pub fn unregister_gasmix(mix: &Value) -> DMResult {
 		let idx = mix.get_number("_extools_pointer_gasmixture")?;
 		if idx >= 0.0 {
 			NEXT_GAS_IDS.write().unwrap().push(idx as usize);
@@ -301,25 +301,25 @@ impl GasMixtures {
 }
 
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.
-pub fn with_mix<F>(mix: &Value, f: F) -> Result<Value, Runtime>
+pub fn with_mix<F>(mix: &Value, f: F) -> DMResult
 where
-	F: FnMut(&GasMixture) -> Result<Value, Runtime>,
+	F: FnMut(&GasMixture) -> DMResult,
 {
 	GasMixtures::with_gas_mixture(mix.get_number("_extools_pointer_gasmixture")?, f)
 }
 
 /// As with_mix, but mutable.
-pub fn with_mix_mut<F>(mix: &Value, f: F) -> Result<Value, Runtime>
+pub fn with_mix_mut<F>(mix: &Value, f: F) -> DMResult
 where
-	F: FnMut(&mut GasMixture) -> Result<Value, Runtime>,
+	F: FnMut(&mut GasMixture) -> DMResult,
 {
 	GasMixtures::with_gas_mixture_mut(mix.get_number("_extools_pointer_gasmixture")?, f)
 }
 
 /// As with_mix, but with two mixes.
-pub fn with_mixes<F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<Value, Runtime>
+pub fn with_mixes<F>(src_mix: &Value, arg_mix: &Value, f: F) -> DMResult
 where
-	F: FnMut(&GasMixture, &GasMixture) -> Result<Value, Runtime>,
+	F: FnMut(&GasMixture, &GasMixture) -> DMResult,
 {
 	GasMixtures::with_gas_mixtures(
 		src_mix.get_number("_extools_pointer_gasmixture")?,
@@ -329,9 +329,9 @@ where
 }
 
 /// As with_mix_mut, but with two mixes.
-pub fn with_mixes_mut<F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<Value, Runtime>
+pub fn with_mixes_mut<F>(src_mix: &Value, arg_mix: &Value, f: F) -> DMResult
 where
-	F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<Value, Runtime>,
+	F: FnMut(&mut GasMixture, &mut GasMixture) -> DMResult,
 {
 	GasMixtures::with_gas_mixtures_mut(
 		src_mix.get_number("_extools_pointer_gasmixture")?,

@@ -8,16 +8,14 @@ use super::{gas_specific_heats, reactions};
 
 use super::reaction::Reaction;
 
-/**
- * The data structure representing a Space Station 13 gas mixture.
- * Unlike Monstermos, this doesn't have the archive built-in; instead,
- * the archive is a feature of the turf grid, only existing during
- * turf processing.
- * Also missing is last_share; due to the usage of Rust,
- * processing no longer requires sleeping turfs. Instead, we're using
- * a proper, fully-simulated FDM system, much like LINDA but without
- * sleeping turfs.
-*/
+/// The data structure representing a Space Station 13 gas mixture.
+/// Unlike Monstermos, this doesn't have the archive built-in; instead,
+/// the archive is a feature of the turf grid, only existing during
+/// turf processing.
+/// Also missing is last_share; due to the usage of Rust,
+/// processing no longer requires sleeping turfs. Instead, we're using
+/// a proper, fully-simulated FDM system, much like LINDA but without
+/// sleeping turfs.
 #[derive(Clone, Default)]
 pub struct GasMixture {
 	moles: Vec<f32>,
@@ -143,12 +141,10 @@ impl GasMixture {
 		self.moles = sample.moles.clone();
 		self.temperature = sample.temperature;
 	}
-	/**
-	 * A very simple finite difference solution to the heat transfer equation.
-	 * Works well enough for our purposes, though perhaps called less often
-	 * than it ought to be while we're working in Rust.
-	 * Differs from the original by not using archive, since we don't put the archive into the gas mix itself anymore.
-	 */
+	/// A very simple finite difference solution to the heat transfer equation.
+	/// Works well enough for our purposes, though perhaps called less often
+	/// than it ought to be while we're working in Rust.
+	/// Differs from the original by not using archive, since we don't put the archive into the gas mix itself anymore.
 	pub fn temperature_share(
 		&mut self,
 		sharer: &mut GasMixture,
@@ -176,10 +172,8 @@ impl GasMixture {
 		}
 		sharer.temperature
 	}
-	/*
-	 * As above, but you may put in any arbitrary coefficient, temp, heat capacity.
-	 * Only used for superconductivity as of right now.
-	 */
+	/// As above, but you may put in any arbitrary coefficient, temp, heat capacity.
+	/// Only used for superconductivity as of right now.
 	pub fn temperature_share_non_gas(
 		&mut self,
 		conduction_coefficient: f32,

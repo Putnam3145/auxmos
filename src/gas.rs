@@ -340,10 +340,10 @@ where
 	)
 }
 
-pub fn amt_non_turf_gases() -> usize {
+pub(crate) fn amt_non_turf_gases() -> usize {
 	GAS_MIXTURES.read().unwrap().len() - NEXT_GAS_IDS.read().unwrap().len()
 }
 
-pub fn tot_non_turf_gases() -> usize {
+pub(crate) fn tot_non_turf_gases() -> usize {
 	GAS_MIXTURES.read().unwrap().len()
 }

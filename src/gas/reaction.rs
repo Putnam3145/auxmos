@@ -43,11 +43,10 @@ impl PartialOrd for Reaction {
 thread_local! {static REACTION_VALUES: RefCell<BTreeMap<Reaction,Value>> = RefCell::new(BTreeMap::new())}
 
 impl Reaction {
-	/** Takes a /datum/reaction and makes a byond reaction out of it.
-	 *  This will panic if it's given anything that isn't a /datum/reaction.
-	 *  Yes, *panic*, not runtime. This is intentional. Please do not give it
-	 *  anything but a /datum/reaction.
-	 */
+	/// Takes a /datum/reaction and makes a byond reaction out of it.
+	///  This will panic if it's given anything that isn't a /datum/reaction.
+	///  Yes, *panic*, not runtime. This is intentional. Please do not give it
+	///  anything but a /datum/reaction.
 	pub fn from_byond_reaction(reaction: &Value) -> Self {
 		let min_reqs = reaction.get_list("min_requirements").unwrap();
 		let mut min_gas_reqs: BTreeMap<usize, f32> = BTreeMap::new();

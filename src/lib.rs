@@ -7,7 +7,9 @@ pub mod atmos_grid;
 
 use dm::*;
 
-use gas::{gas_id_from_type, gas_id_to_type, with_mix, with_mix_mut, with_mixes, with_mixes_mut};
+use atmos_grid::amt_turf_gases;
+
+use gas::*;
 
 use gas::constants::*;
 
@@ -291,3 +293,14 @@ fn _react_hook() {
 	}
 	Ok(Value::from(ret as f32))
 }
+
+#[hook("/datum/controller/subsystem/air/proc/get_amt_gas_mixes")]
+fn _hook_amt_gas_mixes() {
+	Ok(Value::from((amt_non_turf_gases() + amt_turf_gases()) as f32))
+}
+
+#[hook("/datum/controller/subsystem/air/proc/get_max_gas_mixes")]
+fn _hook_max_gas_mixes() {
+	Ok(Value::from((tot_non_turf_gases() + amt_turf_gases()) as f32))
+}
+

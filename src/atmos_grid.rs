@@ -24,6 +24,10 @@ pub fn turf_gases() -> &'static RwLock<BTreeMap<u32, TurfMixture>> {
 	&TURF_GASES
 }
 
+pub fn amt_turf_gases() -> usize {
+	TURF_GASES.read().unwrap().len()
+}
+
 #[hook("/turf/proc/__update_extools_adjacent_turfs")]
 fn _hook_adjacent_turfs() {
 	let adjacent_list = src.get_list("atmos_adjacent_turfs")?;

@@ -57,12 +57,12 @@ impl GasMixture {
 		self.moles
 			.iter()
 			.enumerate()
-			.filter_map(|(i, n)| if *n > 0.0 { Some(i) } else { None })
+			.filter_map(|(i, n)| if *n > GAS_MIN_MOLES { Some(i) } else { None })
 			.collect()
 	}
 	/// Returns (by value) the amount of moles of a given index the mix has. M
 	pub fn get_moles(&self, idx: usize) -> f32 {
-		self.moles[idx]
+		*self.moles.get(idx).unwrap_or(&0.0)
 	}
 	/// Sets the mix to be internally immutable. Rust doesn't know about any of this, obviously.
 	pub fn mark_immutable(&mut self) {

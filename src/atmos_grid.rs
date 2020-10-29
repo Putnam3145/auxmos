@@ -30,23 +30,19 @@ pub fn amt_turf_gases() -> usize {
 
 #[hook("/turf/proc/__update_extools_adjacent_turfs")]
 fn _hook_adjacent_turfs() {
-	let adjacent_list = src.get_list("atmos_adjacent_turfs")?;
-	let id: u32;
-	unsafe {
-		id = src.value.data.id;
-	}
-	if let Some(turf) = TURF_GASES.write().unwrap().get_mut(&id) {
-		turf.adjacency = 0;
-		for i in 0..adjacent_list.len() {
-			turf.adjacency |= adjacent_list.get(i)?.as_number()? as i8;
+	if let Ok(adjacent_list) = src.get_list("atmos_adjacent_turfs") {
+		let id: u32;
+		unsafe {
+			id = src.value.data.id;
 		}
-		Ok(Value::null())
-	} else {
-		Err(runtime!(
-			"Turf {} tried to update its adjacent turfs with no air!",
-			src
-		))
+		if let Some(turf) = TURF_GASES.write().unwrap().get_mut(&id) {
+			turf.adjacency = 0;
+			for i in 1..adjacent_list.len() + 1 {
+				turf.adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
+			}
+		}
 	}
+	Ok(Value::null())
 }
 
 #[hook("/datum/gas_mixture/turf/__gasmixture_register")]

@@ -7,7 +7,7 @@ pub mod atmos_grid;
 
 use dm::*;
 
-use atmos_grid::amt_turf_gases;
+use atmos_grid::*;
 
 use gas::*;
 
@@ -136,14 +136,14 @@ fn _temperature_share_hook() {
 	}
 }
 
-#[hook("/datum/gas_mixture/proc/get_mixes")]
-fn _get_mixes_hook() {
+#[hook("/datum/gas_mixture/proc/get_gases")]
+fn _get_gases_hook() {
 	with_mix(src, |mix| {
-		let mixes_list: List = List::new();
+		let gases_list: List = List::new();
 		for gas in mix.get_gases() {
-			mixes_list.append(gas as f32);
+			gases_list.append(&gas_id_to_type(gas as usize)?);
 		}
-		Ok(Value::from(mixes_list))
+		Ok(Value::from(gases_list))
 	})
 }
 
@@ -172,7 +172,7 @@ fn _set_volume_hook() {
 		Err(runtime!("Attempted to set volume to nothing."))
 	} else {
 		with_mix_mut(src, |mix| {
-			mix.volume = args[0].as_number().unwrap_or(0.0);
+			mix.volume = args[0].as_number()?;
 			Ok(Value::null())
 		})
 	}
@@ -216,7 +216,7 @@ fn _scrub_into_hook() {
 			let mixes_to_scrub = args[1].as_list().unwrap();
 			let mut buffer = gas::gas_mixture::GasMixture::from_vol(gas::constants::CELL_VOLUME);
 			buffer.set_temperature(src_gas.get_temperature());
-			for idx in 0..mixes_to_scrub.len() {
+			for idx in 1..mixes_to_scrub.len() + 1 {
 				let res = gas_id_from_type(&mixes_to_scrub.get(idx).unwrap());
 				if res.is_ok() {
 					// it's allowed to continue after failure here
@@ -296,11 +296,14 @@ fn _react_hook() {
 
 #[hook("/datum/controller/subsystem/air/proc/get_amt_gas_mixes")]
 fn _hook_amt_gas_mixes() {
-	Ok(Value::from((amt_non_turf_gases() + amt_turf_gases()) as f32))
+	Ok(Value::from(
+		(amt_non_turf_gases() + amt_turf_gases()) as f32,
+	))
 }
 
 #[hook("/datum/controller/subsystem/air/proc/get_max_gas_mixes")]
 fn _hook_max_gas_mixes() {
-	Ok(Value::from((tot_non_turf_gases() + amt_turf_gases()) as f32))
+	Ok(Value::from(
+		(tot_non_turf_gases() + amt_turf_gases()) as f32,
+	))
 }
-

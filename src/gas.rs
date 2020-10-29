@@ -25,31 +25,63 @@ thread_local! {
 	static GAS_ID_TO_TYPE: RefCell<Vec<Value>> = RefCell::new(Vec::new());
 }
 
+#[hook("/proc/auxtools_atmos_init")]
+fn _hook_init() {
+	let gas_types_list: dm::List = Proc::find("/proc/gas_types")
+		.ok_or(runtime!("Could not find gas_types!"))?
+		.call(&[])?
+		.as_list()?;
+	GAS_ID_TO_TYPE.with(|g| {
+		let mut gas_id_to_type = g.borrow_mut();
+		gas_id_to_type.clear();
+		for i in 1..gas_types_list.len() + 1 {
+			if let Ok(gas_type) = gas_types_list.get(i) {
+				gas_id_to_type.push(gas_type);
+			} else {
+				panic!("Gas type not valid! Check list: {:?}", gas_id_to_type);
+			}
+		}
+		Ok(Value::null())
+	})
+}
+
+fn get_gas_info() -> Gases {
+	let gas_types_list: dm::List = Proc::find("/proc/gas_types")
+		.expect("Couldn't find proc gas_types!")
+		.call(&[])
+		.expect("gas_types didn't return correctly!")
+		.as_list()
+		.expect("gas_types' return wasn't a list!");
+	let mut gas_ids: HashMap<u32, usize> = HashMap::new();
+	let mut gas_specific_heat: Vec<f32> = Vec::new();
+	let total_num_gases: usize = gas_types_list.len() as usize;
+	for i in 0..total_num_gases {
+		let v = gas_types_list
+			.get((i + 1) as u32)
+			.expect("An incorrect index was given to the gas_types list!");
+		unsafe {
+			gas_ids.insert(v.value.data.id, i);
+		}
+		gas_specific_heat.push(
+			gas_types_list
+				.get(&v)
+				.expect("Gas type wasn't actually a key!")
+				.as_number()
+				.expect("Couldn't get a heat capacity for a gas!"),
+		);
+	}
+	Gases {
+		gas_ids,
+		gas_specific_heat,
+		total_num_gases,
+	}
+}
+
 #[cfg(not(test))]
 lazy_static! {
 	static ref GAS_INFO: Gases = {
-		let gas_types_list: dm::List = Proc::find("/proc/gas_types")
-			.unwrap()
-			.call(&[])
-			.unwrap()
-			.as_list()
-			.unwrap();
-		let mut gas_ids: HashMap<u32, usize> = HashMap::new();
-		let mut gas_specific_heat: Vec<f32> = Vec::new();
-		let total_num_gases: usize = gas_types_list.len() as usize;
-		for i in 0..total_num_gases {
-			let v = gas_types_list.get(i as u32).unwrap();
-			unsafe {
-				gas_ids.insert(v.value.data.id, i);
-			}
-			gas_specific_heat.push(v.as_number().unwrap_or(20.0));
-			GAS_ID_TO_TYPE.with(|g| g.borrow_mut().push(v));
-		}
-		Gases {
-			gas_ids,
-			gas_specific_heat,
-			total_num_gases,
-		}
+		println!("foo");
+		get_gas_info()
 	};
 	static ref REACTION_INFO: Vec<Reaction> = {
 		let gas_reactions = Value::globals()
@@ -58,7 +90,7 @@ lazy_static! {
 			.get_list("gas_reactions")
 			.unwrap();
 		let mut reaction_cache: Vec<Reaction> = Vec::with_capacity(gas_reactions.len() as usize);
-		for i in 0..gas_reactions.len() {
+		for i in 1..gas_reactions.len() + 1 {
 			let reaction = &gas_reactions.get(i).unwrap();
 			reaction_cache.push(Reaction::from_byond_reaction(&reaction));
 		}
@@ -112,24 +144,19 @@ pub fn gas_id_from_type(path: &Value) -> Result<usize, Runtime> {
 	unsafe {
 		id = path.value.data.id;
 	}
-	if !GAS_INFO.gas_ids.contains_key(&id) {
-		Err(runtime!(
-			"Invalid type! This should be a gas datum typepath!"
-		))
-	} else {
-		Ok(*GAS_INFO.gas_ids.get(&id).unwrap())
-	}
+	Ok(*(GAS_INFO.gas_ids.get(&id).ok_or(runtime!(
+		"Invalid type! This should be a gas datum typepath!"
+	))?))
 }
 
 /// Takes an index and returns a Value representing the datum typepath of gas datum stored in that index.
 pub fn gas_id_to_type(id: usize) -> DMResult {
 	GAS_ID_TO_TYPE.with(|g| {
 		let gas_id_to_type = g.borrow();
-		if gas_id_to_type.len() < id {
-			Ok(gas_id_to_type[id].clone())
-		} else {
-			Err(runtime!(format!("Invalid gas ID: {}", id)))
-		}
+		Ok(gas_id_to_type
+			.get(id)
+			.ok_or(runtime!("Invalid gas ID: {}", id))?
+			.clone())
 	})
 }
 
@@ -159,7 +186,11 @@ impl GasMixtures {
 		if id.is_sign_negative() {
 			f(&turf_gases().read().unwrap().get(&(-id as u32)).unwrap().mix)
 		} else {
-			f(GAS_MIXTURES.read().unwrap().get(id as usize).unwrap())
+			f(GAS_MIXTURES
+				.read()
+				.unwrap()
+				.get(id as usize)
+				.ok_or(runtime!("No gas mixture with ID {} exists!", id as usize))?)
 		}
 	}
 	fn with_gas_mixture_mut<F>(id: f32, mut f: F) -> DMResult
@@ -246,7 +277,7 @@ impl GasMixtures {
 				let mut gas_lock = turf_gases().write().unwrap();
 				let (src_turf, arg_turf) = gas_lock
 					.get_pair_mut(&(-src as u32), &(-arg as u32))
-					.unwrap();
+					.ok_or(runtime!("Bad ID or IDs for turfs!"))?;
 
 				f(&mut src_turf.mix, &mut arg_turf.mix)
 			}

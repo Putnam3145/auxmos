@@ -31,7 +31,7 @@ impl GasMixture {
 		GasMixture {
 			moles: Vec::new(),
 			temperature: 0.0,
-			volume: 0.0,
+			volume: 2500.0,
 			min_heat_capacity: 0.0,
 			immutable: false,
 		}
@@ -261,6 +261,16 @@ impl Mul<f32> for GasMixture {
 	type Output = Self;
 
 	fn mul(self, rhs: f32) -> Self {
+		let mut ret = self.clone();
+		ret.multiply(rhs);
+		ret
+	}
+}
+
+impl<'a> Mul<f32> for &'a GasMixture {
+	type Output = GasMixture;
+
+	fn mul(self, rhs: f32) -> GasMixture {
 		let mut ret = self.clone();
 		ret.multiply(rhs);
 		ret

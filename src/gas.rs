@@ -3,8 +3,6 @@ pub mod gas_mixture;
 pub mod reaction;
 use dm::*;
 
-use multi_mut::BTreeMapMultiMut;
-
 use std::collections::HashMap;
 
 use gas_mixture::GasMixture;
@@ -27,6 +25,11 @@ thread_local! {
 
 #[hook("/proc/auxtools_atmos_init")]
 fn _hook_init() {
+	use std::panic;
+	panic::set_hook(Box::new(|panic_info| {
+		use std::fs::write;
+		write("fjfeifewoijafebn.txt", format!("{}", panic_info));
+	}));
 	let gas_types_list: dm::List = Proc::find("/proc/gas_types")
 		.ok_or(runtime!("Could not find gas_types!"))?
 		.call(&[])?
@@ -176,156 +179,103 @@ lazy_static! {
 	static ref NEXT_GAS_IDS: RwLock<Vec<usize>> = RwLock::new(Vec::new());
 }
 
-use crate::atmos_grid::turf_gases;
-
 impl GasMixtures {
+	pub fn with_all_mixtures<F>(mut f: F)
+	where
+		F: FnMut(&Vec<GasMixture>),
+	{
+		f(&GAS_MIXTURES.read().unwrap());
+	}
+	pub fn copy_from_mixtures(pairs: &[(usize, GasMixture)]) {
+		let mut lock = GAS_MIXTURES.write().unwrap();
+		for (i, gas) in pairs.to_owned() {
+			lock[i] = gas;
+		}
+	}
 	fn with_gas_mixture<F>(id: f32, mut f: F) -> DMResult
 	where
 		F: FnMut(&GasMixture) -> DMResult,
 	{
-		if id.is_sign_negative() {
-			f(&turf_gases().read().unwrap().get(&(-id as u32)).unwrap().mix)
-		} else {
-			f(GAS_MIXTURES
-				.read()
-				.unwrap()
-				.get(id as usize)
-				.ok_or(runtime!("No gas mixture with ID {} exists!", id as usize))?)
-		}
+		f(GAS_MIXTURES
+			.read()
+			.unwrap()
+			.get(id.to_bits() as usize)
+			.ok_or(runtime!("No gas mixture with ID {} exists!", id.to_bits()))?)
 	}
 	fn with_gas_mixture_mut<F>(id: f32, mut f: F) -> DMResult
 	where
 		F: FnMut(&mut GasMixture) -> DMResult,
 	{
-		if id.is_sign_negative() {
-			f(&mut turf_gases()
-				.write()
-				.unwrap()
-				.get_mut(&(-id as u32))
-				.unwrap()
-				.mix)
-		} else {
-			f(GAS_MIXTURES.write().unwrap().get_mut(id as usize).unwrap())
-		}
+		f(GAS_MIXTURES
+			.write()
+			.unwrap()
+			.get_mut(id.to_bits() as usize)
+			.ok_or(runtime!("No gas mixture with ID {} exists!", id.to_bits()))?)
 	}
 	fn with_gas_mixtures<F>(src: f32, arg: f32, mut f: F) -> DMResult
 	where
 		F: FnMut(&GasMixture, &GasMixture) -> DMResult,
 	{
-		if src.is_sign_negative() || arg.is_sign_negative() {
-			if src.is_sign_positive() {
-				f(
-					GAS_MIXTURES.read().unwrap().get(src as usize).unwrap(),
-					&turf_gases()
-						.read()
-						.unwrap()
-						.get(&(-arg as u32))
-						.unwrap()
-						.mix,
-				)
-			} else if arg.is_sign_positive() {
-				f(
-					&turf_gases()
-						.read()
-						.unwrap()
-						.get(&(-src as u32))
-						.unwrap()
-						.mix,
-					GAS_MIXTURES.read().unwrap().get(arg as usize).unwrap(),
-				)
-			} else {
-				let gas_mixtures = turf_gases().read().unwrap();
-				f(
-					&gas_mixtures.get(&(-src as u32)).unwrap().mix,
-					&gas_mixtures.get(&(-arg as u32)).unwrap().mix,
-				)
-			}
-		} else {
-			let gas_mixtures = GAS_MIXTURES.read().unwrap();
-			f(
-				gas_mixtures.get(src as usize).unwrap(),
-				gas_mixtures.get(arg as usize).unwrap(),
-			)
-		}
+		let gas_mixtures = GAS_MIXTURES.read().unwrap();
+		f(
+			gas_mixtures
+				.get(src.to_bits() as usize)
+				.ok_or(runtime!("No gas mixture with ID {} exists!", src.to_bits()))?,
+			gas_mixtures
+				.get(arg.to_bits() as usize)
+				.ok_or(runtime!("No gas mixture with ID {} exists!", arg.to_bits()))?,
+		)
 	}
 	fn with_gas_mixtures_mut<F>(src: f32, arg: f32, mut f: F) -> DMResult
 	where
 		F: FnMut(&mut GasMixture, &mut GasMixture) -> DMResult,
 	{
-		if src.is_sign_negative() || arg.is_sign_negative() {
-			if src.is_sign_positive() {
-				f(
-					GAS_MIXTURES.write().unwrap().get_mut(src as usize).unwrap(),
-					&mut turf_gases()
-						.write()
-						.unwrap()
-						.get_mut(&(-arg as u32))
-						.unwrap()
-						.mix,
-				)
-			} else if arg.is_sign_positive() {
-				f(
-					GAS_MIXTURES.write().unwrap().get_mut(src as usize).unwrap(),
-					&mut turf_gases()
-						.write()
-						.unwrap()
-						.get_mut(&(-arg as u32))
-						.unwrap()
-						.mix,
-				)
-			} else {
-				let mut gas_lock = turf_gases().write().unwrap();
-				let (src_turf, arg_turf) = gas_lock
-					.get_pair_mut(&(-src as u32), &(-arg as u32))
-					.ok_or(runtime!("Bad ID or IDs for turfs!"))?;
-
-				f(&mut src_turf.mix, &mut arg_turf.mix)
-			}
+		let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
+		let src_mix: &mut GasMixture;
+		let arg_mix: &mut GasMixture;
+		let src = src.to_bits() as usize;
+		let arg = arg.to_bits() as usize;
+		if src > arg {
+			let split_idx = arg + 1;
+			let (left, right) = gas_mixtures.split_at_mut(split_idx);
+			arg_mix = left.last_mut().unwrap();
+			src_mix = right
+				.get_mut(src - split_idx)
+				.ok_or(runtime!("No gas mixture with ID {} exists!", src))?;
+		} else if src < arg {
+			let split_idx = src + 1;
+			let (left, right) = gas_mixtures.split_at_mut(split_idx);
+			src_mix = left.last_mut().unwrap();
+			arg_mix = right
+				.get_mut(arg - split_idx)
+				.ok_or(runtime!("No gas mixture with ID {} exists!", arg))?;
 		} else {
-			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
-			let src_mix: &mut GasMixture;
-			let arg_mix: &mut GasMixture;
-			let src = src as usize;
-			let arg = arg as usize;
-			if src > arg {
-				let split_idx = arg + 1;
-				let (left, right) = gas_mixtures.split_at_mut(split_idx);
-				arg_mix = left.last_mut().unwrap();
-				src_mix = right.get_mut(src - split_idx).unwrap();
-			} else if src < arg {
-				let split_idx = src + 1;
-				let (left, right) = gas_mixtures.split_at_mut(split_idx);
-				src_mix = left.last_mut().unwrap();
-				arg_mix = right.get_mut(arg - split_idx).unwrap();
-			} else {
-				src_mix = gas_mixtures.get_mut(src).unwrap();
-				return f(src_mix, &mut src_mix.clone());
-			}
-			f(src_mix, arg_mix)
+			src_mix = gas_mixtures.get_mut(src).unwrap();
+			return f(src_mix, &mut src_mix.clone());
 		}
+		f(src_mix, arg_mix)
 	}
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
 	pub fn register_gasmix(mix: &Value) -> DMResult {
 		if NEXT_GAS_IDS.read().unwrap().is_empty() {
 			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
-			gas_mixtures.push(GasMixture::new());
+			let next_idx = gas_mixtures.len();
+			gas_mixtures.push(GasMixture::from_vol(mix.get_number("initial_volume")?));
 			mix.set(
 				"_extools_pointer_gasmixture",
-				(gas_mixtures.len() - 1) as f32,
+				f32::from_bits(next_idx as u32),
 			);
 		} else {
 			let idx = NEXT_GAS_IDS.write().unwrap().pop().unwrap();
 			*GAS_MIXTURES.write().unwrap().get_mut(idx).unwrap() = GasMixture::new();
-			mix.set("_extools_pointer_gasmixture", idx as f32);
+			mix.set("_extools_pointer_gasmixture", f32::from_bits(idx as u32));
 		}
 		Ok(Value::null())
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
 	pub fn unregister_gasmix(mix: &Value) -> DMResult {
-		let idx = mix.get_number("_extools_pointer_gasmixture")?;
-		if idx >= 0.0 {
-			NEXT_GAS_IDS.write().unwrap().push(idx as usize);
-		}
+		let idx = mix.get_number("_extools_pointer_gasmixture")?.to_bits();
+		NEXT_GAS_IDS.write().unwrap().push(idx as usize);
 		mix.set("_extools_pointer_gasmixture", &Value::null());
 		Ok(Value::null())
 	}
@@ -371,10 +321,10 @@ where
 	)
 }
 
-pub(crate) fn amt_non_turf_gases() -> usize {
+pub(crate) fn amt_gases() -> usize {
 	GAS_MIXTURES.read().unwrap().len() - NEXT_GAS_IDS.read().unwrap().len()
 }
 
-pub(crate) fn tot_non_turf_gases() -> usize {
+pub(crate) fn tot_gases() -> usize {
 	GAS_MIXTURES.read().unwrap().len()
 }

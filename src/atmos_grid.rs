@@ -103,6 +103,9 @@ fn _process_turf_hook() {
 			saved by a turf every single time it gets its adjacent turfs updated, and of course this
 			processes everything in one go, blocking the byond thread until it's done (it's called from a hook),
 			so it'll be nice and consistent.
+
+			TODO: ACTUALLY I FORGOT TO ARCHIVE IT SO THIS LEADS TO CONSISTENT-BUT-WRONG RESULTS. SWITCH
+			IT TO MESSAGING IDIOT.
 			*/
 			let adj = m.adjacency;
 			let adj_amount = adj.count_ones();

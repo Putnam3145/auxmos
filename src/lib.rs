@@ -147,11 +147,12 @@ fn _get_gases_hook() {
 
 #[hook("/datum/gas_mixture/proc/set_temperature")]
 fn _set_temperature_hook() {
-	let v = if args.is_empty() {
-		0.0
-	} else {
-		args[0].as_number().unwrap_or(0.0)
-	};
+	let v = args
+		.get(0)
+		.ok_or(runtime!(
+			"Wrong amount of arguments for set_temperature: 0!"
+		))?
+		.as_number()?;
 	if !v.is_finite() {
 		Err(runtime!(
 			"Attempted to set a temperature to a number that is NaN or infinite."

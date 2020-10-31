@@ -17,6 +17,7 @@ struct Gases {
 	pub gas_ids: HashMap<u32, usize>,
 	pub gas_specific_heat: Vec<f32>,
 	pub total_num_gases: usize,
+	pub gas_vis_threshold: Vec<Option<f32>>,
 }
 
 thread_local! {
@@ -25,11 +26,6 @@ thread_local! {
 
 #[hook("/proc/auxtools_atmos_init")]
 fn _hook_init() {
-	use std::panic;
-	panic::set_hook(Box::new(|panic_info| {
-		use std::fs::write;
-		write("fjfeifewoijafebn.txt", format!("{}", panic_info));
-	}));
 	let gas_types_list: dm::List = Proc::find("/proc/gas_types")
 		.ok_or(runtime!("Could not find gas_types!"))?
 		.call(&[])?
@@ -44,7 +40,7 @@ fn _hook_init() {
 				panic!("Gas type not valid! Check list: {:?}", gas_id_to_type);
 			}
 		}
-		Ok(Value::null())
+		Ok(Value::from(1.0))
 	})
 }
 
@@ -56,8 +52,15 @@ fn get_gas_info() -> Gases {
 		.as_list()
 		.expect("gas_types' return wasn't a list!");
 	let mut gas_ids: HashMap<u32, usize> = HashMap::new();
-	let mut gas_specific_heat: Vec<f32> = Vec::new();
 	let total_num_gases: usize = gas_types_list.len() as usize;
+	let mut gas_specific_heat: Vec<f32> = Vec::with_capacity(total_num_gases);
+	let mut gas_vis_threshold: Vec<Option<f32>> = Vec::with_capacity(total_num_gases);
+	let meta_gas_visibility_list: dm::List = Proc::find("/proc/meta_gas_visibility_list")
+		.expect("Couldn't find proc meta_gas_visibility_list!")
+		.call(&[])
+		.expect("meta_gas_visibility_list didn't return correctly!")
+		.as_list()
+		.expect("meta_gas_visibility_list's return wasn't a list!");
 	for i in 0..total_num_gases {
 		let v = gas_types_list
 			.get((i + 1) as u32)
@@ -72,11 +75,19 @@ fn get_gas_info() -> Gases {
 				.as_number()
 				.expect("Couldn't get a heat capacity for a gas!"),
 		);
+		gas_vis_threshold.push(
+			meta_gas_visibility_list
+				.get(&v)
+				.unwrap_or_else(|_| Value::null())
+				.as_number()
+				.ok(),
+		);
 	}
 	Gases {
 		gas_ids,
 		gas_specific_heat,
 		total_num_gases,
+		gas_vis_threshold,
 	}
 }
 
@@ -141,6 +152,10 @@ pub fn total_num_gases() -> usize {
 	GAS_INFO.total_num_gases
 }
 
+pub fn gas_visibility(idx: usize) -> Option<f32> {
+	*GAS_INFO.gas_vis_threshold.get(idx).unwrap()
+}
+
 /// Returns the appropriate index to be used by the game for a given gas datum.
 pub fn gas_id_from_type(path: &Value) -> Result<usize, Runtime> {
 	let id: u32;
@@ -185,6 +200,12 @@ impl GasMixtures {
 		F: FnMut(&Vec<GasMixture>),
 	{
 		f(&GAS_MIXTURES.read().unwrap());
+	}
+	pub fn with_all_mixtures_mut<F>(mut f: F)
+	where
+		F: FnMut(&mut Vec<GasMixture>),
+	{
+		f(&mut GAS_MIXTURES.write().unwrap());
 	}
 	pub fn copy_from_mixtures(pairs: &[(usize, GasMixture)]) {
 		let mut lock = GAS_MIXTURES.write().unwrap();

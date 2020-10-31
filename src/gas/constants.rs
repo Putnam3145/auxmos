@@ -58,6 +58,12 @@ pub const MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER: f32 = 0.5;
 pub const MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION: f32 = T20C + 10.0;
 pub const MINIMUM_TEMPERATURE_START_SUPERCONDUCTION: f32 = T20C + 200.0;
 
+/// The amount of gas that is diffused between tiles every tick. Must be less than 1/6.
+pub const GAS_DIFFUSION_CONSTANT: f32 = 0.125;
+
+/// This number minus the number of adjacent turfs is how much the original gas needs to be multiplied by to represent loss by diffusion
+pub const GAS_LOSS_CONSTANT: f32 = 1.0 / GAS_DIFFUSION_CONSTANT;
+
 /// HEAT TRANSFER COEFFICIENTS
 
 /// Must be between 0 and 1. Values closer to 1 equalize temperature faster

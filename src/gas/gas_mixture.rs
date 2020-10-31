@@ -1,12 +1,12 @@
-extern crate sprs;
-
 use itertools::Itertools;
 
 use super::constants::*;
 
-use super::{gas_specific_heats, reactions};
+use super::{gas_specific_heats, gas_visibility, reactions};
 
 use super::reaction::Reaction;
+
+use smallvec::SmallVec;
 
 /// The data structure representing a Space Station 13 gas mixture.
 /// Unlike Monstermos, this doesn't have the archive built-in; instead,
@@ -18,7 +18,7 @@ use super::reaction::Reaction;
 /// sleeping turfs.
 #[derive(Clone, Default)]
 pub struct GasMixture {
-	moles: Vec<f32>,
+	moles: SmallVec<[f32; 4]>,
 	temperature: f32,
 	pub volume: f32,
 	pub min_heat_capacity: f32,
@@ -29,7 +29,7 @@ impl GasMixture {
 	/// Makes an empty gas mixture.
 	pub fn new() -> Self {
 		GasMixture {
-			moles: Vec::new(),
+			moles: SmallVec::new(),
 			temperature: 0.0,
 			volume: 2500.0,
 			min_heat_capacity: 0.0,
@@ -48,7 +48,7 @@ impl GasMixture {
 	}
 	/// Sets the temperature, if the mix isn't immutable. T
 	pub fn set_temperature(&mut self, temp: f32) {
-		if !self.immutable {
+		if !self.immutable && temp.is_normal() {
 			self.temperature = temp;
 		}
 	}
@@ -70,7 +70,7 @@ impl GasMixture {
 	}
 	/// If mix is not immutable, sets the gas at the given `idx` to the given `amt`.
 	pub fn set_moles(&mut self, idx: usize, amt: f32) {
-		if !self.immutable {
+		if !self.immutable && amt.is_finite() {
 			if self.moles.len() <= idx {
 				self.moles.resize(idx + 1, 0.0);
 			}
@@ -241,6 +241,19 @@ impl GasMixture {
 			.filter(|r| r.check_conditions(self))
 			.collect()
 	}
+	pub fn adjust_heat(&mut self, heat: f32) {
+		let cap = self.heat_capacity();
+		self.temperature = ((cap * self.temperature) + heat) / cap;
+	}
+	pub fn is_visible(&self) -> bool {
+		self.moles.iter().enumerate().any(|(i, gas)| {
+			if let Some(amt) = gas_visibility(i) {
+				gas >= &amt
+			} else {
+				false
+			}
+		})
+	}
 }
 
 use std::ops::{Add, Mul};
@@ -250,6 +263,17 @@ impl Add<&GasMixture> for GasMixture {
 	type Output = Self;
 
 	fn add(self, rhs: &GasMixture) -> Self {
+		let mut ret = self.clone();
+		ret.merge(rhs);
+		ret
+	}
+}
+
+/// Takes a copy of the mix, merges the right hand side, then returns the copy.
+impl<'a, 'b> Add<&'a GasMixture> for &'b GasMixture {
+	type Output = GasMixture;
+
+	fn add(self, rhs: &GasMixture) -> GasMixture {
 		let mut ret = self.clone();
 		ret.merge(rhs);
 		ret
@@ -267,6 +291,7 @@ impl Mul<f32> for GasMixture {
 	}
 }
 
+/// Makes a copy of the given mix, multiplied by a scalar.
 impl<'a> Mul<f32> for &'a GasMixture {
 	type Output = GasMixture;
 

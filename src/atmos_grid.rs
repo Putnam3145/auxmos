@@ -90,9 +90,62 @@ fn _process_turf_hook() {
 	let max_y = TurfGrid::max_y() as usize;
 	use rayon;
 	use std::sync::mpsc;
-	use std::thread;
 	let (sender, receiver) = mpsc::channel();
-	let thread = thread::spawn(move || {
+	let (gas_sender, gas_receiver) = mpsc::channel();
+	rayon::spawn(move || {
+		let write_to_gas = |(i, mix, adj, mut end_gas): (usize, usize, i8, GasMixture)| {
+			let mut gas_copy = GasMixture::new(); // so we don't lock the mutex the *entire* time
+			let mut comparison = 0;
+			let mut flags = 0;
+			let adj_amount = adj.count_ones();
+			GasMixtures::with_all_mixtures_mut(|all_mixtures| {
+				let gas: &mut GasMixture = all_mixtures.get_mut(mix).unwrap();
+				gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount as f32));
+				end_gas.merge(gas);
+				comparison = end_gas.compare(gas);
+				gas.copy_from_mutable(&end_gas);
+				gas_copy.copy_from_mutable(&end_gas);
+			});
+			if gas_copy.is_visible() {
+				flags |= 1;
+			}
+			if comparison == -2 {
+				flags |= 4;
+			}
+			if gas_copy.can_react() {
+				flags |= 2;
+			}
+			sender.send((i, flags)).unwrap();
+		};
+		let max_north = TurfGrid::max_x();
+		let max_up = TurfGrid::max_y() * max_north;
+		let mut min_diff = max_north;
+		use std::collections::VecDeque;
+		let mut chunk_change: VecDeque<(usize, usize, i8, GasMixture)> =
+			VecDeque::with_capacity(100);
+		for (i, mix, adj, end_gas) in gas_receiver.iter() {
+			if adj & 32 == 32 {
+				min_diff = max_up;
+			}
+			chunk_change.push_back((i, mix, adj, end_gas));
+			let mut should_process = true;
+			while should_process {
+				if let Some(front) = chunk_change.front() {
+					if let Some(back) = chunk_change.back() {
+						if back.0 - front.0 > min_diff as usize {
+							write_to_gas(chunk_change.pop_front().unwrap());
+						} else {
+							should_process = false;
+						}
+					}
+				}
+			}
+		}
+		for t in chunk_change {
+			write_to_gas(t)
+		}
+	});
+	rayon::spawn(move || {
 		let gases = TURF_GASES.read().unwrap();
 		for (i, m) in gases
 			.iter()
@@ -108,7 +161,6 @@ fn _process_turf_hook() {
 			IT TO MESSAGING IDIOT.
 			*/
 			let adj = m.adjacency;
-			let adj_amount = adj.count_ones();
 			/*
 			We build the gas from each individual adjacent turf, starting from our own
 			multiplied by some magic constants relating to diffusion.
@@ -183,26 +235,9 @@ fn _process_turf_hook() {
 			Someone should do the math on that.
 			*/
 			end_gas.multiply(GAS_DIFFUSION_CONSTANT);
-			let mut flags: i8 = 0;
-			GasMixtures::with_all_mixtures_mut(|all_mixtures| {
-				let gas = all_mixtures.get_mut(m.mix).unwrap();
-				gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount as f32));
-				end_gas.merge(gas);
-				let comparison = end_gas.compare(gas);
-				gas.copy_from_mutable(&end_gas);
-				if gas.is_visible() {
-					flags |= 1;
-				}
-				if comparison == -2 {
-					flags |= 4;
-				}
-				if gas.can_react() {
-					flags |= 2;
-				}
-			});
-			sender.send((*i, flags)).unwrap();
+			gas_sender.send((*i, m.mix, adj, end_gas)).unwrap();
 		}
-		drop(sender);
+		drop(gas_sender);
 	});
 	let mut any_err: DMResult = Ok(Value::null());
 	use std::collections::HashMap;
@@ -224,7 +259,6 @@ fn _process_turf_hook() {
 			to_cool_down.insert(turf_idx, true);
 		}
 	}
-	let res = thread.join();
 	rayon::spawn(move || {
 		let mut gases = TURF_GASES.write().unwrap();
 		for (i, turf_mix) in gases.iter_mut() {
@@ -241,9 +275,5 @@ fn _process_turf_hook() {
 			}
 		}
 	});
-	if res.is_err() {
-		Err(runtime!("Atmos turfs thread panicked!"))
-	} else {
-		any_err
-	}
+	any_err
 }

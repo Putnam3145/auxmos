@@ -109,7 +109,7 @@ impl GasMixture {
 			.zip_longest(giver.moles.iter().copied())
 			.map(|i| (i.reduce(|a, b| a + b)))
 			.collect();
-		self.temperature = tot_energy / self.heat_capacity();
+		self.set_temperature(tot_energy / self.heat_capacity());
 	}
 	/// Returns a gas mixture that contains a given percentage of this mixture's moles; if this mix is mutable, also removes those moles from the original.
 	pub fn remove_ratio(&mut self, mut ratio: f32) -> GasMixture {
@@ -162,11 +162,11 @@ impl GasMixture {
 					* temperature_delta * (self_heat_capacity * sharer_heat_capacity
 					/ (self_heat_capacity + sharer_heat_capacity));
 				if !self.immutable {
-					self.temperature = (self.temperature - heat / self_heat_capacity).max(TCMB);
+					self.set_temperature((self.temperature - heat / self_heat_capacity).max(TCMB));
 				}
 				if !sharer.immutable {
-					sharer.temperature =
-						(sharer.temperature + heat / sharer_heat_capacity).max(TCMB);
+					sharer.set_temperature(
+						(sharer.temperature + heat / sharer_heat_capacity).max(TCMB));
 				}
 			}
 		}
@@ -191,7 +191,7 @@ impl GasMixture {
 					* temperature_delta * (self_heat_capacity * sharer_heat_capacity
 					/ (self_heat_capacity + sharer_heat_capacity));
 				if !self.immutable {
-					self.temperature = (self.temperature - heat / self_heat_capacity).max(TCMB);
+					self.set_temperature((self.temperature - heat / self_heat_capacity).max(TCMB));
 				}
 				return (sharer_temperature + heat / sharer_heat_capacity).max(TCMB);
 			}
@@ -243,7 +243,7 @@ impl GasMixture {
 	}
 	pub fn adjust_heat(&mut self, heat: f32) {
 		let cap = self.heat_capacity();
-		self.temperature = ((cap * self.temperature) + heat) / cap;
+		self.set_temperature(((cap * self.temperature) + heat) / cap);
 	}
 	pub fn is_visible(&self) -> bool {
 		self.moles.iter().enumerate().any(|(i, gas)| {

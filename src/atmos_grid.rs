@@ -18,6 +18,7 @@ struct TurfMixture {
 	pub mix: usize,
 	pub adjacency: i8,
 	pub simulation_level: u8,
+	pub velocity: [f32;3], // in tiles/tick
 	pub cooldown: i8,
 	pub next_cooldown: i8,
 }
@@ -74,7 +75,7 @@ fn _hook_adjacent_turfs() {
 }
 
 //const SIMULATION_LEVEL_NONE: u8 = 0;
-//const SIMULATION_LEVEL_SHARE_FROM: u8 = 1;
+const SIMULATION_LEVEL_SHARE_FROM: u8 = 1;
 const SIMULATION_LEVEL_SIMULATE: u8 = 2;
 
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_extools")]
@@ -90,9 +91,17 @@ fn _process_turf_hook() {
 	let max_y = TurfGrid::max_y() as usize;
 	use rayon;
 	use std::sync::mpsc;
+	use std::time::{Duration, Instant};
+	let time_limit = Duration::from_secs_f32(
+		args.get(0)
+			.ok_or_else(|| runtime!("Wrong number of arguments to process_turfs_extools: 0"))?
+			.as_number()?,
+	);
+	let start_time = Instant::now();
 	let (sender, receiver) = mpsc::channel();
 	let (gas_sender, gas_receiver) = mpsc::channel();
 	rayon::spawn(move || {
+		// This closure is what sets the gas. It locks the mixtures, saves it, then sends the "we did stuff" data to the main thread.
 		let write_to_gas = |(i, mix, adj, mut end_gas): (usize, usize, i8, GasMixture)| {
 			let mut gas_copy = GasMixture::new(); // so we don't lock the mutex the *entire* time
 			let mut comparison = 0;
@@ -119,6 +128,13 @@ fn _process_turf_hook() {
 		};
 		let max_north = TurfGrid::max_x();
 		let max_up = TurfGrid::max_y() * max_north;
+		/*
+			The above two and the below are what ensures the "safety"
+			of the operation--it allows for the gas mixtures
+			to be set in parallel, and for updating to happen in parallel,
+			without causing inconsistent results, by only setting gas mixtures
+			that are *definitely not* going to be read again.
+		*/
 		let mut min_diff = max_north;
 		use std::collections::VecDeque;
 		let mut chunk_change: VecDeque<(usize, usize, i8, GasMixture)> =
@@ -141,6 +157,7 @@ fn _process_turf_hook() {
 				}
 			}
 		}
+		// The processing thread is done--now we just do the rest.
 		for t in chunk_change {
 			write_to_gas(t)
 		}
@@ -235,6 +252,7 @@ fn _process_turf_hook() {
 			Someone should do the math on that.
 			*/
 			end_gas.multiply(GAS_DIFFUSION_CONSTANT);
+			// Rather than immediately setting it, we send it to the thread defined above to be set when it's safe to do so.
 			gas_sender.send((*i, m.mix, adj, end_gas)).unwrap();
 		}
 		drop(gas_sender);
@@ -242,23 +260,36 @@ fn _process_turf_hook() {
 	let mut any_err: DMResult = Ok(Value::null());
 	use std::collections::HashMap;
 	let mut to_cool_down: HashMap<usize, bool> = HashMap::new();
+	let ret_list = List::new();
 	for (turf_idx, activity_bitflags) in receiver.iter() {
 		let turf = TurfGrid::turf_by_id(turf_idx as u32);
-		if activity_bitflags & 2 == 2 {
-			if let Err(e) = turf.get("air").unwrap().call("react", &[turf.clone()]) {
-				any_err = Err(e);
+		if start_time.elapsed() > time_limit {
+			if activity_bitflags & 3 > 0 {
+				if let Err(e) = ret_list.set(&turf, activity_bitflags as f32) {
+					any_err = Err(e);
+				}
 			}
-		}
-		if activity_bitflags & 1 == 1 {
-			to_cool_down.insert(turf_idx, false);
-			if let Err(e) = turf.call("update_visuals", &[Value::null()]) {
-				any_err = Err(e);
+		} else {
+			if activity_bitflags & 2 == 2 {
+				if let Err(e) = turf.get("air").unwrap().call("react", &[turf.clone()]) {
+					any_err = Err(e);
+				}
+			}
+			if activity_bitflags & 1 == 1 {
+				to_cool_down.insert(turf_idx, false);
+				if let Err(e) = turf.call("update_visuals", &[Value::null()]) {
+					any_err = Err(e);
+				}
 			}
 		}
 		if activity_bitflags & 4 == 4 {
 			to_cool_down.insert(turf_idx, true);
 		}
 	}
+	/*
+	  updating cooldowns
+	  this one can run totally independently, so we just spawn a thread to do it.
+	*/
 	rayon::spawn(move || {
 		let mut gases = TURF_GASES.write().unwrap();
 		for (i, turf_mix) in gases.iter_mut() {
@@ -275,5 +306,9 @@ fn _process_turf_hook() {
 			}
 		}
 	});
-	any_err
+	if let Err(e) = any_err {
+		src.call("stack_trace", &[&Value::from_string(e.message.as_str())])
+			.unwrap();
+	}
+	Ok(Value::from(ret_list))
 }

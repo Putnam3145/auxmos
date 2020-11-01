@@ -109,7 +109,10 @@ impl GasMixture {
 			.zip_longest(giver.moles.iter().copied())
 			.map(|i| (i.reduce(|a, b| a + b)))
 			.collect();
-		self.set_temperature(tot_energy / self.heat_capacity());
+		let cap = self.heat_capacity();
+		if cap > MINIMUM_HEAT_CAPACITY {
+			self.set_temperature(tot_energy / cap);
+		}
 	}
 	/// Returns a gas mixture that contains a given percentage of this mixture's moles; if this mix is mutable, also removes those moles from the original.
 	pub fn remove_ratio(&mut self, mut ratio: f32) -> GasMixture {
@@ -166,7 +169,8 @@ impl GasMixture {
 				}
 				if !sharer.immutable {
 					sharer.set_temperature(
-						(sharer.temperature + heat / sharer_heat_capacity).max(TCMB));
+						(sharer.temperature + heat / sharer_heat_capacity).max(TCMB),
+					);
 				}
 			}
 		}

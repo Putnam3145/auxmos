@@ -190,8 +190,8 @@ pub struct GasMixtures {}
 lazy_static! {
 	static ref GAS_MIXTURES: RwLock<Vec<GasMixture>> = RwLock::new(Vec::with_capacity(200000));
 }
-lazy_static! {
-	static ref NEXT_GAS_IDS: RwLock<Vec<usize>> = RwLock::new(Vec::new());
+thread_local! {
+	static NEXT_GAS_IDS: RefCell<Vec<usize>> = RefCell::new(Vec::new());
 }
 
 impl GasMixtures {
@@ -251,13 +251,13 @@ impl GasMixtures {
 	where
 		F: FnMut(&mut GasMixture, &mut GasMixture) -> DMResult,
 	{
-		let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 		let src_mix: &mut GasMixture;
 		let arg_mix: &mut GasMixture;
 		let src = src.to_bits() as usize;
 		let arg = arg.to_bits() as usize;
 		if src > arg {
 			let split_idx = arg + 1;
+			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 			let (left, right) = gas_mixtures.split_at_mut(split_idx);
 			arg_mix = left.last_mut().unwrap();
 			src_mix = right
@@ -265,12 +265,14 @@ impl GasMixtures {
 				.ok_or(runtime!("No gas mixture with ID {} exists!", src))?;
 		} else if src < arg {
 			let split_idx = src + 1;
+			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 			let (left, right) = gas_mixtures.split_at_mut(split_idx);
 			src_mix = left.last_mut().unwrap();
 			arg_mix = right
 				.get_mut(arg - split_idx)
 				.ok_or(runtime!("No gas mixture with ID {} exists!", arg))?;
 		} else {
+			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 			src_mix = gas_mixtures.get_mut(src).unwrap();
 			return f(src_mix, &mut src_mix.clone());
 		}
@@ -278,25 +280,28 @@ impl GasMixtures {
 	}
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
 	pub fn register_gasmix(mix: &Value) -> DMResult {
-		if NEXT_GAS_IDS.read().unwrap().is_empty() {
-			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
-			let next_idx = gas_mixtures.len();
-			gas_mixtures.push(GasMixture::from_vol(mix.get_number("initial_volume")?));
-			mix.set(
-				"_extools_pointer_gasmixture",
-				f32::from_bits(next_idx as u32),
-			);
-		} else {
-			let idx = NEXT_GAS_IDS.write().unwrap().pop().unwrap();
-			*GAS_MIXTURES.write().unwrap().get_mut(idx).unwrap() = GasMixture::new();
-			mix.set("_extools_pointer_gasmixture", f32::from_bits(idx as u32));
-		}
-		Ok(Value::null())
+		NEXT_GAS_IDS.with(|gas_ids| -> DMResult {
+			if gas_ids.borrow().is_empty() {
+				let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
+				let next_idx = gas_mixtures.len();
+				gas_mixtures.push(GasMixture::from_vol(mix.get_number("initial_volume")?));
+				mix.set(
+					"_extools_pointer_gasmixture",
+					f32::from_bits(next_idx as u32),
+				);
+			} else {
+				let idx = gas_ids.borrow_mut().pop().unwrap();
+				*GAS_MIXTURES.write().unwrap().get_mut(idx).unwrap() =
+					GasMixture::from_vol(mix.get_number("initial_volume")?);
+				mix.set("_extools_pointer_gasmixture", f32::from_bits(idx as u32));
+			}
+			Ok(Value::null())
+		})
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
 	pub fn unregister_gasmix(mix: &Value) -> DMResult {
 		let idx = mix.get_number("_extools_pointer_gasmixture")?.to_bits();
-		NEXT_GAS_IDS.write().unwrap().push(idx as usize);
+		NEXT_GAS_IDS.with(|gas_ids| gas_ids.borrow_mut().push(idx as usize));
 		mix.set("_extools_pointer_gasmixture", &Value::null());
 		Ok(Value::null())
 	}

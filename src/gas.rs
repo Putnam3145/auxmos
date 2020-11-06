@@ -348,9 +348,8 @@ where
 }
 
 pub(crate) fn amt_gases() -> usize {
-	NEXT_GAS_IDS.with(|next_gas_ids| {
-		GAS_MIXTURES.read().unwrap().len() - next_gas_ids.borrow().len()
-	})
+	NEXT_GAS_IDS
+		.with(|next_gas_ids| GAS_MIXTURES.read().unwrap().len() - next_gas_ids.borrow().len())
 }
 
 pub(crate) fn tot_gases() -> usize {

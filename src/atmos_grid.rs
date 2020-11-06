@@ -47,8 +47,7 @@ fn _hook_register_turf() {
 			}
 		}
 	}
-	TURF_GASES
-		.insert(unsafe { src.value.data.id as usize }, to_insert);
+	TURF_GASES.insert(unsafe { src.value.data.id as usize }, to_insert);
 	Ok(Value::null())
 }
 
@@ -213,7 +212,6 @@ fn _process_turf_hook() {
 			that are *definitely not* going to be read again.
 		*/
 		let mut min_diff = max_north;
-		use std::collections::VecDeque;
 		let mut chunk_change: VecDeque<(usize, usize, i8, GasMixture)> =
 			VecDeque::with_capacity(100);
 		for (i, mix, adj, end_gas) in gas_receiver.iter() {
@@ -356,7 +354,7 @@ fn _hook_equalize() {
 					});
 					cur_info.mole_delta = turf_moles;
 					if cur_turf.planetary_atmos.is_some() {
-						planet_turfs.push((cur_idx,cur_turf));
+						planet_turfs.push((cur_idx, cur_turf));
 						continue;
 					}
 					total_moles += turf_moles;
@@ -364,7 +362,9 @@ fn _hook_equalize() {
 				for loc in adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y).iter() {
 					let adj_turf = TURF_GASES.get(loc).unwrap();
 					let adj_info = info.entry(cur_idx).or_insert(Default::default());
-					if !adj_info.done_this_cycle && adj_turf.simulation_level != SIMULATION_LEVEL_NONE {
+					if !adj_info.done_this_cycle
+						&& adj_turf.simulation_level != SIMULATION_LEVEL_NONE
+					{
 						border_turfs.push_back((*loc, *adj_turf.value()));
 					} /* else { // this is in C++, copy+pasted directly, don't just uncomment it you dink
 						 // Uh oh! looks like someone opened an airlock to space! TIME TO SUCK ALL THE AIR OUT!!!
@@ -375,7 +375,7 @@ fn _hook_equalize() {
 						 //return;
 					 }*/
 				}
-				turfs.push((cur_idx,cur_turf));
+				turfs.push((cur_idx, cur_turf));
 			}
 			if turfs.len() > monstermos_turf_limit {
 				for i in monstermos_turf_limit..turfs.len() {
@@ -400,7 +400,7 @@ fn _hook_equalize() {
 			let log_n = ((turfs.len() as f32).log2().floor()) as usize;
 			if giver_turfs.len() > log_n && taker_turfs.len() > log_n {
 				use float_ord::FloatOrd;
-				turfs.sort_by_cached_key(|(idx, turf)| FloatOrd(info.get(idx).unwrap().mole_delta) );
+				turfs.sort_by_cached_key(|(idx, turf)| FloatOrd(info.get(idx).unwrap().mole_delta));
 				for (i, m) in turfs.iter() {
 					let mut cur_info = info.get(i).unwrap();
 					cur_info.fast_done = true;
@@ -424,8 +424,9 @@ fn _hook_equalize() {
 						for j in 0..6 {
 							let bit = 1 << j;
 							if eligible_adjacents & bit == bit {
-								let mut adj_turf =
-									info.get_mut(&adjacent_tile_id(j, *i, max_x, max_y)).unwrap();
+								let mut adj_turf = info
+									.get_mut(&adjacent_tile_id(j, *i, max_x, max_y))
+									.unwrap();
 								cur_info.adjust_eq_movement(adj_turf, j as usize, moles_to_move);
 								cur_info.mole_delta -= moles_to_move;
 								adj_turf.mole_delta += moles_to_move;
@@ -447,7 +448,7 @@ fn _hook_equalize() {
 			// alright this is the part that can become O(n^2).
 			if giver_turfs.len() < taker_turfs.len() {
 				// as an optimization, we choose one of two methods based on which list is smaller. We really want to avoid O(n^2) if we can.
-				let mut queue: VecDeque<(i, TurfMixture)> =
+				let mut queue: VecDeque<(usize, TurfMixture)> =
 					VecDeque::with_capacity(taker_turfs.len());
 				let mut queue_cycle_slow = 0;
 				for (i, m) in giver_turfs.iter() {
@@ -462,14 +463,14 @@ fn _hook_equalize() {
 						if giver_info.mole_delta <= 0.0 {
 							break;
 						}
-						let (idx, mut turf) = queue.get(queue_idx).unwrap().copy();
+						let (idx, turf) = queue.get(queue_idx).unwrap();
 						for j in 0..6 {
 							let bit = 1 << j;
 							if turf.adjacency & bit {
 								if let Some(mut adj_info) =
 									info.get_mut(&adjacent_tile_id(j, idx, max_x, max_y))
 								{
-									if cur_info.mole_delta <= 0 {
+									if giver_info.mole_delta <= 0.0 {
 										break;
 									}
 									if !adj_info.done_this_cycle
@@ -501,7 +502,9 @@ fn _hook_equalize() {
 						let mut turf_info = info.get_mut(idx).unwrap();
 						if turf_info.curr_transfer_amount > 0.0 && turf_info.curr_transfer_dir != 6
 						{
-							let mut adj_info = info.get_mut(&(turf_info.curr_transfer_dir as usize)).unwrap();
+							let mut adj_info = info
+								.get_mut(&(turf_info.curr_transfer_dir as usize))
+								.unwrap();
 							turf_info.adjust_eq_movement(
 								adj_info,
 								turf_info.curr_transfer_dir,
@@ -513,7 +516,7 @@ fn _hook_equalize() {
 					}
 				}
 			} else {
-				let mut queue: VecDeque<(i, TurfMixture)> =
+				let mut queue: VecDeque<(usize, TurfMixture)> =
 					VecDeque::with_capacity(giver_turfs.len());
 				let mut queue_cycle_slow = 0;
 				for (i, m) in taker_turfs.iter() {
@@ -528,7 +531,7 @@ fn _hook_equalize() {
 						if taker_info.mole_delta >= 0.0 {
 							break;
 						}
-						let (idx, mut turf) = queue.get(queue_idx).unwrap().copy();
+						let (idx, turf) = queue.get(queue_idx).unwrap();
 						for j in 0..6 {
 							let bit = 1 << j;
 							if turf.adjacency & bit {
@@ -567,7 +570,9 @@ fn _hook_equalize() {
 						let mut turf_info = info.get_mut(idx).unwrap();
 						if turf_info.curr_transfer_amount > 0.0 && turf_info.curr_transfer_dir != 6
 						{
-							let mut adj_info = info.get_mut(&(turf_info.curr_transfer_dir as usize)).unwrap();
+							let mut adj_info = info
+								.get_mut(&(turf_info.curr_transfer_dir as usize))
+								.unwrap();
 							turf_info.adjust_eq_movement(
 								adj_info,
 								turf_info.curr_transfer_dir,
@@ -580,7 +585,12 @@ fn _hook_equalize() {
 				}
 			}
 			turf_sender
-				.send(turfs.iter().map(|(i, m)| (i, (m, *info.get(i).unwrap()))).collect())
+				.send(
+					turfs
+						.iter()
+						.map(|(i, m)| (i, (m, *info.get(i).unwrap())))
+						.collect(),
+				)
 				.unwrap();
 		}
 		drop(turf_sender);
@@ -588,8 +598,11 @@ fn _hook_equalize() {
 	rayon::spawn(|| {
 		let finalize_eq_neighbors;
 		let finalize_eq = |i, turf, monstermos_info, other_turfs| {
-			let transfer_dirs = monstermos.transfer_dirs.copy();
-			monstermos.transfer_dirs.iter_mut().for_each(|m| *m = 0.0);
+			let transfer_dirs = monstermos_info.transfer_dirs.copy();
+			monstermos_info
+				.transfer_dirs
+				.iter_mut()
+				.for_each(|m| *m = 0.0);
 			let planet_transfer_amount = transfer_dirs[6];
 			let mut needs_eq_neighbors = false;
 			if planet_transfer_amount > 0.0 {

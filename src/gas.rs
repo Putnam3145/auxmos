@@ -231,7 +231,7 @@ impl GasMixtures {
 			.write()
 			.unwrap()
 			.get_mut(id.to_bits() as usize)
-			.ok_or(runtime!("No gas mixture with ID {} exists!", id.to_bits()))?)
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?)
 	}
 	fn with_gas_mixtures<F>(src: f32, arg: f32, mut f: F) -> DMResult
 	where
@@ -255,24 +255,22 @@ impl GasMixtures {
 		let arg_mix: &mut GasMixture;
 		let src = src.to_bits() as usize;
 		let arg = arg.to_bits() as usize;
+		let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 		if src > arg {
 			let split_idx = arg + 1;
-			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 			let (left, right) = gas_mixtures.split_at_mut(split_idx);
 			arg_mix = left.last_mut().unwrap();
 			src_mix = right
 				.get_mut(src - split_idx)
-				.ok_or(runtime!("No gas mixture with ID {} exists!", src))?;
+				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?;
 		} else if src < arg {
 			let split_idx = src + 1;
-			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 			let (left, right) = gas_mixtures.split_at_mut(split_idx);
 			src_mix = left.last_mut().unwrap();
 			arg_mix = right
 				.get_mut(arg - split_idx)
-				.ok_or(runtime!("No gas mixture with ID {} exists!", arg))?;
+				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?;
 		} else {
-			let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 			src_mix = gas_mixtures.get_mut(src).unwrap();
 			return f(src_mix, &mut src_mix.clone());
 		}

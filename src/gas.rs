@@ -128,11 +128,12 @@ lazy_static! {
 			Value::null(),
 		];
 		let total_num_gases: usize = 5;
+		let gas_vis_threshold = vec![None,None,None,None,None];
 		Gases {
 			gas_ids,
 			gas_specific_heat,
-			gas_id_to_type,
 			total_num_gases,
+			gas_vis_threshold,
 		}
 	};
 	static ref REACTION_INFO: Vec<Reaction> = { Vec::new() };

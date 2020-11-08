@@ -14,6 +14,8 @@ use dashmap::DashMap;
 
 use std::collections::HashMap;
 
+use std::cell::Cell;
+
 #[derive(Clone, Copy, Default)]
 struct TurfMixture {
 	/// An index into the thread local gases mix.
@@ -71,7 +73,7 @@ fn _hook_adjacent_turfs() {
 }
 
 const SIMULATION_LEVEL_NONE: u8 = 0;
-const SIMULATION_LEVEL_SHARE_FROM: u8 = 1;
+//const SIMULATION_LEVEL_SHARE_FROM: u8 = 1;
 const SIMULATION_LEVEL_SIMULATE: u8 = 2;
 
 use rayon;
@@ -279,35 +281,36 @@ struct MonstermosInfo {
 	curr_transfer_dir: usize,
 	last_slow_queue_cycle: i32,
 	fast_done: bool,
-	is_planet: bool,
 	done_this_cycle: bool,
 }
 
-const opp_dir_index: [usize; 7] = [1, 0, 3, 2, 5, 4, 6];
+const OPP_DIR_INDEX: [usize; 7] = [1, 0, 3, 2, 5, 4, 6];
 
 impl MonstermosInfo {
 	fn adjust_eq_movement(&mut self, adjacent: &mut Self, dir_index: usize, amount: f32) {
 		self.transfer_dirs[dir_index] += amount;
 		if dir_index != 6 {
-			adjacent.transfer_dirs[opp_dir_index[dir_index]] -= amount;
+			adjacent.transfer_dirs[OPP_DIR_INDEX[dir_index]] -= amount;
 		}
 	}
 }
 
 fn finalize_eq(
 	i: usize,
-	turf: &mut TurfMixture,
-	monstermos_info: &mut MonstermosInfo,
-	other_turfs: &HashMap<usize, (TurfMixture, MonstermosInfo)>,
+	turf: &TurfMixture,
+	monstermos_orig: &Cell<MonstermosInfo>,
+	other_turfs: &HashMap<usize, (TurfMixture, Cell<MonstermosInfo>)>,
 	max_x: i32,
 	max_y: i32,
-	sender: &std::sync::mpsc::Sender<(usize,usize,f32)>,
+	sender: &std::sync::mpsc::Sender<(usize, usize, f32)>,
 ) {
+	let mut monstermos_info = monstermos_orig.take();
 	let transfer_dirs = monstermos_info.transfer_dirs;
 	monstermos_info
 		.transfer_dirs
 		.iter_mut()
 		.for_each(|m| *m = 0.0);
+	monstermos_orig.set(monstermos_info);
 	let planet_transfer_amount = transfer_dirs[6];
 	let mut needs_eq_neighbors = false;
 	if planet_transfer_amount > 0.0 {
@@ -318,7 +321,8 @@ fn finalize_eq(
 			}
 		});
 		if needs_eq_neighbors {
-			finalize_eq_neighbors(i, turf, monstermos_info, other_turfs,max_x,max_y,sender);
+			finalize_eq_neighbors(i, turf, monstermos_orig, other_turfs, max_x, max_y, sender);
+			monstermos_info = monstermos_orig.get();
 		}
 		GasMixtures::with_all_mixtures_mut(|all_mixtures| {
 			let air = all_mixtures.get_mut(turf.mix).unwrap();
@@ -348,11 +352,21 @@ fn finalize_eq(
 					}
 				});
 				if needs_eq_neighbors {
-					finalize_eq_neighbors(i, turf, monstermos_info, other_turfs,max_x,max_y,sender);
+					finalize_eq_neighbors(
+						i,
+						turf,
+						monstermos_orig,
+						other_turfs,
+						max_x,
+						max_y,
+						sender,
+					);
+					monstermos_info = monstermos_orig.get();
 				}
 				let adj_id = adjacent_tile_id(j as u8, i, max_x, max_y);
-				let (adj_turf, adj_info) = other_turfs.get_mut(&adj_id).unwrap();
-				adj_info.transfer_dirs[opp_dir_index[j as usize]] = 0.0;
+				let (adj_turf, adj_orig) = other_turfs.get(&adj_id).unwrap();
+				let mut adj_info = adj_orig.take();
+				adj_info.transfer_dirs[OPP_DIR_INDEX[j as usize]] = 0.0;
 				if turf.mix > adj_turf.mix {
 					let split_idx = adj_turf.mix + 1;
 					GasMixtures::with_all_mixtures_mut(|all_mixtures| {
@@ -370,27 +384,38 @@ fn finalize_eq(
 						other_air.merge(&air.remove(amount));
 					});
 				}
-				sender.send((i, adj_id, amount));
+				adj_orig.set(adj_info);
+				monstermos_orig.set(monstermos_info);
+				sender.send((i, adj_id, amount)).unwrap();
 			}
 		}
 	}
 }
 fn finalize_eq_neighbors(
 	i: usize,
-	turf: &mut TurfMixture,
-	monstermos_info: &mut MonstermosInfo,
-	other_turfs: &HashMap<usize, (TurfMixture, MonstermosInfo)>,
+	turf: &TurfMixture,
+	monstermos_info: &Cell<MonstermosInfo>,
+	other_turfs: &HashMap<usize, (TurfMixture, Cell<MonstermosInfo>)>,
 	max_x: i32,
 	max_y: i32,
-	sender: &std::sync::mpsc::Sender<(usize,usize,f32)>
+	sender: &std::sync::mpsc::Sender<(usize, usize, f32)>,
 ) {
+	let monstermos_copy = monstermos_info.get();
 	for j in 0..6 {
-		let amount = monstermos_info.transfer_dirs[i];
+		let amount = monstermos_copy.transfer_dirs[i];
 		let bit = 1 << j;
 		if amount < 0.0 && turf.adjacency & bit == bit {
 			let adjacent_id = adjacent_tile_id(j, i, max_x, max_y);
-			if let Some((other_turf, other_info)) = other_turfs.get_mut(&adjacent_id) {
-				finalize_eq(adjacent_id, other_turf, other_info, other_turfs,max_x,max_y,sender);
+			if let Some((other_turf, other_info)) = other_turfs.get(&adjacent_id) {
+				finalize_eq(
+					adjacent_id,
+					other_turf,
+					other_info,
+					other_turfs,
+					max_x,
+					max_y,
+					sender,
+				);
 			}
 		}
 	}
@@ -407,18 +432,21 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 	let start_time = Instant::now();
 	let max_x = TurfGrid::max_x();
 	let max_y = TurfGrid::max_y();
-	let (sender, receiver) = mpsc::channel();
+	let (final_sender, final_receiver) = mpsc::channel();
+	let (firelock_sender, firelock_receiver) = mpsc::channel();
+	let (firelock_result_sender, firelock_result_receiver) = mpsc::channel();
 	let (turf_sender, turf_receiver) = mpsc::channel();
 	rayon::spawn(move || {
-		let mut info: HashMap<usize, MonstermosInfo> = HashMap::new();
-		for (i, m) in TURF_GASES.into_read_only().iter().filter(|(i, m)| {
+		let mut info: HashMap<usize, Cell<MonstermosInfo>> = HashMap::new();
+		for e in TURF_GASES.iter() {
+			let (i, m) = (e.key(), e.value());
 			if m.simulation_level >= SIMULATION_LEVEL_SIMULATE {
 				if let Some(our_info) = info.get(i) {
-					if our_info.done_this_cycle {
-						return false;
+					if our_info.get().done_this_cycle {
+						break;
 					}
 				}
-				let adj_tiles = adjacent_tile_ids(m.adjacency, **i, max_x, max_y);
+				let adj_tiles = adjacent_tile_ids(m.adjacency, *i, max_x, max_y);
 				let mut any_comparison_good = false;
 				GasMixtures::with_all_mixtures(|all_mixtures| {
 					let our_moles = all_mixtures.get(m.mix).unwrap().total_moles();
@@ -434,10 +462,10 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						}
 					}
 				});
-				return any_comparison_good;
+				if !any_comparison_good {
+					break;
+				}
 			}
-			false
-		}) {
 			let mut turfs: Vec<(usize, TurfMixture)> = Vec::new();
 			let mut border_turfs: VecDeque<(usize, TurfMixture)> = VecDeque::new();
 			let mut planet_turfs: Vec<(usize, TurfMixture)> = Vec::new();
@@ -448,7 +476,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 					break;
 				}
 				let (cur_idx, cur_turf) = border_turfs.pop_front().unwrap();
-				let cur_info = info.entry(cur_idx).or_insert(Default::default());
+				let cur_info = info.entry(cur_idx).or_insert(Default::default()).get_mut();
 				cur_info.distance_score = 0.0;
 				if turfs.len() < monstermos_turf_limit {
 					let mut turf_moles = 0.0;
@@ -464,7 +492,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 				}
 				for loc in adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y).iter() {
 					let adj_turf = TURF_GASES.get(loc).unwrap();
-					let adj_info = info.entry(cur_idx).or_insert(Default::default());
+					let adj_info = info.entry(cur_idx).or_insert(Default::default()).get_mut();
 					if !adj_info.done_this_cycle
 						&& adj_turf.simulation_level != SIMULATION_LEVEL_NONE
 					{
@@ -485,6 +513,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 					let (idx, _) = turfs[i];
 					info.entry(idx)
 						.or_insert(Default::default())
+						.get_mut()
 						.done_this_cycle = false;
 				}
 			}
@@ -492,7 +521,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 			let mut giver_turfs: Vec<(usize, TurfMixture)> = Vec::new();
 			let mut taker_turfs: Vec<(usize, TurfMixture)> = Vec::new();
 			for (i, m) in turfs.iter() {
-				let mut cur_info = info.entry(*i).or_insert(Default::default());
+				let cur_info = info.entry(*i).or_insert(Default::default()).get_mut();
 				cur_info.mole_delta -= average_moles;
 				if cur_info.mole_delta > 0.0 {
 					giver_turfs.push((*i, *m));
@@ -503,9 +532,12 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 			let log_n = ((turfs.len() as f32).log2().floor()) as usize;
 			if giver_turfs.len() > log_n && taker_turfs.len() > log_n {
 				use float_ord::FloatOrd;
-				turfs.sort_by_cached_key(|(idx, _)| FloatOrd(info.get(idx).unwrap().mole_delta));
+				turfs.sort_by_cached_key(|(idx, _)| {
+					FloatOrd(info.get(idx).unwrap().get().mole_delta)
+				});
 				for (i, m) in turfs.iter() {
-					let mut cur_info = info.get(i).unwrap();
+					let cur_orig = info.get(i).unwrap();
+					let mut cur_info = cur_orig.get();
 					cur_info.fast_done = true;
 					let mut eligible_adjacents = 0;
 					if cur_info.mole_delta > 0.0 {
@@ -513,7 +545,8 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 							let bit = 1 << j;
 							if m.adjacency & bit == bit {
 								let loc = adjacent_tile_id(j, *i, max_x, max_y);
-								if let Some(adj_info) = info.get(&loc) {
+								if let Some(adj_orig) = info.get(&loc) {
+									let adj_info = adj_orig.get();
 									if adj_info.fast_done || adj_info.done_this_cycle {
 										continue;
 									} else {
@@ -527,12 +560,18 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						for j in 0..6 {
 							let bit = 1 << j;
 							if eligible_adjacents & bit == bit {
-								let mut adj_turf = info
-									.get_mut(&adjacent_tile_id(j, *i, max_x, max_y))
-									.unwrap();
-								cur_info.adjust_eq_movement(adj_turf, j as usize, moles_to_move);
+								let adj_orig =
+									info.get(&adjacent_tile_id(j, *i, max_x, max_y)).unwrap();
+								let mut adj_turf = adj_orig.get();
+								cur_info.adjust_eq_movement(
+									&mut adj_turf,
+									j as usize,
+									moles_to_move,
+								);
 								cur_info.mole_delta -= moles_to_move;
 								adj_turf.mole_delta += moles_to_move;
+								adj_orig.set(adj_turf);
+								cur_orig.set(cur_info);
 							}
 						}
 					}
@@ -540,25 +579,28 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 				giver_turfs.clear();
 				taker_turfs.clear();
 				for (i, m) in turfs.iter() {
-					let mut cur_info = info.entry(*i).or_insert(Default::default());
+					let cur_orig = info.get(i).unwrap();
+					let cur_info = cur_orig.get();
 					if cur_info.mole_delta > 0.0 {
 						giver_turfs.push((*i, *m));
 					} else {
 						taker_turfs.push((*i, *m));
 					}
+					cur_orig.set(cur_info);
 				}
 			}
+			let mut queue_cycle_slow = 0;
 			// alright this is the part that can become O(n^2).
 			if giver_turfs.len() < taker_turfs.len() {
 				// as an optimization, we choose one of two methods based on which list is smaller. We really want to avoid O(n^2) if we can.
 				let mut queue: VecDeque<(usize, TurfMixture)> =
 					VecDeque::with_capacity(taker_turfs.len());
-				let mut queue_cycle_slow = 0;
 				for (i, m) in giver_turfs.iter() {
-					let mut giver_info = info.get(i).unwrap();
+					let giver_orig = info.get(i).unwrap();
+					let mut giver_info = giver_orig.get();
 					giver_info.curr_transfer_dir = 6;
 					giver_info.curr_transfer_amount = 0.0;
-					queue_cycle_slow = queue_cycle_slow + 1;
+					queue_cycle_slow += 1;
 					queue.clear();
 					queue.push_front((*i, *m));
 					let mut queue_idx = 0;
@@ -566,22 +608,23 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						if giver_info.mole_delta <= 0.0 {
 							break;
 						}
-						let (idx, turf) = queue.get(queue_idx).unwrap();
+						let (idx, turf) = *queue.get(queue_idx).unwrap();
 						for j in 0..6 {
 							let bit = 1 << j;
 							if turf.adjacency & bit == bit {
-								if let Some(mut adj_info) =
-									info.get_mut(&adjacent_tile_id(j, *idx, max_x, max_y))
+								if let Some(adj_orig) =
+									info.get(&adjacent_tile_id(j, idx, max_x, max_y))
 								{
 									if giver_info.mole_delta <= 0.0 {
 										break;
 									}
+									let mut adj_info = adj_orig.get();
 									if !adj_info.done_this_cycle
 										&& adj_info.last_slow_queue_cycle != queue_cycle_slow
 									{
 										queue.push_back((*i, *TURF_GASES.get(i).unwrap().value()));
 										adj_info.last_slow_queue_cycle = queue_cycle_slow;
-										adj_info.curr_transfer_dir = opp_dir_index[j as usize];
+										adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 										adj_info.curr_transfer_amount = 0.0;
 										if adj_info.mole_delta < 0.0 {
 											if -adj_info.mole_delta > giver_info.mole_delta {
@@ -596,37 +639,42 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 												adj_info.mole_delta = 0.0;
 											}
 										}
+										adj_orig.set(adj_info);
+										giver_orig.set(giver_info);
 									}
 								}
 							}
 						}
+						queue_idx += queue_idx;
 					}
 					for (idx, _) in queue.drain(..) {
-						let mut turf_info = info.get_mut(&idx).unwrap();
+						let turf_orig = info.get(&idx).unwrap();
+						let mut turf_info = turf_orig.get();
 						if turf_info.curr_transfer_amount > 0.0 && turf_info.curr_transfer_dir != 6
 						{
-							let mut adj_info = info
-								.get_mut(&(turf_info.curr_transfer_dir as usize))
-								.unwrap();
+							let adj_orig =
+								info.get(&(turf_info.curr_transfer_dir as usize)).unwrap();
+							let mut adj_info = adj_orig.get();
 							turf_info.adjust_eq_movement(
-								adj_info,
+								&mut adj_info,
 								turf_info.curr_transfer_dir,
 								turf_info.curr_transfer_amount,
 							);
 							adj_info.curr_transfer_amount += turf_info.curr_transfer_amount;
 							turf_info.curr_transfer_amount = 0.0;
+							turf_orig.set(turf_info);
 						}
 					}
 				}
 			} else {
 				let mut queue: VecDeque<(usize, TurfMixture)> =
 					VecDeque::with_capacity(giver_turfs.len());
-				let mut queue_cycle_slow = 0;
 				for (i, m) in taker_turfs.iter() {
-					let mut taker_info = info.get(i).unwrap();
+					let taker_orig = info.get(i).unwrap();
+					let mut taker_info = taker_orig.get();
 					taker_info.curr_transfer_dir = 6;
 					taker_info.curr_transfer_amount = 0.0;
-					queue_cycle_slow = queue_cycle_slow + 1;
+					queue_cycle_slow += 1;
 					queue.clear();
 					queue.push_front((*i, *m));
 					let mut queue_idx = 0;
@@ -634,13 +682,14 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						if taker_info.mole_delta >= 0.0 {
 							break;
 						}
-						let (idx, turf) = queue.get(queue_idx).unwrap();
+						let (idx, turf) = *queue.get(queue_idx).unwrap();
 						for j in 0..6 {
 							let bit = 1 << j;
 							if turf.adjacency & bit == bit {
-								if let Some(mut adj_info) =
-									info.get_mut(&adjacent_tile_id(j, *idx, max_x, max_y))
+								if let Some(adj_orig) =
+									info.get(&adjacent_tile_id(j, idx, max_x, max_y))
 								{
+									let mut adj_info = adj_orig.get();
 									if taker_info.mole_delta >= 0.0 {
 										break;
 									}
@@ -649,7 +698,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 									{
 										queue.push_back((*i, *TURF_GASES.get(i).unwrap().value()));
 										adj_info.last_slow_queue_cycle = queue_cycle_slow;
-										adj_info.curr_transfer_dir = opp_dir_index[j as usize];
+										adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 										adj_info.curr_transfer_amount = 0.0;
 										if adj_info.mole_delta > 0.0 {
 											if adj_info.mole_delta > -taker_info.mole_delta {
@@ -664,71 +713,172 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 												adj_info.mole_delta = 0.0;
 											}
 										}
+										adj_orig.set(adj_info);
+										taker_orig.set(taker_info);
 									}
 								}
 							}
 						}
+						queue_idx += 1;
 					}
 					for (idx, _) in queue.drain(..) {
-						let mut turf_info = info.get_mut(&idx).unwrap();
+						let turf_orig = info.get(&idx).unwrap();
+						let mut turf_info = turf_orig.get();
 						if turf_info.curr_transfer_amount > 0.0 && turf_info.curr_transfer_dir != 6
 						{
-							let mut adj_info = info
-								.get_mut(&(turf_info.curr_transfer_dir as usize))
-								.unwrap();
+							let adj_orig =
+								info.get(&(turf_info.curr_transfer_dir as usize)).unwrap();
+							let mut adj_info = adj_orig.get();
 							turf_info.adjust_eq_movement(
-								adj_info,
+								&mut adj_info,
 								turf_info.curr_transfer_dir,
 								turf_info.curr_transfer_amount,
 							);
 							adj_info.curr_transfer_amount += turf_info.curr_transfer_amount;
 							turf_info.curr_transfer_amount = 0.0;
+							turf_orig.set(turf_info);
+							adj_orig.set(adj_info);
 						}
 					}
 				}
 			}
-			turf_sender
-				.send(
-					&mut turfs
-						.iter()
-						.map(|(i, m)| (*i, (*m, *info.get(i).unwrap())))
-						.collect::<HashMap<usize, (TurfMixture, MonstermosInfo)>>(),
-				)
-				.unwrap();
+			if !planet_turfs.is_empty() {
+				let (_, sample_turf) = planet_turfs[0];
+				let planet_sum = PLANETARY_ATMOS.get(sample_turf.planetary_atmos.unwrap()).unwrap().value().total_moles();
+				let target_delta = planet_sum - average_moles;
+				queue_cycle_slow += 1;
+				let mut progression_order: Vec<(usize, TurfMixture)> =
+					Vec::with_capacity(planet_turfs.len());
+				for (i, m) in planet_turfs.iter() {
+					progression_order.push((*i, *m));
+					let mut cur_info = info.get_mut(i).unwrap().get_mut();
+					cur_info.curr_transfer_dir = 6;
+					cur_info.last_slow_queue_cycle = queue_cycle_slow;
+				}
+				// now build a map of where the path to a planet turf is for each tile.
+				let mut queue_idx = 0;
+				while queue_idx < progression_order.len() {
+					let (i, m) = progression_order[queue_idx];
+					for j in 0..6 {
+						let bit = 1 << j;
+						if m.adjacency & bit == bit {
+							let loc = adjacent_tile_id(j, i, max_x, max_y);
+							if let Some(adj_orig) = info.get(&loc) {
+								let mut adj_info = adj_orig.get();
+								let adj = TURF_GASES.get(&loc).unwrap();
+								if adj_info.last_slow_queue_cycle == queue_cycle_slow
+									|| adj.value().planetary_atmos.is_some()
+								{
+									continue;
+								}
+								firelock_sender.send((i, loc)).unwrap();
+								firelock_result_receiver.recv().unwrap();
+								let (_,new_m) = progression_order[queue_idx];
+								if new_m.adjacency & bit == bit {
+									adj_info.last_slow_queue_cycle = queue_cycle_slow;
+									adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
+									progression_order.push((*adj.key(), *adj.value()));
+									adj_orig.set(adj_info);
+								}
+							}
+						}
+					}
+					queue_idx += 1;
+				}
+				for (i, _) in progression_order.iter().rev() {
+					let cur_orig = info.get(i).unwrap();
+					let mut cur_info = cur_orig.get();
+					let airflow = cur_info.mole_delta - target_delta;
+					let adj_orig = info
+						.get(&adjacent_tile_id(
+							cur_info.curr_transfer_dir as u8,
+							*i,
+							max_x,
+							max_y,
+						))
+						.unwrap();
+					let mut adj_info = adj_orig.get();
+					cur_info.adjust_eq_movement(&mut adj_info, cur_info.curr_transfer_dir, airflow);
+					if cur_info.curr_transfer_dir != 6 {
+						adj_info.mole_delta += airflow;
+					}
+					cur_info.mole_delta = target_delta;
+					cur_orig.set(cur_info);
+					adj_orig.set(adj_info);
+				}
+			}
+			let info_to_send = turfs
+				.iter()
+				.map(|(i, m)| (*i, (*m, Cell::new(info.get(i).unwrap().get()))))
+				.collect::<HashMap<usize, (TurfMixture, Cell<MonstermosInfo>)>>();
+			turf_sender.send(info_to_send).unwrap();
 		}
 		drop(turf_sender);
+		drop(firelock_sender);
 	});
 	rayon::spawn(move || {
 		for turf_set in turf_receiver.recv() {
-			for (i, (turf, monstermos_info)) in turf_set.iter_mut() {
-				finalize_eq(*i, turf, monstermos_info, turf_set,max_x,max_y,&sender);
+			for (i, (turf, monstermos_info)) in turf_set.iter() {
+				finalize_eq(*i, turf, monstermos_info, &turf_set, max_x, max_y, &final_sender);
 			}
 		}
-		drop(sender);
+		drop(final_sender);
 	});
 	let mut any_err: DMResult = Ok(Value::null());
 	let ret_list = List::new();
-	for (turf_idx, other_idx, amount) in receiver.iter() {
-		let real_amount = Value::from(amount);
-		let turf = TurfGrid::turf_by_id(turf_idx as u32);
-		let other_turf = TurfGrid::turf_by_id(other_idx as u32);
-		if start_time.elapsed() > time_limit {
-			let new_list = List::new();
-			new_list.append(&other_turf);
-			new_list.append(&real_amount);
-			if let Err(e) = ret_list.set(&turf, &Value::from(new_list)) {
+	let mut done = false;
+	let backoff = crossbeam::utils::Backoff::new();
+	while !done {
+		let mut should_back_off = true;
+		done = true;
+		let firelock_res = firelock_receiver.try_recv();
+		let finalize_res = final_receiver.try_recv();
+		if firelock_res.is_ok() {
+			done = false;
+			should_back_off = false;
+			let (turf_idx, other_idx) = firelock_res.unwrap();
+			let turf = TurfGrid::turf_by_id(turf_idx as u32);
+			let other_turf = TurfGrid::turf_by_id(other_idx as u32);
+			if let Err(e) = turf.call("consider_firelocks", &[other_turf]) {
 				any_err = Err(e);
 			}
+			firelock_result_sender.send(0).unwrap();
+		}
+		if finalize_res.is_ok() {
+			done = false;
+			should_back_off = false;
+			let (turf_idx, other_idx, amount) = finalize_res.unwrap();
+			let real_amount = Value::from(amount);
+			let turf = TurfGrid::turf_by_id(turf_idx as u32);
+			let other_turf = TurfGrid::turf_by_id(other_idx as u32);
+			if start_time.elapsed() > time_limit {
+				let new_list = List::new();
+				new_list.append(&other_turf);
+				new_list.append(&real_amount);
+				if let Err(e) = ret_list.set(&turf, &Value::from(new_list)) {
+					any_err = Err(e);
+				}
+			} else {
+				if let Err(e) = turf.call("update_visuals", &[Value::null()]) {
+					any_err = Err(e);
+				}
+				if let Err(e) = other_turf.call("update_visuals", &[Value::null()]) {
+					any_err = Err(e);
+				}
+				if let Err(e) =
+					turf.call("consider_pressure_difference", &[other_turf, real_amount])
+				{
+					any_err = Err(e);
+				}
+			}
+		}
+		done = done
+			&& finalize_res != Err(std::sync::mpsc::TryRecvError::Disconnected)
+			&& firelock_res != Err(std::sync::mpsc::TryRecvError::Disconnected);
+		if should_back_off {
+			backoff.snooze();
 		} else {
-			if let Err(e) = turf.call("update_visuals", &[Value::null()]) {
-				any_err = Err(e);
-			}
-			if let Err(e) = other_turf.call("update_visuals", &[Value::null()]) {
-				any_err = Err(e);
-			}
-			if let Err(e) = turf.call("consider_pressure_difference", &[other_turf, real_amount]) {
-				any_err = Err(e);
-			}
+			backoff.reset();
 		}
 	}
 	if let Err(e) = any_err {
@@ -740,5 +890,5 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 
 #[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_extools")]
 fn _hook_equalize() {
-	actual_equalize(src,args)
+	actual_equalize(src, args)
 }

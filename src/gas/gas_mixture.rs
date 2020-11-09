@@ -68,6 +68,10 @@ impl GasMixture {
 	pub fn mark_immutable(&mut self) {
 		self.immutable = true;
 	}
+	/// Returns whether this gas mixture is immutable.
+	pub fn is_immutable(&self) -> bool {
+		self.immutable
+	}
 	/// If mix is not immutable, sets the gas at the given `idx` to the given `amt`.
 	pub fn set_moles(&mut self, idx: usize, amt: f32) {
 		if !self.immutable && amt.is_finite() {

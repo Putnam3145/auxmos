@@ -128,7 +128,7 @@ lazy_static! {
 			Value::null(),
 		];
 		let total_num_gases: usize = 5;
-		let gas_vis_threshold = vec![None,None,None,None,None];
+		let gas_vis_threshold = vec![None, None, None, None, None];
 		Gases {
 			gas_ids,
 			gas_specific_heat,

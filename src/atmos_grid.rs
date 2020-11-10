@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 
 use dashmap::DashMap;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use std::cell::Cell;
 
@@ -99,6 +99,7 @@ const SIMULATION_LEVEL_NONE: u8 = 0;
 //const SIMULATION_LEVEL_SHARE_FROM: u8 = 1;
 const SIMULATION_LEVEL_SIMULATE: u8 = 2;
 
+use crossbeam::channel;
 use rayon;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -128,31 +129,28 @@ fn adjacent_tile_ids(adj: i8, i: usize, max_x: i32, max_y: i32) -> Vec<usize> {
 	ret
 }
 
-#[hook("/datum/controller/subsystem/air/proc/process_turfs_extools")]
-fn _process_turf_hook() {
-	/*
-		This is the replacement system for LINDA. LINDA requires a lot of bookkeeping,
-		which, when coefficient-wise operations are this fast, is all just unnecessary overhead.
-		This is a much simpler FDM system, basically like LINDA but without its most important feature (sleeping turfs).
-		It can run in parallel, but doesn't yet. We'll see if it's required for performance reasons.
-	*/
-	// First we copy the gas list immutably, so we can be sure this is consistent.
-	let time_limit = Duration::from_secs_f32(
-		args.get(0)
-			.ok_or_else(|| runtime!("Wrong number of arguments to process_turfs_extools: 0"))?
-			.as_number()?,
-	);
-	let start_time = Instant::now();
-	let (sender, receiver) = mpsc::channel();
+// gas id, bitflags (1 = should update visuals, 2 = should react)
+type TurfProcessInfo = Option<(u32, u32)>;
+
+lazy_static! {
+	static ref TURF_PROCESS_CHANNEL: (
+		channel::Sender<TurfProcessInfo>,
+		channel::Receiver<TurfProcessInfo>
+	) = channel::unbounded();
+}
+
+#[hook("/datum/controller/subsystem/air/proc/begin_turf_process")]
+fn _begin_turfs_hook() {
+	let sender = TURF_PROCESS_CHANNEL.0.clone();
 	let (gas_sender, gas_receiver) = mpsc::channel();
-	rayon::spawn(|| {
+	rayon::spawn(move || {
 		let max_x = TurfGrid::max_x();
 		let max_y = TurfGrid::max_y();
 		for e in TURF_GASES
 			.iter()
 			.filter(|e| e.value().simulation_level >= SIMULATION_LEVEL_SIMULATE)
 		{
-			let (i, m) = (e.key(), e.value());
+			let (i, m) = (*e.key(), *e.value());
 			/*
 			We're checking an individual tile now. First, we get the adjacency of this tile. This is
 			saved by a turf every single time it gets its adjacent turfs updated, and of course this
@@ -178,7 +176,7 @@ fn _process_turf_hook() {
 			already-1/8'thd gas mix, we get 5/8. Easy!
 			*/
 			let mut end_gas = GasMixture::from_vol(2500.0);
-			let adj_tiles = adjacent_tile_ids(adj, *i, max_x, max_y);
+			let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 			GasMixtures::with_all_mixtures(|all_mixtures| {
 				for loc in adj_tiles.iter() {
 					if let Some(gas) = TURF_GASES.get(loc) {
@@ -186,7 +184,7 @@ fn _process_turf_hook() {
 					}
 				}
 			});
-			let mut is_planet = false;
+			let mut is_planet = false; // not a bool because it's literally used as an integer
 			if let Some(planet_atmos) = m.planetary_atmos {
 				end_gas.merge(PLANETARY_ATMOS.get(planet_atmos).unwrap().value());
 				is_planet = true;
@@ -210,35 +208,34 @@ fn _process_turf_hook() {
 			*/
 			end_gas.multiply(GAS_DIFFUSION_CONSTANT);
 			// Rather than immediately setting it, we send it to the thread defined below to be set when it's safe to do so.
-			gas_sender
-				.send((*i, m.mix, adj, end_gas, is_planet))
-				.unwrap();
+			gas_sender.send(Some((i, m.mix, adj, end_gas,is_planet))).unwrap();
 		}
-		drop(gas_sender);
+		gas_sender.send(None).unwrap();
 	});
 	rayon::spawn(move || {
 		// This closure is what sets the gas. It locks the mixtures, saves it, then sends the "we did stuff" data to the main thread.
-		let write_to_gas =
-			|(i, mix, adj, end_gas, is_planet): (usize, usize, i8, GasMixture, bool)| {
-				let mut gas_copy = GasMixture::new(); // so we don't lock the mutex the *entire* time
-				let mut flags = 0;
-				let adj_amount = adj.count_ones() + (is_planet as u32);
-				GasMixtures::with_all_mixtures_mut(|all_mixtures| {
-					let gas: &mut GasMixture = all_mixtures.get_mut(mix).unwrap();
-					gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount as f32));
-					gas.merge(&end_gas);
-					gas_copy.copy_from_mutable(gas);
-				});
-				if gas_copy.is_visible() {
-					flags |= 1;
-				}
-				if gas_copy.can_react() {
-					flags |= 2;
-				}
-				sender.send((i, flags)).unwrap();
-			};
+		let write_to_gas = |(i, mix, adj, end_gas, is_planet): (usize, usize, i8, GasMixture, bool)| {
+			let mut gas_copy = GasMixture::new(); // so we don't lock the mutex the *entire* time
+			let mut flags = 0;
+			let adj_amount = adj.count_ones() + (is_planet as u32);
+			GasMixtures::with_all_mixtures_mut(|all_mixtures| {
+				let gas: &mut GasMixture = all_mixtures.get_mut(mix).unwrap();
+				gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount as f32));
+				gas.merge(&end_gas);
+				gas_copy.copy_from_mutable(gas);
+			});
+			if gas_copy.is_visible() {
+				flags |= 1;
+			}
+			if gas_copy.can_react() {
+				flags |= 2;
+			}
+			if flags > 0 {
+				sender.send(Some((i as u32, flags))).unwrap();
+			}
+		};
 		let max_north = TurfGrid::max_x();
-		let max_up = TurfGrid::max_y() * max_north;
+		let max_up = TurfGrid::max_y() * max_north + 1;
 		/*
 			The above two and the below are what ensures the "safety"
 			of the operation--it allows for the gas mixtures
@@ -246,60 +243,81 @@ fn _process_turf_hook() {
 			without causing inconsistent results, by only setting gas mixtures
 			that are *definitely not* going to be read again.
 		*/
-		let mut min_diff = max_north;
+		let mut min_diff = max_north + 1;
 		let mut chunk_change: VecDeque<(usize, usize, i8, GasMixture, bool)> =
 			VecDeque::with_capacity(100);
-		for (i, mix, adj, end_gas, is_planet) in gas_receiver.iter() {
-			if adj & 32 == 32 {
-				min_diff = max_up;
-			}
-			chunk_change.push_back((i, mix, adj, end_gas, is_planet));
-			let mut should_process = true;
-			while should_process {
-				if let Some(front) = chunk_change.front() {
-					if let Some(back) = chunk_change.back() {
-						if back.0 - front.0 > min_diff as usize {
-							write_to_gas(chunk_change.pop_front().unwrap());
-						} else {
-							should_process = false;
+		for res in gas_receiver.iter() {
+			if let Some((i, mix, adj, end_gas, is_planet)) = res {
+				if adj & 32 == 32 {
+					min_diff = max_up;
+				}
+				chunk_change.push_back((i, mix, adj, end_gas, is_planet));
+				let mut should_process = true;
+				while should_process {
+					if let Some(front) = chunk_change.front() {
+						if let Some(back) = chunk_change.back() {
+							if back.0 - front.0 > min_diff as usize {
+								write_to_gas(chunk_change.pop_front().unwrap());
+							} else {
+								should_process = false;
+							}
 						}
 					}
 				}
+			} else {
+				break;
 			}
 		}
 		// The processing thread is done--now we just do the rest.
 		for t in chunk_change.drain(..) {
 			write_to_gas(t);
 		}
+		sender.send(None).unwrap();
 	});
-	let mut any_err: DMResult = Ok(Value::null());
-	let ret_list = List::new();
-	for (turf_idx, activity_bitflags) in receiver.iter() {
-		let turf = TurfGrid::turf_by_id(turf_idx as u32);
-		if start_time.elapsed() > time_limit {
-			if activity_bitflags & 3 > 0 {
-				if let Err(e) = ret_list.set(&turf, activity_bitflags as f32) {
-					any_err = Err(e);
+	Ok(Value::null())
+}
+
+#[hook("/datum/controller/subsystem/air/proc/process_turfs_extools")]
+fn _process_turf_hook() {
+	/*
+		This is the replacement system for LINDA. LINDA requires a lot of bookkeeping,
+		which, when coefficient-wise operations are this fast, is all just unnecessary overhead.
+		This is a much simpler FDM system, basically like LINDA but without its most important feature (sleeping turfs).
+		It can run in parallel, but doesn't yet. We'll see if it's required for performance reasons.
+	*/
+	// First we copy the gas list immutably, so we can be sure this is consistent.
+	let time_limit = Duration::from_secs_f32(
+		args.get(0)
+			.ok_or_else(|| runtime!("Wrong number of arguments to process_turfs_extools: 0"))?
+			.as_number()?,
+	);
+	let start_time = Instant::now();
+	let receiver = TURF_PROCESS_CHANNEL.1.clone();
+	let mut done = false;
+	while start_time.elapsed() < time_limit && !done {
+		if let Ok(res) = receiver.try_recv() {
+			if let Some((i, flags)) = res {
+				let turf = TurfGrid::turf_by_id(i);
+				if flags & 2 == 2 {
+					if let Err(e) = turf.get("air").unwrap().call("react", &[turf.clone()]) {
+						src.call("stack_trace", &[&Value::from_string(e.message.as_str())])?;
+					}
 				}
-			}
-		} else {
-			if activity_bitflags & 2 == 2 {
-				if let Err(e) = turf.get("air").unwrap().call("react", &[turf.clone()]) {
-					any_err = Err(e);
+				if flags & 1 == 1 {
+					if let Err(e) = turf.call("update_visuals", &[Value::null()]) {
+						src.call("stack_trace", &[&Value::from_string(e.message.as_str())])?;
+					}
 				}
-			}
-			if activity_bitflags & 1 == 1 {
-				if let Err(e) = turf.call("update_visuals", &[Value::null()]) {
-					any_err = Err(e);
-				}
+			} else {
+				done = true;
 			}
 		}
 	}
-	if let Err(e) = any_err {
-		src.call("stack_trace", &[&Value::from_string(e.message.as_str())])
-			.unwrap();
-	}
-	Ok(Value::from(ret_list))
+	Ok(Value::from(if start_time.elapsed() < time_limit {
+		0.0
+	} else {
+		1.0
+	}))
 }
 
 #[derive(Copy, Clone, Default)]
@@ -360,7 +378,7 @@ fn finalize_eq(
 	i: usize,
 	turf: &TurfMixture,
 	monstermos_orig: &Cell<MonstermosInfo>,
-	other_turfs: &HashMap<usize, (TurfMixture, Cell<MonstermosInfo>)>,
+	other_turfs: &BTreeMap<usize, (TurfMixture, Cell<MonstermosInfo>)>,
 	max_x: i32,
 	max_y: i32,
 	sender: &std::sync::mpsc::Sender<(usize, usize, f32)>,
@@ -395,7 +413,7 @@ fn finalize_eq(
 		}
 	}
 	for j in 0..6 {
-		let bit = j << 1;
+		let bit = 1 << j;
 		if turf.adjacency & bit == bit {
 			let amount = monstermos_info.transfer_dirs[j as usize];
 			if amount > 0.0 {
@@ -444,7 +462,7 @@ fn finalize_eq_neighbors(
 	i: usize,
 	turf: &TurfMixture,
 	monstermos_info: &Cell<MonstermosInfo>,
-	other_turfs: &HashMap<usize, (TurfMixture, Cell<MonstermosInfo>)>,
+	other_turfs: &BTreeMap<usize, (TurfMixture, Cell<MonstermosInfo>)>,
 	max_x: i32,
 	max_y: i32,
 	sender: &std::sync::mpsc::Sender<(usize, usize, f32)>,
@@ -474,7 +492,7 @@ fn finalize_eq_neighbors(
 fn explosively_depressurize(
 	turf_idx: usize,
 	turf: TurfMixture,
-	info: &mut HashMap<usize, Cell<MonstermosInfo>>,
+	info: &mut BTreeMap<usize, Cell<MonstermosInfo>>,
 	queue_cycle_slow: &mut i32,
 	monstermos_hard_turf_limit: usize,
 	call_sender: &std::sync::mpsc::Sender<ByondMessage>,
@@ -524,7 +542,7 @@ fn explosively_depressurize(
 				continue;
 			}
 			for j in 0..6 {
-				let bit = j << 1;
+				let bit = 1 << j;
 				if m.adjacency & bit == bit {
 					let loc = adjacent_tile_id(j as u8, i, max_x, max_y);
 					let &(adj_i, adj_m) = turfs.get(loc).unwrap();
@@ -567,7 +585,7 @@ fn explosively_depressurize(
 	while cur_queue_idx < progression_order.len() {
 		let (i, m) = progression_order[cur_queue_idx];
 		for j in 0..6 {
-			let bit = j << 1;
+			let bit = 1 << j;
 			if m.adjacency & bit == bit {
 				let loc = adjacent_tile_id(j as u8, i, max_x, max_y);
 				let adj = TURF_GASES.get(&loc).unwrap();
@@ -700,7 +718,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 	let (call_result_sender, call_result_receiver) = mpsc::channel();
 	let (turf_sender, turf_receiver) = mpsc::channel();
 	rayon::spawn(move || {
-		let mut info: HashMap<usize, Cell<MonstermosInfo>> = HashMap::new();
+		let mut info: BTreeMap<usize, Cell<MonstermosInfo>> = BTreeMap::new();
 		let mut queue_cycle_slow = 0;
 		for e in TURF_GASES.iter() {
 			let (i, m) = (e.key(), e.value());
@@ -729,12 +747,13 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 				if !any_comparison_good {
 					continue;
 				}
-			}
-			else {
+			} else {
 				continue;
 			}
-			let mut turfs: Vec<(usize, TurfMixture)> = Vec::new();
-			let mut border_turfs: VecDeque<(usize, TurfMixture)> = VecDeque::new();
+			let mut turfs: Vec<(usize, TurfMixture)> = Vec::with_capacity(monstermos_turf_limit);
+			let mut border_turfs: VecDeque<(usize, TurfMixture)> =
+				VecDeque::with_capacity(monstermos_turf_limit);
+			let mut found_turfs: BTreeSet<usize> = BTreeSet::new();
 			let mut planet_turfs: Vec<(usize, TurfMixture)> = Vec::new();
 			let mut total_moles: f32 = 0.0;
 			#[allow(unused_mut)]
@@ -760,11 +779,17 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 					total_moles += turf_moles;
 				}
 				for loc in adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y).iter() {
+					if found_turfs.contains(loc) {
+						continue;
+					}
 					let adj_turf = TURF_GASES.get(loc).unwrap();
-					let adj_info = info.entry(cur_idx).or_insert(Default::default()).get();
+					let adj_orig = info.entry(cur_idx).or_insert(Default::default());
+					let mut adj_info = adj_orig.get();
 					#[cfg(explosive_decompression)]
 					{
 						if !adj_info.done_this_cycle {
+							adj_info.done_this_cycle = true;
+							adj_orig.set(adj_info);
 							border_turfs.push_back((*loc, *adj_turf.value()));
 							if adj_turf.value().is_immutable() {
 								// Uh oh! looks like someone opened an airlock to space! TIME TO SUCK ALL THE AIR OUT!!!
@@ -790,6 +815,8 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						if !adj_info.done_this_cycle
 							&& adj_turf.simulation_level != SIMULATION_LEVEL_NONE
 						{
+							adj_info.done_this_cycle = true;
+							adj_orig.set(adj_info);
 							border_turfs.push_back((*loc, *adj_turf.value()));
 						}
 					}
@@ -797,6 +824,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 				if space_this_time {
 					break;
 				}
+				found_turfs.insert(cur_idx);
 				turfs.push((cur_idx, cur_turf));
 			}
 			if space_this_time {
@@ -938,7 +966,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 								}
 							}
 						}
-						queue_idx += queue_idx;
+						queue_idx += 1;
 					}
 					for (idx, _) in queue.drain(..) {
 						let turf_orig = info.get(&idx).unwrap();
@@ -1114,7 +1142,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 			let info_to_send = turfs
 				.iter()
 				.map(|(i, m)| (*i, (*m, Cell::new(info.get(i).unwrap().get()))))
-				.collect::<HashMap<usize, (TurfMixture, Cell<MonstermosInfo>)>>();
+				.collect::<BTreeMap<usize, (TurfMixture, Cell<MonstermosInfo>)>>();
 			turf_sender.send(info_to_send).unwrap();
 		}
 		drop(turf_sender);

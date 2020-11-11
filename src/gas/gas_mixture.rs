@@ -211,23 +211,26 @@ impl GasMixture {
 		}
 		sharer_temperature
 	}
-	/// Returns -2 if gases are extremely similar, -1 if they have a temp difference, otherwise index of first gas with large difference found.
-	pub fn compare(&self, sample: &GasMixture) -> i32 {
-		for (i, (our_moles, their_moles)) in self.moles.iter().zip(sample.moles.iter()).enumerate()
+	/// Returns true if the gases are sufficiently different, false otherwise.
+	pub fn compare(&self, sample: &GasMixture, min_delta: f32) -> bool {
+		for delta in self
+			.moles
+			.iter()
+			.copied()
+			.zip_longest(sample.moles.iter().copied())
+			.map(|i| (i.reduce(|a, b| (a - b).abs())))
 		{
-			let delta = our_moles - their_moles;
-			if delta > MINIMUM_MOLES_DELTA_TO_MOVE && delta > our_moles * MINIMUM_AIR_RATIO_TO_MOVE
-			{
-				return i as i32;
+			if delta > min_delta {
+				return true;
 			}
 		}
-		if self.total_moles() > MINIMUM_MOLES_DELTA_TO_MOVE {
+		if self.total_moles() > min_delta {
 			if (self.temperature - sample.temperature).abs() > MINIMUM_TEMPERATURE_DELTA_TO_SUSPEND
 			{
-				return -1;
+				return true;
 			}
 		}
-		-2
+		false
 	}
 	/// Clears the moles from the gas.
 	pub fn clear(&mut self) {

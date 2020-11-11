@@ -3,7 +3,7 @@ extern crate lazy_static;
 
 pub mod gas;
 
-pub mod atmos_grid;
+pub mod turfs;
 
 use dm::*;
 
@@ -252,11 +252,10 @@ fn _compare_hook() {
 		Err(runtime!("Tried comparing a gas mix to nothing"))
 	} else {
 		with_mixes(src, &args[0], |gas_one, gas_two| {
-			let res = gas_one.compare(gas_two);
-			match res {
-				-1 => Ok(Value::from_string("temp")),
-				-2 => Ok(Value::from_string("")),
-				_ => gas_id_to_type(res as usize),
+			if gas_one.compare(gas_two, MINIMUM_MOLES_DELTA_TO_MOVE) {
+				Ok(Value::from(1.0))
+			} else {
+				Ok(Value::from(0.0))
 			}
 		})
 	}

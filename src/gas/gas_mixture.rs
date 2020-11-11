@@ -48,6 +48,11 @@ impl GasMixture {
 	}
 	/// Sets the temperature, if the mix isn't immutable. T
 	pub fn set_temperature(&mut self, temp: f32) {
+		assert!(
+			temp.is_normal(),
+			"temp was {}, it really shouldn't be",
+			temp
+		);
 		if !self.immutable && temp.is_normal() {
 			self.temperature = temp;
 		}

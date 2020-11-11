@@ -16,6 +16,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use std::cell::Cell;
 
+use coarsetime::{Duration, Instant};
+
+use flume;
+
+use rayon;
+
+use std::sync::mpsc;
+
+// TODO: tuple type the identifiers, starting in turf_grid over yonder
+
+// TODO: figure out why active turf processing takes over a minute (??)
+
 #[derive(Clone, Copy, Default)]
 struct TurfMixture {
 	/// An index into the thread local gases mix.
@@ -99,11 +111,6 @@ const SIMULATION_LEVEL_NONE: u8 = 0;
 //const SIMULATION_LEVEL_SHARE_FROM: u8 = 1;
 const SIMULATION_LEVEL_SIMULATE: u8 = 2;
 
-use crossbeam::channel;
-use rayon;
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
-
 fn adjacent_tile_id(id: u8, i: usize, max_x: i32, max_y: i32) -> usize {
 	let z_size = max_x * max_y;
 	let i = i as i32;
@@ -129,26 +136,30 @@ fn adjacent_tile_ids(adj: i8, i: usize, max_x: i32, max_y: i32) -> Vec<usize> {
 	ret
 }
 
-// gas id, bitflags (1 = should update visuals, 2 = should react)
+// turf id, bitflags (1 = should update visuals, 2 = should react)
 type TurfProcessInfo = Option<(u32, u32)>;
+
+// turf id, gas id, adjacency, gas mix, is it a planet?
+type TurfSaveInfo = Option<(usize, usize, i8, GasMixture, bool)>;
 
 lazy_static! {
 	static ref TURF_PROCESS_CHANNEL: (
-		channel::Sender<TurfProcessInfo>,
-		channel::Receiver<TurfProcessInfo>
-	) = channel::unbounded();
+		flume::Sender<TurfProcessInfo>,
+		flume::Receiver<TurfProcessInfo>
+	) = flume::unbounded();
+	static ref TURF_SAVE_CHANNEL: (flume::Sender<TurfSaveInfo>, flume::Receiver<TurfSaveInfo>) =
+		flume::unbounded();
 }
 
 #[hook("/datum/controller/subsystem/air/proc/begin_turf_process")]
 fn _begin_turfs_hook() {
-	let sender = TURF_PROCESS_CHANNEL.0.clone();
-	let (gas_sender, gas_receiver) = mpsc::channel();
-	rayon::spawn(move || {
+	rayon::spawn(|| {
+		let gas_sender = TURF_SAVE_CHANNEL.0.clone();
 		let max_x = TurfGrid::max_x();
 		let max_y = TurfGrid::max_y();
 		for e in TURF_GASES
 			.iter()
-			.filter(|e| e.value().simulation_level >= SIMULATION_LEVEL_SIMULATE)
+			.filter(|e| e.value().simulation_level >= SIMULATION_LEVEL_SIMULATE && e.value().adjacency > 0)
 		{
 			let (i, m) = (*e.key(), *e.value());
 			/*
@@ -208,69 +219,73 @@ fn _begin_turfs_hook() {
 			*/
 			end_gas.multiply(GAS_DIFFUSION_CONSTANT);
 			// Rather than immediately setting it, we send it to the thread defined below to be set when it's safe to do so.
-			gas_sender.send(Some((i, m.mix, adj, end_gas,is_planet))).unwrap();
+			gas_sender
+				.send(Some((i, m.mix, adj, end_gas, is_planet)))
+				.unwrap();
 		}
 		gas_sender.send(None).unwrap();
 	});
 	rayon::spawn(move || {
+		let sender = TURF_PROCESS_CHANNEL.0.clone();
+		let gas_receiver = TURF_SAVE_CHANNEL.1.clone();
+		let max_x = TurfGrid::max_x();
+		let max_y = TurfGrid::max_y();
 		// This closure is what sets the gas. It locks the mixtures, saves it, then sends the "we did stuff" data to the main thread.
-		let write_to_gas = |(i, mix, adj, end_gas, is_planet): (usize, usize, i8, GasMixture, bool)| {
-			let mut gas_copy = GasMixture::new(); // so we don't lock the mutex the *entire* time
-			let mut flags = 0;
-			let adj_amount = adj.count_ones() + (is_planet as u32);
-			GasMixtures::with_all_mixtures_mut(|all_mixtures| {
-				let gas: &mut GasMixture = all_mixtures.get_mut(mix).unwrap();
-				gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount as f32));
-				gas.merge(&end_gas);
-				gas_copy.copy_from_mutable(gas);
-			});
-			if gas_copy.is_visible() {
-				flags |= 1;
-			}
-			if gas_copy.can_react() {
-				flags |= 2;
-			}
-			if flags > 0 {
-				sender.send(Some((i as u32, flags))).unwrap();
-			}
-		};
-		let max_north = TurfGrid::max_x();
-		let max_up = TurfGrid::max_y() * max_north + 1;
-		/*
-			The above two and the below are what ensures the "safety"
-			of the operation--it allows for the gas mixtures
-			to be set in parallel, and for updating to happen in parallel,
-			without causing inconsistent results, by only setting gas mixtures
-			that are *definitely not* going to be read again.
-		*/
-		let mut min_diff = max_north + 1;
-		let mut chunk_change: VecDeque<(usize, usize, i8, GasMixture, bool)> =
-			VecDeque::with_capacity(100);
+		let write_to_gas =
+			|(i, mix, adj, end_gas, is_planet): (usize, usize, i8, &GasMixture, bool)| {
+				let mut gas_copy = GasMixture::new(); // so we don't lock the mutex the *entire* time
+				let mut flags = 0;
+				let adj_amount = adj.count_ones() + (is_planet as u32);
+				GasMixtures::with_all_mixtures_mut(|all_mixtures| {
+					let gas: &mut GasMixture = all_mixtures.get_mut(mix).unwrap();
+					gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount as f32));
+					gas.merge(&end_gas);
+					gas_copy.copy_from_mutable(gas);
+				});
+				if gas_copy.is_visible() {
+					flags |= 1;
+				}
+				if gas_copy.can_react() {
+					flags |= 2;
+				}
+				if flags > 0 {
+					sender.send(Some((i as u32, flags))).unwrap();
+				}
+			};
+		let mut chunk_change: BTreeMap<usize, (usize, i8, GasMixture, bool)> = BTreeMap::new();
+		let mut already_done: BTreeSet<usize> = BTreeSet::new();
+		for e in TURF_GASES
+			.iter()
+			.filter(|e| e.value().simulation_level < SIMULATION_LEVEL_SIMULATE)
+		{
+			already_done.insert(*e.key());
+		}
 		for res in gas_receiver.iter() {
 			if let Some((i, mix, adj, end_gas, is_planet)) = res {
-				if adj & 32 == 32 {
-					min_diff = max_up;
-				}
-				chunk_change.push_back((i, mix, adj, end_gas, is_planet));
-				let mut should_process = true;
-				while should_process {
-					if let Some(front) = chunk_change.front() {
-						if let Some(back) = chunk_change.back() {
-							if back.0 - front.0 > min_diff as usize {
-								write_to_gas(chunk_change.pop_front().unwrap());
-							} else {
-								should_process = false;
-							}
-						}
-					}
-				}
+				chunk_change.insert(i, (mix, adj, end_gas, is_planet));
 			} else {
 				break;
 			}
+			for (&i, (mix, adj, end_gas, is_planet)) in chunk_change.iter() {
+				let mut should_operate = true;
+				for loc in adjacent_tile_ids(*adj, i, max_x, max_y).iter() {
+					if !(chunk_change.contains_key(&loc) || already_done.contains(loc)) {
+						should_operate = false;
+						break;
+					}
+				}
+				if should_operate {
+					write_to_gas((i, *mix, *adj, end_gas, *is_planet));
+					already_done.insert(i);
+				}
+			}
+			for i in already_done.iter() {
+				chunk_change.remove(i);
+			}
 		}
 		// The processing thread is done--now we just do the rest.
-		for t in chunk_change.drain(..) {
-			write_to_gas(t);
+		for (&i, (mix, adj, end_gas, is_planet)) in chunk_change.iter() {
+			write_to_gas((i, *mix, *adj, end_gas, *is_planet));
 		}
 		sender.send(None).unwrap();
 	});
@@ -286,15 +301,15 @@ fn _process_turf_hook() {
 		It can run in parallel, but doesn't yet. We'll see if it's required for performance reasons.
 	*/
 	// First we copy the gas list immutably, so we can be sure this is consistent.
-	let time_limit = Duration::from_secs_f32(
+	let time_limit = Duration::from_millis(
 		args.get(0)
-			.ok_or_else(|| runtime!("Wrong number of arguments to process_turfs_extools: 0"))?
-			.as_number()?,
+			.ok_or_else(|| runtime!("Wrong number of arguments to process_turfs_extools"))?
+			.as_number()? as u64,
 	);
 	let start_time = Instant::now();
 	let receiver = TURF_PROCESS_CHANNEL.1.clone();
 	let mut done = false;
-	while start_time.elapsed() < time_limit && !done {
+	while !done && start_time.elapsed() < time_limit {
 		if let Ok(res) = receiver.try_recv() {
 			if let Some((i, flags)) = res {
 				let turf = TurfGrid::turf_by_id(i);
@@ -313,11 +328,11 @@ fn _process_turf_hook() {
 			}
 		}
 	}
-	Ok(Value::from(if start_time.elapsed() < time_limit {
-		0.0
+	if done {
+		Ok(Value::from(0.0))
 	} else {
-		1.0
-	}))
+		Ok(Value::from(1.0))
+	}
 }
 
 #[derive(Copy, Clone, Default)]
@@ -701,10 +716,10 @@ fn explosively_depressurize(
 fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 	let monstermos_turf_limit = src.get_number("monstermos_turf_limit")? as usize;
 	let monstermos_hard_turf_limit = src.get_number("monstermos_hard_turf_limit")? as usize;
-	let time_limit = Duration::from_secs_f32(
+	let time_limit = Duration::from_millis(
 		args.get(0)
 			.ok_or_else(|| runtime!("Wrong number of arguments to process_turfs_extools: 0"))?
-			.as_number()?,
+			.as_number()? as u64,
 	);
 	let start_time = Instant::now();
 	let max_x = TurfGrid::max_x();
@@ -722,7 +737,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 		let mut queue_cycle_slow = 0;
 		for e in TURF_GASES.iter() {
 			let (i, m) = (e.key(), e.value());
-			if m.simulation_level >= SIMULATION_LEVEL_SIMULATE {
+			if m.simulation_level >= SIMULATION_LEVEL_SIMULATE && m.adjacency > 0 {
 				if let Some(our_info) = info.get(i) {
 					if our_info.get().done_this_cycle {
 						continue;
@@ -973,8 +988,13 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						let mut turf_info = turf_orig.get();
 						if turf_info.curr_transfer_amount > 0.0 && turf_info.curr_transfer_dir != 6
 						{
-							let adj_orig =
-								info.get(&(turf_info.curr_transfer_dir as usize)).unwrap();
+							let adj_tile_id = adjacent_tile_id(
+								turf_info.curr_transfer_dir as u8,
+								idx,
+								max_x,
+								max_y,
+							);
+							let adj_orig = info.get(&adj_tile_id).unwrap();
 							let mut adj_info = adj_orig.get();
 							turf_info.adjust_eq_movement(
 								&mut adj_info,
@@ -1150,7 +1170,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 		drop(hpd_sender);
 	});
 	rayon::spawn(move || {
-		for turf_set in turf_receiver.recv() {
+		for turf_set in turf_receiver.iter() {
 			for (i, (turf, monstermos_info)) in turf_set.iter() {
 				finalize_eq(
 					*i,

@@ -189,7 +189,8 @@ pub struct GasMixtures {}
 	vector directly. Seriously, please don't. I have the wrapper functions for a reason.
 */
 lazy_static! {
-	static ref GAS_MIXTURES: RwLock<Vec<GasMixture>> = RwLock::new(Vec::with_capacity(200000));
+	static ref GAS_MIXTURES: RwLock<Vec<RwLock<GasMixture>>> =
+		RwLock::new(Vec::with_capacity(100000));
 }
 thread_local! {
 	static NEXT_GAS_IDS: RefCell<Vec<usize>> = RefCell::new(Vec::new());
@@ -198,84 +199,79 @@ thread_local! {
 impl GasMixtures {
 	pub fn with_all_mixtures<F>(mut f: F)
 	where
-		F: FnMut(&Vec<GasMixture>),
+		F: FnMut(&Vec<RwLock<GasMixture>>),
 	{
 		f(&GAS_MIXTURES.read().unwrap());
-	}
-	pub fn with_all_mixtures_mut<F>(mut f: F)
-	where
-		F: FnMut(&mut Vec<GasMixture>),
-	{
-		f(&mut GAS_MIXTURES.write().unwrap());
-	}
-	pub fn copy_from_mixtures(pairs: &[(usize, GasMixture)]) {
-		let mut lock = GAS_MIXTURES.write().unwrap();
-		for (i, gas) in pairs.to_owned() {
-			lock[i] = gas;
-		}
 	}
 	fn with_gas_mixture<F>(id: f32, mut f: F) -> DMResult
 	where
 		F: FnMut(&GasMixture) -> DMResult,
 	{
-		f(GAS_MIXTURES
-			.read()
-			.unwrap()
+		let mixtures = GAS_MIXTURES.read().unwrap();
+		let mix = mixtures
 			.get(id.to_bits() as usize)
-			.ok_or(runtime!("No gas mixture with ID {} exists!", id.to_bits()))?)
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?
+			.read()
+			.unwrap();
+		f(&mix)
 	}
 	fn with_gas_mixture_mut<F>(id: f32, mut f: F) -> DMResult
 	where
 		F: FnMut(&mut GasMixture) -> DMResult,
 	{
-		f(GAS_MIXTURES
+		let gas_mixtures = GAS_MIXTURES.read().unwrap();
+		let mut mix = gas_mixtures
+			.get(id.to_bits() as usize)
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?
 			.write()
-			.unwrap()
-			.get_mut(id.to_bits() as usize)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?)
+			.unwrap();
+		f(&mut mix)
 	}
 	fn with_gas_mixtures<F>(src: f32, arg: f32, mut f: F) -> DMResult
 	where
 		F: FnMut(&GasMixture, &GasMixture) -> DMResult,
 	{
 		let gas_mixtures = GAS_MIXTURES.read().unwrap();
-		f(
-			gas_mixtures
-				.get(src.to_bits() as usize)
-				.ok_or(runtime!("No gas mixture with ID {} exists!", src.to_bits()))?,
-			gas_mixtures
-				.get(arg.to_bits() as usize)
-				.ok_or(runtime!("No gas mixture with ID {} exists!", arg.to_bits()))?,
-		)
+		let src_gas = gas_mixtures
+			.get(src.to_bits() as usize)
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src.to_bits()))?
+			.read()
+			.unwrap();
+		let arg_gas = gas_mixtures
+			.get(arg.to_bits() as usize)
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg.to_bits()))?
+			.read()
+			.unwrap();
+		f(&src_gas, &arg_gas)
 	}
 	fn with_gas_mixtures_mut<F>(src: f32, arg: f32, mut f: F) -> DMResult
 	where
 		F: FnMut(&mut GasMixture, &mut GasMixture) -> DMResult,
 	{
-		let src_mix: &mut GasMixture;
-		let arg_mix: &mut GasMixture;
 		let src = src.to_bits() as usize;
 		let arg = arg.to_bits() as usize;
-		let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
-		if src > arg {
-			let split_idx = arg + 1;
-			let (left, right) = gas_mixtures.split_at_mut(split_idx);
-			arg_mix = left.last_mut().unwrap();
-			src_mix = right
-				.get_mut(src - split_idx)
-				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?;
-		} else if src < arg {
-			let split_idx = src + 1;
-			let (left, right) = gas_mixtures.split_at_mut(split_idx);
-			src_mix = left.last_mut().unwrap();
-			arg_mix = right
-				.get_mut(arg - split_idx)
-				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?;
+		let gas_mixtures = GAS_MIXTURES.read().unwrap();
+		if src == arg {
+			let mut entry = gas_mixtures
+				.get(src)
+				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?.write().unwrap();
+			let mix = &mut entry;
+			let mut copied = mix.clone();
+			f(mix, &mut copied)
 		} else {
-			src_mix = gas_mixtures.get_mut(src).unwrap();
-			return f(src_mix, &mut src_mix.clone());
+			f(
+				&mut gas_mixtures
+					.get(src)
+					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?
+					.write()
+					.unwrap(),
+				&mut gas_mixtures
+					.get(arg)
+					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?
+					.write()
+					.unwrap(),
+			)
 		}
-		f(src_mix, arg_mix)
 	}
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
 	pub fn register_gasmix(mix: &Value) -> DMResult {
@@ -283,7 +279,9 @@ impl GasMixtures {
 			if gas_ids.borrow().is_empty() {
 				let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
 				let next_idx = gas_mixtures.len();
-				gas_mixtures.push(GasMixture::from_vol(mix.get_number("initial_volume")?));
+				gas_mixtures.push(RwLock::new(GasMixture::from_vol(
+					mix.get_number("initial_volume")?,
+				)));
 				mix.set(
 					"_extools_pointer_gasmixture",
 					f32::from_bits(next_idx as u32),
@@ -291,7 +289,7 @@ impl GasMixtures {
 			} else {
 				let idx = gas_ids.borrow_mut().pop().unwrap();
 				*GAS_MIXTURES.write().unwrap().get_mut(idx).unwrap() =
-					GasMixture::from_vol(mix.get_number("initial_volume")?);
+					RwLock::new(GasMixture::from_vol(mix.get_number("initial_volume")?));
 				mix.set("_extools_pointer_gasmixture", f32::from_bits(idx as u32));
 			}
 			Ok(Value::null())

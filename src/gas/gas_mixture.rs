@@ -6,6 +6,8 @@ use super::{gas_specific_heats, gas_visibility, reactions};
 
 use super::reaction::Reaction;
 
+use sharded_slab::Clear;
+
 use smallvec::SmallVec;
 
 /// The data structure representing a Space Station 13 gas mixture.
@@ -269,6 +271,14 @@ impl GasMixture {
 				false
 			}
 		})
+	}
+}
+
+impl Clear for GasMixture {
+	fn clear(&mut self) {
+		self.moles.clear();
+		self.temperature = 2.7;
+		self.volume = 0.0;
 	}
 }
 

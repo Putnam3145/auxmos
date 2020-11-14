@@ -1,17 +1,17 @@
-pub mod fea;
+pub mod fda;
 
-#[cfg(monstermos)]
+#[cfg(feature = "monstermos")]
 pub mod monstermos;
 
 use super::gas::gas_mixture::GasMixture;
-
-use super::gas::GasMixtures;
 
 use turf_grid::*;
 
 use dm::*;
 
-use super::gas::constants::*;
+use crate::constants::*;
+
+use crate::GasMixtures;
 
 use dashmap::DashMap;
 
@@ -25,9 +25,7 @@ use rayon::prelude::*;
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
-// TODO: tuple type the identifiers, starting in turf_grid over yonder
-
-// TODO: figure out why active turf processing takes over a minute (??)
+// TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
 
 #[derive(Clone, Copy, Default)]
 struct TurfMixture {
@@ -41,30 +39,63 @@ struct TurfMixture {
 #[allow(dead_code)]
 impl TurfMixture {
 	pub fn is_immutable(&self) -> bool {
-		let mut ret = false;
+		let mut res = false;
 		GasMixtures::with_all_mixtures(|all_mixtures| {
-			ret = all_mixtures.get(self.mix).unwrap().is_immutable();
+			res = all_mixtures
+				.get(self.mix)
+				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
+				.read()
+				.unwrap()
+				.is_immutable()
 		});
-		ret
+		res
+	}
+	pub fn return_pressure(&self) -> f32 {
+		let mut res = 0.0;
+		GasMixtures::with_all_mixtures(|all_mixtures| {
+			res = all_mixtures
+				.get(self.mix)
+				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
+				.read()
+				.unwrap()
+				.return_pressure()
+		});
+		res
 	}
 	pub fn total_moles(&self) -> f32 {
-		let mut ret = 0.0;
+		let mut res = 0.0;
 		GasMixtures::with_all_mixtures(|all_mixtures| {
-			ret = all_mixtures.get(self.mix).unwrap().total_moles();
+			res = all_mixtures
+				.get(self.mix)
+				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
+				.read()
+				.unwrap()
+				.total_moles()
 		});
-		ret
+		res
 	}
 	pub fn clear_air(&self) {
-		GasMixtures::with_all_mixtures_mut(|all_mixtures| {
-			all_mixtures.get_mut(self.mix).unwrap().clear();
+		GasMixtures::with_all_mixtures(|all_mixtures| {
+			all_mixtures
+				.get(self.mix)
+				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
+				.write()
+				.unwrap()
+				.clear();
 		});
 	}
 	pub fn get_gas_copy(&self) -> GasMixture {
-		let mut mix: GasMixture = GasMixture::new();
+		let mut ret: GasMixture = GasMixture::new();
 		GasMixtures::with_all_mixtures(|all_mixtures| {
-			mix = all_mixtures.get(self.mix).unwrap().clone();
+			let to_copy = all_mixtures
+				.get(self.mix)
+				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
+				.read()
+				.unwrap();
+			ret.copy_from_mutable(&to_copy);
+			ret.volume = to_copy.volume;
 		});
-		mix
+		ret
 	}
 }
 
@@ -85,12 +116,10 @@ fn _hook_register_turf() {
 		if is_planet != 0.0 {
 			if let Ok(at_str) = src.get_string("initial_gas_mix") {
 				to_insert.planetary_atmos = Some(Box::leak(at_str.into_boxed_str()));
-				GasMixtures::with_all_mixtures(|all_mixtures| {
-					let mut entry = PLANETARY_ATMOS
-						.entry(to_insert.planetary_atmos.unwrap())
-						.or_insert(all_mixtures.get(to_insert.mix).unwrap().clone());
-					entry.mark_immutable();
-				})
+				let mut entry = PLANETARY_ATMOS
+					.entry(to_insert.planetary_atmos.unwrap())
+					.or_insert(to_insert.get_gas_copy());
+				entry.mark_immutable();
 			}
 		}
 	}

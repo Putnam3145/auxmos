@@ -177,7 +177,7 @@ fn _process_turf_hook() {
 						if diff < 0.0 {
 							if let Err(e) = other_turf.call(
 								"consider_pressure_difference",
-								&[turf.clone(), Value::from(diff)],
+								&[turf.clone(), Value::from(-diff)],
 							) {
 								src.call(
 									"stack_trace",

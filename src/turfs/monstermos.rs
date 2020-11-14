@@ -57,13 +57,18 @@ impl ByondArg {
 const BLOCKS_CALLER: u32 = 1;
 
 // turf, flags (see above), what to call, arguments
-#[cfg(feature = "explosive_decompression")]
-type ByondMessage<'a> = (u32, u32, &'a str, Vec<ByondArg>, Option<flume::Sender<bool>>);
+type ByondMessage<'a> = (
+	u32,
+	u32,
+	&'a str,
+	Vec<ByondArg>,
+	Option<flume::Sender<bool>>,
+);
 
 lazy_static! {
 	static ref EQUALIZE_FINALIZE_CHANNEL: (
-		flume::Sender<(usize,usize,f32)>,
-		flume::Receiver<(usize,usize,f32)>
+		flume::Sender<(usize, usize, f32)>,
+		flume::Receiver<(usize, usize, f32)>
 	) = flume::unbounded();
 	static ref CALL_CHANNEL: (
 		flume::Sender<ByondMessage<'static>>,
@@ -73,13 +78,11 @@ lazy_static! {
 		flume::Sender<BTreeMap<usize, (TurfMixture, Cell<MonstermosInfo>)>>,
 		flume::Receiver<BTreeMap<usize, (TurfMixture, Cell<MonstermosInfo>)>>
 	) = flume::unbounded();
-	static ref HIGH_PRESSURE_DELTA_CHANNEL: (
-		flume::Sender<Vec<ByondArg>>,
-		flume::Receiver<Vec<ByondArg>>,
-	) = flume::unbounded();
+	static ref HIGH_PRESSURE_DELTA_CHANNEL: (flume::Sender<Vec<ByondArg>>, flume::Receiver<Vec<ByondArg>>,) =
+		flume::unbounded();
 }
 
-use std::sync::atomic::{AtomicU8,Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 const EQUALIZATION_NONE: u8 = 0;
 const EQUALIZATION_PROCESSING: u8 = 1;
@@ -140,14 +143,7 @@ fn finalize_eq(
 			let amount = transfer_dirs[j as usize];
 			if amount > 0.0 {
 				if turf.total_moles() < amount {
-					finalize_eq_neighbors(
-						i,
-						&transfer_dirs,
-						turf,
-						other_turfs,
-						max_x,
-						max_y,
-					);
+					finalize_eq_neighbors(i, &transfer_dirs, turf, other_turfs, max_x, max_y);
 					monstermos_info = monstermos_orig.get();
 				}
 				let adj_id = adjacent_tile_id(j as u8, i, max_x, max_y);
@@ -257,13 +253,13 @@ fn explosively_depressurize(
 				if m.adjacency & bit == bit {
 					let loc = adjacent_tile_id(j as u8, i, max_x, max_y);
 					let adj = TURF_GASES.get(&loc).unwrap();
-					let (&adj_i, &adj_m) = (adj.key(),adj.value());
+					let (&adj_i, &adj_m) = (adj.key(), adj.value());
 					let adj_orig = info.entry(loc).or_insert(Default::default());
 					let mut adj_info = adj_orig.get();
 					if adj_info.done_this_cycle {
 						continue;
 					}
-					let (call_result_sender,call_result_receiver) = flume::bounded(0);
+					let (call_result_sender, call_result_receiver) = flume::bounded(0);
 					call_sender
 						.send((
 							i as u32,
@@ -321,7 +317,7 @@ fn explosively_depressurize(
 								ByondArg::Str("pressure_specific_target".to_string()),
 								ByondArg::Turf(i as u32),
 							],
-							None
+							None,
 						))
 						.unwrap();
 					adj_info.last_slow_queue_cycle = *queue_cycle_slow;
@@ -401,7 +397,7 @@ fn explosively_depressurize(
 		}
 		m.clear_air();
 		call_sender
-			.send((*i as u32, 0, "update_visuals", vec![ByondArg::Null],None))
+			.send((*i as u32, 0, "update_visuals", vec![ByondArg::Null], None))
 			.unwrap();
 		call_sender
 			.send((
@@ -434,7 +430,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 		let mut queue_cycle_slow = 0;
 		let call_sender = CALL_CHANNEL.0.clone();
 		let turf_sender = MONSTERMOS_TURF_CHANNEL.0.clone();
-		EQUALIZATION_STEP.store(EQUALIZATION_PROCESSING,Ordering::Relaxed);
+		EQUALIZATION_STEP.store(EQUALIZATION_PROCESSING, Ordering::Relaxed);
 		for e in TURF_GASES.iter() {
 			let (i, m) = (e.key(), e.value());
 			if m.simulation_level >= SIMULATION_LEVEL_SIMULATE && m.adjacency > 0 {
@@ -443,12 +439,17 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						continue;
 					}
 				}
+				let our_moles = m.total_moles();
+				if our_moles < 1.0 {
+					continue;
+				}
 				let adj_tiles = adjacent_tile_ids(m.adjacency, *i, max_x, max_y);
 				let mut any_comparison_good = false;
-				let our_moles = m.total_moles();
 				for loc in adj_tiles.iter() {
 					if let Some(gas) = TURF_GASES.get(loc) {
-						if (gas.total_moles() - our_moles).abs() > MINIMUM_MOLES_DELTA_TO_MOVE {
+						if (gas.total_moles() - our_moles).abs()
+							> MINIMUM_MOLES_DELTA_TO_MOVE * 10.0
+						{
 							any_comparison_good = true;
 							break;
 						}
@@ -545,7 +546,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						.get_mut()
 						.done_this_cycle = false;
 				}
-				turfs.resize(monstermos_turf_limit,Default::default());
+				turfs.resize(monstermos_turf_limit, Default::default());
 			}
 			let average_moles = total_moles / (turfs.len() as f32);
 			let mut giver_turfs: Vec<(usize, TurfMixture)> = Vec::new();
@@ -816,7 +817,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 								{
 									continue;
 								}
-								let (call_result_sender,call_result_receiver) = flume::bounded(0);
+								let (call_result_sender, call_result_receiver) = flume::bounded(0);
 								call_sender
 									.send((
 										i as u32,
@@ -867,28 +868,24 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 				.collect::<BTreeMap<usize, (TurfMixture, Cell<MonstermosInfo>)>>();
 			turf_sender.send(info_to_send).unwrap();
 		}
-		EQUALIZATION_STEP.store(EQUALIZATION_FINALIZING,Ordering::Relaxed);
+		EQUALIZATION_STEP.store(EQUALIZATION_FINALIZING, Ordering::Relaxed);
 	});
 	rayon::spawn(move || {
 		let turf_receiver = MONSTERMOS_TURF_CHANNEL.1.clone();
-		while EQUALIZATION_STEP.load(Ordering::Relaxed) < EQUALIZATION_DONE
-		{
+		while EQUALIZATION_STEP.load(Ordering::Relaxed) < EQUALIZATION_DONE {
 			let mut res = turf_receiver.recv_timeout(std::time::Duration::from_millis(1));
 			while res.is_ok() {
 				let turf_set = res.unwrap();
 				for (i, (turf, monstermos_info)) in turf_set.iter() {
-					finalize_eq(
-						*i,
-						turf,
-						monstermos_info,
-						&turf_set,
-						max_x,
-						max_y,
-					);
+					finalize_eq(*i, turf, monstermos_info, &turf_set, max_x, max_y);
 				}
 				res = turf_receiver.recv_timeout(std::time::Duration::from_micros(50));
 			}
-			EQUALIZATION_STEP.compare_and_swap(EQUALIZATION_FINALIZING, EQUALIZATION_DONE, Ordering::SeqCst);
+			EQUALIZATION_STEP.compare_and_swap(
+				EQUALIZATION_FINALIZING,
+				EQUALIZATION_DONE,
+				Ordering::SeqCst,
+			);
 		}
 	});
 	let ret_list = List::new();
@@ -906,7 +903,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 		while call_res.is_ok() {
 			done = false;
 			should_back_off = false;
-			let (turf_idx, flags, fn_name, args,call_result_sender) = call_res.unwrap();
+			let (turf_idx, flags, fn_name, args, call_result_sender) = call_res.unwrap();
 			let turf = TurfGrid::turf_by_id(turf_idx as u32);
 			match fn_name {
 				"set" => turf.set(args[0].to_string().unwrap(), &args[1].to_usable_arg()),
@@ -966,7 +963,12 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 		} else {
 			backoff.reset();
 		}
-		done = done && EQUALIZATION_STEP.compare_and_swap(EQUALIZATION_DONE, EQUALIZATION_NONE, Ordering::Relaxed) == EQUALIZATION_DONE;
+		done = done
+			&& EQUALIZATION_STEP.compare_and_swap(
+				EQUALIZATION_DONE,
+				EQUALIZATION_NONE,
+				Ordering::Relaxed,
+			) == EQUALIZATION_DONE;
 	}
 	Ok(Value::from(ret_list))
 }

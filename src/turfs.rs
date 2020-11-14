@@ -143,7 +143,7 @@ fn _hook_adjacent_turfs() {
 	}
 	Ok(Value::null())
 }
-#[cfg(monstermos)]
+#[cfg(feature = "monstermos")]
 const SIMULATION_LEVEL_NONE: u8 = 0;
 //const SIMULATION_LEVEL_SHARE_FROM: u8 = 1;
 const SIMULATION_LEVEL_SIMULATE: u8 = 2;

@@ -254,7 +254,9 @@ impl GasMixtures {
 		if src == arg {
 			let mut entry = gas_mixtures
 				.get(src)
-				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?.write().unwrap();
+				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?
+				.write()
+				.unwrap();
 			let mix = &mut entry;
 			let mut copied = mix.clone();
 			f(mix, &mut copied)

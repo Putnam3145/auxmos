@@ -15,23 +15,22 @@ use crate::GasMixtures;
 
 use dashmap::DashMap;
 
-use coarsetime::{Duration, Instant};
-
-use flume;
-
 use rayon;
 
 use rayon::prelude::*;
 
-use std::sync::atomic::{AtomicU8, Ordering};
-
+const NORTH: u8 = 1;
+const SOUTH: u8 = 2;
+const EAST: u8 = 4;
+const WEST: u8 = 8;
+//const UP: u8 = 16;
+//const DOWN: u8 = 32;
 // TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
 
 #[derive(Clone, Copy, Default)]
 struct TurfMixture {
-	/// An index into the thread local gases mix.
 	pub mix: usize,
-	pub adjacency: i8,
+	pub adjacency: u8,
 	pub simulation_level: u8,
 	pub planetary_atmos: Option<&'static str>,
 }
@@ -99,8 +98,19 @@ impl TurfMixture {
 	}
 }
 
+// all non-space turfs get these, not just ones with air--a lot of gas logic relies on all TurfMixtures having a valid mix
+#[derive(Clone, Copy, Default)]
+struct ThermalInfo {
+	pub temperature: f32,
+	pub thermal_conductivity: f32,
+	pub heat_capacity: f32,
+	pub adjacency: u8,
+	pub adjacent_to_space: bool,
+}
+
 lazy_static! {
 	static ref TURF_GASES: DashMap<usize, TurfMixture> = DashMap::new();
+	static ref TURF_TEMPERATURES: DashMap<usize, ThermalInfo> = DashMap::new();
 	static ref PLANETARY_ATMOS: DashMap<&'static str, GasMixture> = DashMap::new();
 }
 
@@ -127,19 +137,51 @@ fn _hook_register_turf() {
 	Ok(Value::null())
 }
 
-#[hook("/turf/proc/__update_extools_adjacent_turfs")]
+#[hook("/turf/proc/__auxtools_update_turf_temp_info")]
+fn _hook_turf_update_temp() {
+	let mut entry = TURF_TEMPERATURES
+		.entry(unsafe { src.value.data.id as usize })
+		.or_insert_with(|| ThermalInfo {
+			temperature: 293.15,
+			thermal_conductivity: 0.0,
+			heat_capacity: 0.0,
+			adjacency: NORTH | SOUTH | WEST | EAST,
+			adjacent_to_space: false,
+		});
+	entry.thermal_conductivity = src.get_number("thermal_conductivity")?;
+	entry.heat_capacity = src.get_number("heat_capacity")?;
+	entry.adjacency = NORTH | SOUTH | WEST | EAST;
+	entry.adjacent_to_space = args[0].as_number()? != 0.0;
+	Ok(Value::null())
+}
+
+#[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn _hook_adjacent_turfs() {
 	if let Ok(adjacent_list) = src.get_list("atmos_adjacent_turfs") {
 		let id: usize;
 		unsafe {
 			id = src.value.data.id as usize;
 		}
-		if let Some(mut turf) = TURF_GASES.get_mut(&id) {
-			turf.adjacency = 0;
-			for i in 1..adjacent_list.len() + 1 {
-				turf.adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
-			}
+		let mut adjacency = 0;
+		for i in 1..adjacent_list.len() + 1 {
+			adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
 		}
+		if let Some(mut turf) = TURF_GASES.get_mut(&id) {
+			turf.adjacency = adjacency as u8;
+		}
+	}
+	if let Ok(atmos_supeconductivity) = src.get_number("conductivity_blocked_directions") {
+		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_supeconductivity as u8);
+		let mut entry = TURF_TEMPERATURES
+			.entry(unsafe { src.value.data.id as usize })
+			.or_insert_with(|| ThermalInfo {
+				temperature: src.get_number("temperature").unwrap(),
+				thermal_conductivity: src.get_number("thermal_conductivity").unwrap(),
+				heat_capacity: src.get_number("heat_capacity").unwrap(),
+				adjacency: adjacency,
+				adjacent_to_space: args[0].as_number().unwrap() != 0.0,
+			});
+		entry.adjacency = adjacency;
 	}
 	Ok(Value::null())
 }
@@ -162,7 +204,7 @@ fn adjacent_tile_id(id: u8, i: usize, max_x: i32, max_y: i32) -> usize {
 	}
 }
 
-fn adjacent_tile_ids(adj: i8, i: usize, max_x: i32, max_y: i32) -> Vec<usize> {
+fn adjacent_tile_ids(adj: u8, i: usize, max_x: i32, max_y: i32) -> Vec<usize> {
 	let mut ret = Vec::with_capacity(adj.count_ones() as usize);
 	for j in 0..6 {
 		let bit = 1 << j;

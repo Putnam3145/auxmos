@@ -69,8 +69,6 @@ type ByondMessage<'a> = (
 	Option<flume::Sender<bool>>,
 );
 
-// TODO: replace all of this except CALL_CHANNEL with callbacks
-
 lazy_static! {
 	static ref EQUALIZE_FINALIZE_CHANNEL: (
 		flume::Sender<(usize, usize, f32)>,
@@ -87,8 +85,6 @@ lazy_static! {
 	static ref HIGH_PRESSURE_DELTA_CHANNEL: (flume::Sender<Vec<ByondArg>>, flume::Receiver<Vec<ByondArg>>,) =
 		flume::unbounded();
 }
-
-use std::sync::atomic::{AtomicU8, Ordering};
 
 const EQUALIZATION_NONE: u8 = 0;
 const EQUALIZATION_PROCESSING: u8 = 1;
@@ -425,22 +421,23 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 	let monstermos_hard_turf_limit = src.get_number("monstermos_hard_turf_limit")? as usize;
 	let max_x = TurfGrid::max_x();
 	let max_y = TurfGrid::max_y();
-	if EQUALIZATION_STEP.compare_and_swap(
-		EQUALIZATION_NONE,
-		EQUALIZATION_PROCESSING,
-		Ordering::SeqCst,
-	) == EQUALIZATION_NONE
+	let turf_receiver = HIGH_PRESSURE_TURFS.1.clone();
+	if !turf_receiver.is_empty()
+		&& EQUALIZATION_STEP.compare_and_swap(
+			EQUALIZATION_NONE,
+			EQUALIZATION_PROCESSING,
+			Ordering::SeqCst,
+		) == EQUALIZATION_NONE
 	{
 		rayon::spawn(move || {
 			let mut info: BTreeMap<usize, Cell<MonstermosInfo>> = BTreeMap::new();
 			let mut queue_cycle_slow = 0;
 			let call_sender = CALL_CHANNEL.0.clone();
 			let turf_sender = MONSTERMOS_TURF_CHANNEL.0.clone();
-			EQUALIZATION_STEP.store(EQUALIZATION_PROCESSING, Ordering::Relaxed);
-			for e in TURF_GASES.iter() {
-				let (i, m) = (e.key(), e.value());
+			for i in turf_receiver.try_iter() {
+				let m = TURF_GASES.get(&i).unwrap();
 				if m.simulation_level >= SIMULATION_LEVEL_SIMULATE && m.adjacency > 0 {
-					if let Some(our_info) = info.get(i) {
+					if let Some(our_info) = info.get(&i) {
 						if our_info.get().done_this_cycle {
 							continue;
 						}
@@ -449,7 +446,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 					if our_moles < 1.0 {
 						continue;
 					}
-					let adj_tiles = adjacent_tile_ids(m.adjacency, *i, max_x, max_y);
+					let adj_tiles = adjacent_tile_ids(m.adjacency, i, max_x, max_y);
 					let mut any_comparison_good = false;
 					for loc in adj_tiles.iter() {
 						if let Some(gas) = TURF_GASES.get(loc) {
@@ -477,7 +474,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 				#[allow(unused_mut)]
 				let mut space_this_time = false;
 				#[warn(unused_mut)]
-				border_turfs.push_back((*i, *m));
+				border_turfs.push_back((i, *m));
 				while border_turfs.len() > 0 {
 					if turfs.len() > monstermos_hard_turf_limit {
 						break;
@@ -506,6 +503,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						#[cfg(feature = "explosive_decompression")]
 						{
 							if !adj_info.done_this_cycle {
+								adj_info = Default::default();
 								adj_info.done_this_cycle = true;
 								adj_orig.set(adj_info);
 								border_turfs.push_back((*loc, *adj_turf.value()));
@@ -531,6 +529,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 								&& adj_turf.simulation_level != SIMULATION_LEVEL_NONE
 							{
 								adj_info.done_this_cycle = true;
+								adj_info = Default::default();
 								adj_orig.set(adj_info);
 								border_turfs.push_back((*loc, *adj_turf.value()));
 							}
@@ -552,9 +551,9 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 					}
 					turfs.resize(monstermos_turf_limit, Default::default());
 				}
-				let average_moles = total_moles / (turfs.len() as f32);
-				let mut giver_turfs: Vec<(usize, TurfMixture)> = Vec::new();
-				let mut taker_turfs: Vec<(usize, TurfMixture)> = Vec::new();
+				let average_moles = total_moles / (turfs.len() as f32 - planet_turfs.len() as f32);
+				let mut giver_turfs: Vec<(usize, TurfMixture)> = Vec::with_capacity(turfs.len()/4);
+				let mut taker_turfs: Vec<(usize, TurfMixture)> = Vec::with_capacity(turfs.len()/4);
 				for (i, m) in turfs.iter() {
 					let cur_info = info.entry(*i).or_default().get_mut();
 					cur_info.mole_delta -= average_moles;
@@ -566,9 +565,8 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 				}
 				let log_n = ((turfs.len() as f32).log2().floor()) as usize;
 				if giver_turfs.len() > log_n && taker_turfs.len() > log_n {
-					use float_ord::FloatOrd;
 					turfs.sort_by_cached_key(|(idx, _)| {
-						FloatOrd(info.get(idx).unwrap().get().mole_delta)
+						float_ord::FloatOrd(info.get(idx).unwrap().get().mole_delta)
 					});
 					for (i, m) in turfs.iter() {
 						let cur_orig = info.get(i).unwrap();
@@ -621,7 +619,6 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						} else {
 							taker_turfs.push((*i, *m));
 						}
-						cur_orig.set(cur_info);
 					}
 				}
 				// alright this is the part that can become O(n^2).
@@ -889,7 +886,13 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 		});
 		rayon::spawn(move || {
 			let turf_receiver = MONSTERMOS_TURF_CHANNEL.1.clone();
-			while EQUALIZATION_STEP.load(Ordering::Relaxed) < EQUALIZATION_DONE {
+			while !turf_receiver.is_empty()
+				|| EQUALIZATION_STEP.compare_and_swap(
+					EQUALIZATION_FINALIZING,
+					EQUALIZATION_DONE,
+					Ordering::SeqCst,
+				) < EQUALIZATION_DONE
+			{
 				let mut res = turf_receiver.recv_timeout(std::time::Duration::from_millis(1));
 				while res.is_ok() {
 					let turf_set = res.unwrap();
@@ -898,11 +901,6 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 					}
 					res = turf_receiver.recv_timeout(std::time::Duration::from_micros(50));
 				}
-				EQUALIZATION_STEP.compare_and_swap(
-					EQUALIZATION_FINALIZING,
-					EQUALIZATION_DONE,
-					Ordering::SeqCst,
-				);
 			}
 		});
 	}
@@ -916,11 +914,10 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 	let time_limit = Duration::from_millis(arg_limit as u64);
 	let start_time = Instant::now();
 	let end_time = start_time + time_limit;
-	let mut done = false;
 	let final_receiver = EQUALIZE_FINALIZE_CHANNEL.1.clone();
 	let call_receiver = CALL_CHANNEL.1.clone();
 	let hpd_receiver = HIGH_PRESSURE_DELTA_CHANNEL.1.clone();
-	while !done {
+	while !final_receiver.is_empty() || !call_receiver.is_empty() || !hpd_receiver.is_empty() {
 		let res = flume::Selector::new()
 			.recv(&call_receiver, |call_res| {
 				let (turf_idx, flags, fn_name, args, call_result_sender) = call_res.unwrap();
@@ -971,20 +968,20 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 				}
 			})
 			.wait_deadline(end_time);
-		done = res.is_err();
-	}
-	if final_receiver.try_iter().peekable().peek().is_some() {
-		Ok(Value::from(1.0))
-	} else {
-		match EQUALIZATION_STEP.compare_and_swap(
-			EQUALIZATION_DONE,
-			EQUALIZATION_NONE,
-			Ordering::SeqCst,
-		) {
-			EQUALIZATION_DONE => Ok(Value::from(0.0)),
-			_ => Ok(Value::from(1.0)),
+		if let Err(e) = res {
+			if e == flume::select::SelectError::Timeout {
+				return Ok(Value::from(true));
+			}
 		}
 	}
+	let prev_value = EQUALIZATION_STEP.compare_and_swap(
+		EQUALIZATION_DONE,
+		EQUALIZATION_NONE,
+		Ordering::SeqCst,
+	);
+	Ok(Value::from(
+		prev_value != EQUALIZATION_DONE && prev_value != EQUALIZATION_NONE,
+	))
 }
 
 #[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_extools")]

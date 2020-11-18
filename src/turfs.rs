@@ -109,9 +109,17 @@ struct ThermalInfo {
 }
 
 lazy_static! {
+	// All the turfs that have gas mixtures.
 	static ref TURF_GASES: DashMap<usize, TurfMixture> = DashMap::new();
+	// Turfs with temperatures/heat capacities. This is distinct from the above.
 	static ref TURF_TEMPERATURES: DashMap<usize, ThermalInfo> = DashMap::new();
+	// We store planetary atmos by hash of the initial atmos string here for speed.
 	static ref PLANETARY_ATMOS: DashMap<&'static str, GasMixture> = DashMap::new();
+	// For monstermos or other hypothetical fast-process systems.
+	static ref HIGH_PRESSURE_TURFS: (
+		flume::Sender<usize>,
+		flume::Receiver<usize>
+	) = flume::unbounded();
 }
 
 #[hook("/turf/proc/update_air_ref")]

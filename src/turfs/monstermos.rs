@@ -44,7 +44,7 @@ enum ByondArg {
 impl ByondArg {
 	pub fn to_usable_arg(&self) -> Value {
 		match self {
-			Self::Turf(n) => TurfGrid::turf_by_id(*n),
+			Self::Turf(n) => unsafe { Value::turf_by_id(*n) },
 			Self::Float(n) => Value::from(*n),
 			Self::Str(s) => Value::from_string(s),
 			Self::Null => Value::null(),
@@ -204,13 +204,13 @@ fn explosively_depressurize(
 	info: &mut BTreeMap<usize, Cell<MonstermosInfo>>,
 	queue_cycle_slow: &mut i32,
 	monstermos_hard_turf_limit: usize,
+	max_x: i32,
+	max_y: i32,
 ) {
 	let mut total_gases_deleted = 0.0;
 	let mut turfs: Vec<(usize, TurfMixture)> = Vec::new();
 	let mut space_turfs: Vec<(usize, TurfMixture)> = Vec::new();
 	turfs.push((turf_idx, turf));
-	let max_x = TurfGrid::max_x();
-	let max_y = TurfGrid::max_y();
 	let cur_orig = info.get(&turf_idx).unwrap();
 	let mut cur_info: MonstermosInfo = Default::default();
 	cur_info.done_this_cycle = true;
@@ -419,8 +419,8 @@ fn explosively_depressurize(
 fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 	let monstermos_turf_limit = src.get_number("monstermos_turf_limit")? as usize;
 	let monstermos_hard_turf_limit = src.get_number("monstermos_hard_turf_limit")? as usize;
-	let max_x = TurfGrid::max_x();
-	let max_y = TurfGrid::max_y();
+	let max_x = ctx.get_world().get_number("maxx")? as i32;
+	let max_y = ctx.get_world().get_number("maxy")? as i32;
 	let turf_receiver = HIGH_PRESSURE_TURFS.1.clone();
 	if !turf_receiver.is_empty()
 		&& EQUALIZATION_STEP.compare_and_swap(
@@ -552,8 +552,10 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 					turfs.resize(monstermos_turf_limit, Default::default());
 				}
 				let average_moles = total_moles / (turfs.len() as f32 - planet_turfs.len() as f32);
-				let mut giver_turfs: Vec<(usize, TurfMixture)> = Vec::with_capacity(turfs.len()/4);
-				let mut taker_turfs: Vec<(usize, TurfMixture)> = Vec::with_capacity(turfs.len()/4);
+				let mut giver_turfs: Vec<(usize, TurfMixture)> =
+					Vec::with_capacity(turfs.len() / 4);
+				let mut taker_turfs: Vec<(usize, TurfMixture)> =
+					Vec::with_capacity(turfs.len() / 4);
 				for (i, m) in turfs.iter() {
 					let cur_info = info.entry(*i).or_default().get_mut();
 					cur_info.mole_delta -= average_moles;
@@ -921,7 +923,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 		let res = flume::Selector::new()
 			.recv(&call_receiver, |call_res| {
 				let (turf_idx, flags, fn_name, args, call_result_sender) = call_res.unwrap();
-				let turf = TurfGrid::turf_by_id(turf_idx as u32);
+				let turf = unsafe { Value::turf_by_id_unchecked(turf_idx as u32) };
 				match fn_name {
 					"set" => turf.set(args[0].to_string().unwrap(), &args[1].to_usable_arg()),
 					_ => {
@@ -940,8 +942,8 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 			.recv(&final_receiver, |final_res| {
 				let (turf_idx, other_idx, amount) = final_res.unwrap();
 				let real_amount = Value::from(-amount);
-				let turf = TurfGrid::turf_by_id(turf_idx as u32);
-				let other_turf = TurfGrid::turf_by_id(other_idx as u32);
+				let turf = unsafe { Value::turf_by_id(turf_idx as u32) };
+				let other_turf = unsafe { Value::turf_by_id(other_idx as u32) };
 				if let Err(e) = turf.call("update_visuals", &[Value::null()]) {
 					src.call("stack_trace", &[&Value::from_string(e.message.as_str())])
 						.unwrap();
@@ -974,11 +976,8 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 			}
 		}
 	}
-	let prev_value = EQUALIZATION_STEP.compare_and_swap(
-		EQUALIZATION_DONE,
-		EQUALIZATION_NONE,
-		Ordering::SeqCst,
-	);
+	let prev_value =
+		EQUALIZATION_STEP.compare_and_swap(EQUALIZATION_DONE, EQUALIZATION_NONE, Ordering::SeqCst);
 	Ok(Value::from(
 		prev_value != EQUALIZATION_DONE && prev_value != EQUALIZATION_NONE,
 	))

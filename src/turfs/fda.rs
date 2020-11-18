@@ -30,11 +30,11 @@ fn _process_turf_hook() {
 		// The callback does the in-byond reaction, updating visuals, pressure diffs.
 		// It's run ASAP by the Auxtools callback subsystem.
 		let cb = Callback::new(args.get(0).unwrap())?;
+		let max_x = ctx.get_world().get_number("maxx")? as i32;
+		let max_y = ctx.get_world().get_number("maxy")? as i32;
 		rayon::spawn(move || {
 			PROCESSING_TURF_STEP.store(TURF_STEP_PROCESSING, Ordering::SeqCst);
 			let start_time = Instant::now();
-			let max_x = TurfGrid::max_x();
-			let max_y = TurfGrid::max_y();
 			let high_pressure_sender = HIGH_PRESSURE_TURFS.0.clone();
 			let mut turfs_to_save: Vec<(usize, TurfMixture, GasMixture, [(u32, f32); 6])> =
 				TURF_GASES
@@ -259,12 +259,15 @@ fn _process_turf_hook() {
 												enemy_tile.consider_pressure_difference(T, -difference)
 																*/
 								cb.invoke(move || {
-									let turf = TurfGrid::turf_by_id(turf_id as u32);
+									let turf =
+										unsafe { Value::turf_by_id_unchecked(turf_id as u32) };
 									let true_pressure_diffs = List::new();
 									for &(id, diff) in diffs_copy.iter() {
 										if diff.abs() > f32::EPSILON {
 											let sub_list = List::new();
-											sub_list.append(&TurfGrid::turf_by_id(id));
+											sub_list.append(&unsafe {
+												Value::turf_by_id_unchecked(id)
+											});
 											sub_list.append(diff);
 											true_pressure_diffs.append(&Value::from(sub_list));
 										}
@@ -337,11 +340,11 @@ fn _process_heat_hook() {
 				T.temperature_expose()
 		*/
 		let cb = Callback::new(args.get(0).unwrap())?;
+		let max_x = ctx.get_world().get_number("maxx")? as i32;
+		let max_y = ctx.get_world().get_number("maxy")? as i32;
 		rayon::spawn(move || {
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * time_delta;
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * time_delta;
-			let max_x = TurfGrid::max_x();
-			let max_y = TurfGrid::max_y();
 			let post_temps: Vec<(usize, f32)> = TURF_TEMPERATURES
 				/*
 					Same weird shard trick as above.
@@ -427,7 +430,12 @@ fn _process_heat_hook() {
 				// Temp diffs of less than 0.05 are meaningless and this callback, while not slow,
 				// is still going to lag the hell out of the server if run for every turf
 				if (original_temp - t.temperature).abs() > 0.05 {
-					cb.invoke(move || vec![TurfGrid::turf_by_id(i as u32), Value::from(new_temp)]);
+					cb.invoke(move || {
+						vec![
+							unsafe { Value::turf_by_id_unchecked(i as u32) },
+							Value::from(new_temp),
+						]
+					});
 				}
 			});
 			PROCESSING_HEAT.store(false, Ordering::SeqCst);

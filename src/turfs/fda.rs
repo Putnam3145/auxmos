@@ -137,7 +137,7 @@ fn _process_turf_hook() {
 										*/
 										GasMixtures::with_all_mixtures(|all_mixtures| {
 											let mut j = 0;
-											for (_,loc) in adj_tiles.iter() {
+											for (_, loc) in adj_tiles.iter() {
 												if let Some(turf) = TURF_GASES.get(loc) {
 													if let Some(entry) = all_mixtures.get(turf.mix)
 													{

@@ -88,9 +88,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.0.62"
+version = "1.0.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1770ced377336a88a67c473594ccc14eca6f4559217c34f64aac8f83d641b40"
+checksum = "ad9c6140b5a2c7db40ea56eb1821245e5362b44385c05b76288b1a599934ac87"
 
 [[package]]
 name = "cfg-if"
@@ -295,9 +295,10 @@ dependencies = [
 [[package]]
 name = "dm"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#68261beebcb856a52ab25887d8193173acf8d210"
+source = "git+https://github.com/willox/auxtools#cd4789003554b2d1a197c3b75a5bfb26d45af643"
 dependencies = [
  "cc",
+ "coarsetime",
  "detour",
  "dm-impl",
  "flume",
@@ -312,7 +313,7 @@ dependencies = [
 [[package]]
 name = "dm-impl"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#68261beebcb856a52ab25887d8193173acf8d210"
+source = "git+https://github.com/willox/auxtools#cd4789003554b2d1a197c3b75a5bfb26d45af643"
 dependencies = [
  "hex",
  "proc-macro2",
@@ -898,7 +899,7 @@ checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 [[package]]
 name = "sigscan"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#68261beebcb856a52ab25887d8193173acf8d210"
+source = "git+https://github.com/willox/auxtools#cd4789003554b2d1a197c3b75a5bfb26d45af643"
 dependencies = [
  "libc",
  "winapi 0.3.9",

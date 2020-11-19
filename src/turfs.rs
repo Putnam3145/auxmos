@@ -3,6 +3,9 @@ pub mod fda;
 #[cfg(feature = "monstermos")]
 pub mod monstermos;
 
+#[cfg(feature = "putnamos")]
+pub mod putnamos;
+
 use super::gas::gas_mixture::GasMixture;
 
 use dm::*;
@@ -210,7 +213,7 @@ fn adjacent_tile_id(id: u8, i: usize, max_x: i32, max_y: i32) -> usize {
 	}
 }
 
-fn adjacent_tile_ids(adj: u8, i: usize, max_x: i32, max_y: i32) -> Vec<(u8,usize)> {
+fn adjacent_tile_ids(adj: u8, i: usize, max_x: i32, max_y: i32) -> Vec<(u8, usize)> {
 	let mut ret = Vec::with_capacity(adj.count_ones() as usize);
 	for j in 0..6 {
 		let bit = 1 << j;

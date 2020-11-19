@@ -139,32 +139,29 @@ fn finalize_eq(
 			}
 		}
 	}
-	for j in 0..6 {
-		let bit = 1 << j;
-		if turf.adjacency & bit == bit {
-			let amount = transfer_dirs[j as usize];
-			if amount > 0.0 {
-				if turf.total_moles() < amount {
-					finalize_eq_neighbors(i, &transfer_dirs, turf, other_turfs, max_x, max_y);
-					monstermos_info = monstermos_orig.get();
+	for (j, loc) in adjacent_tile_ids(turf.adjacency, idx, max_x, max_y) {
+		let amount = transfer_dirs[j as usize];
+		if amount > 0.0 {
+			if turf.total_moles() < amount {
+				finalize_eq_neighbors(i, &transfer_dirs, turf, other_turfs, max_x, max_y);
+				monstermos_info = monstermos_orig.get();
+			}
+			let adj_id = adjacent_tile_id(j as u8, i, max_x, max_y);
+			if let Some((adj_turf, adj_orig)) = other_turfs.get(&adj_id) {
+				let mut adj_info = adj_orig.take();
+				adj_info.transfer_dirs[OPP_DIR_INDEX[j as usize]] = 0.0;
+				if turf.mix != adj_turf.mix {
+					GasMixtures::with_all_mixtures(|all_mixtures| {
+						let our_entry = all_mixtures.get(turf.mix).unwrap();
+						let their_entry = all_mixtures.get(adj_turf.mix).unwrap();
+						let mut air = our_entry.write().unwrap();
+						let mut other_air = their_entry.write().unwrap();
+						other_air.merge(&air.remove(amount));
+					});
 				}
-				let adj_id = adjacent_tile_id(j as u8, i, max_x, max_y);
-				if let Some((adj_turf, adj_orig)) = other_turfs.get(&adj_id) {
-					let mut adj_info = adj_orig.take();
-					adj_info.transfer_dirs[OPP_DIR_INDEX[j as usize]] = 0.0;
-					if turf.mix != adj_turf.mix {
-						GasMixtures::with_all_mixtures(|all_mixtures| {
-							let our_entry = all_mixtures.get(turf.mix).unwrap();
-							let their_entry = all_mixtures.get(adj_turf.mix).unwrap();
-							let mut air = our_entry.write().unwrap();
-							let mut other_air = their_entry.write().unwrap();
-							other_air.merge(&air.remove(amount));
-						});
-					}
-					adj_orig.set(adj_info);
-					monstermos_orig.set(monstermos_info);
-					sender.send((i, adj_id, amount)).unwrap();
-				}
+				adj_orig.set(adj_info);
+				monstermos_orig.set(monstermos_info);
+				sender.send((i, adj_id, amount)).unwrap();
 			}
 		}
 	}
@@ -178,11 +175,9 @@ fn finalize_eq_neighbors(
 	max_x: i32,
 	max_y: i32,
 ) {
-	for j in 0..6 {
+	for (j, adjacent_id) in adjacent_tile_ids(turf.adjacency, idx, max_x, max_y) {
 		let amount = transfer_dirs[j];
-		let bit = 1 << j;
-		if amount < 0.0 && turf.adjacency & bit == bit {
-			let adjacent_id = adjacent_tile_id(j as u8, i, max_x, max_y);
+		if amount < 0.0 {
 			if let Some((other_turf, other_info)) = other_turfs.get(&adjacent_id) {
 				finalize_eq(
 					adjacent_id,
@@ -272,7 +267,8 @@ fn explosively_depressurize(
 						))
 						.unwrap();
 					call_result_receiver.recv().unwrap();
-					if m.adjacency & bit == bit {
+					let new_m = TURF_GASES[i];
+					if new_m.adjacency & bit == bit {
 						adj_info = Default::default();
 						adj_info.done_this_cycle = true;
 						adj_orig.set(adj_info);
@@ -296,36 +292,32 @@ fn explosively_depressurize(
 	cur_queue_idx = 0;
 	while cur_queue_idx < progression_order.len() {
 		let (i, m) = progression_order[cur_queue_idx];
-		for j in 0..6 {
-			let bit = 1 << j;
-			if m.adjacency & bit == bit {
-				let loc = adjacent_tile_id(j as u8, i, max_x, max_y);
-				let adj = TURF_GASES.get(&loc).unwrap();
-				let (adj_i, adj_m) = (adj.key(), adj.value());
-				let adj_orig = info.entry(loc).or_default();
-				let mut adj_info = adj_orig.get();
-				if adj_info.done_this_cycle
-					&& adj_info.last_slow_queue_cycle != *queue_cycle_slow
-					&& !adj_m.is_immutable()
-				{
-					adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
-					adj_info.curr_transfer_amount = 0.0;
-					call_sender
-						.send((
-							*adj_i as u32,
-							0,
-							"set",
-							vec![
-								ByondArg::Str("pressure_specific_target".to_string()),
-								ByondArg::Turf(i as u32),
-							],
-							None,
-						))
-						.unwrap();
-					adj_info.last_slow_queue_cycle = *queue_cycle_slow;
-					adj_orig.set(adj_info);
-					progression_order.push((*adj_i, *adj_m));
-				}
+		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
+			let adj = TURF_GASES.get(&loc).unwrap();
+			let (adj_i, adj_m) = (adj.key(), adj.value());
+			let adj_orig = info.entry(loc).or_default();
+			let mut adj_info = adj_orig.get();
+			if adj_info.done_this_cycle
+				&& adj_info.last_slow_queue_cycle != *queue_cycle_slow
+				&& !adj_m.is_immutable()
+			{
+				adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
+				adj_info.curr_transfer_amount = 0.0;
+				call_sender
+					.send((
+						*adj_i as u32,
+						0,
+						"set",
+						vec![
+							ByondArg::Str("pressure_specific_target".to_string()),
+							ByondArg::Turf(i as u32),
+						],
+						None,
+					))
+					.unwrap();
+				adj_info.last_slow_queue_cycle = *queue_cycle_slow;
+				adj_orig.set(adj_info);
+				progression_order.push((*adj_i, *adj_m));
 			}
 		}
 		cur_queue_idx += 1;
@@ -416,6 +408,7 @@ fn explosively_depressurize(
 	hpd_sender.send(hpd_entries).unwrap();
 }
 
+// In its own function due to the Rust compiler not liking a massive function in a hook.
 fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 	let monstermos_turf_limit = src.get_number("monstermos_turf_limit")? as usize;
 	let monstermos_hard_turf_limit = src.get_number("monstermos_hard_turf_limit")? as usize;
@@ -448,7 +441,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 					}
 					let adj_tiles = adjacent_tile_ids(m.adjacency, i, max_x, max_y);
 					let mut any_comparison_good = false;
-					for loc in adj_tiles.iter() {
+					for (_, loc) in adj_tiles.iter() {
 						if let Some(gas) = TURF_GASES.get(loc) {
 							if (gas.total_moles() - our_moles).abs()
 								> MINIMUM_MOLES_DELTA_TO_MOVE * 10.0
@@ -493,7 +486,9 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						}
 						total_moles += turf_moles;
 					}
-					for loc in adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y).iter() {
+					for (_, loc) in
+						adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y).iter()
+					{
 						if found_turfs.contains(loc) {
 							continue;
 						}
@@ -576,17 +571,14 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						cur_info.fast_done = true;
 						let mut eligible_adjacents = 0;
 						if cur_info.mole_delta > 0.0 {
-							for j in 0..6 {
-								let bit = 1 << j;
-								if m.adjacency & bit == bit {
-									let loc = adjacent_tile_id(j, *i, max_x, max_y);
-									if let Some(adj_orig) = info.get(&loc) {
-										let adj_info = adj_orig.get();
-										if adj_info.fast_done || adj_info.done_this_cycle {
-											continue;
-										} else {
-											eligible_adjacents |= bit;
-										}
+							for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
+								let loc = adjacent_tile_id(j, *i, max_x, max_y);
+								if let Some(adj_orig) = info.get(&loc) {
+									let adj_info = adj_orig.get();
+									if adj_info.fast_done || adj_info.done_this_cycle {
+										continue;
+									} else {
+										eligible_adjacents |= (j << 1);
 									}
 								}
 							}
@@ -642,42 +634,34 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 								break;
 							}
 							let (idx, turf) = *queue.get(queue_idx).unwrap();
-							for j in 0..6 {
-								let bit = 1 << j;
-								if turf.adjacency & bit == bit {
-									if let Some(adj_orig) =
-										info.get(&adjacent_tile_id(j, idx, max_x, max_y))
+							for (j, loc) in adjacent_tile_ids(turf.adjacency, idx, max_x, max_y) {
+								if let Some(adj_orig) = info.get(&loc) {
+									if giver_info.mole_delta <= 0.0 {
+										break;
+									}
+									let mut adj_info = adj_orig.get();
+									if !adj_info.done_this_cycle
+										&& adj_info.last_slow_queue_cycle != queue_cycle_slow
 									{
-										if giver_info.mole_delta <= 0.0 {
-											break;
-										}
-										let mut adj_info = adj_orig.get();
-										if !adj_info.done_this_cycle
-											&& adj_info.last_slow_queue_cycle != queue_cycle_slow
-										{
-											queue.push_back((
-												*i,
-												*TURF_GASES.get(i).unwrap().value(),
-											));
-											adj_info.last_slow_queue_cycle = queue_cycle_slow;
-											adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
-											adj_info.curr_transfer_amount = 0.0;
-											if adj_info.mole_delta < 0.0 {
-												if -adj_info.mole_delta > giver_info.mole_delta {
-													adj_info.curr_transfer_amount -=
-														giver_info.mole_delta;
-													adj_info.mole_delta += giver_info.mole_delta;
-													giver_info.mole_delta = 0.0;
-												} else {
-													adj_info.curr_transfer_amount +=
-														adj_info.mole_delta;
-													giver_info.mole_delta += adj_info.mole_delta;
-													adj_info.mole_delta = 0.0;
-												}
+										queue.push_back((*i, *TURF_GASES.get(i).unwrap().value()));
+										adj_info.last_slow_queue_cycle = queue_cycle_slow;
+										adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
+										adj_info.curr_transfer_amount = 0.0;
+										if adj_info.mole_delta < 0.0 {
+											if -adj_info.mole_delta > giver_info.mole_delta {
+												adj_info.curr_transfer_amount -=
+													giver_info.mole_delta;
+												adj_info.mole_delta += giver_info.mole_delta;
+												giver_info.mole_delta = 0.0;
+											} else {
+												adj_info.curr_transfer_amount +=
+													adj_info.mole_delta;
+												giver_info.mole_delta += adj_info.mole_delta;
+												adj_info.mole_delta = 0.0;
 											}
-											adj_orig.set(adj_info);
-											giver_orig.set(giver_info);
 										}
+										adj_orig.set(adj_info);
+										giver_orig.set(giver_info);
 									}
 								}
 							}
@@ -726,42 +710,36 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 								break;
 							}
 							let (idx, turf) = *queue.get(queue_idx).unwrap();
-							for j in 0..6 {
-								let bit = 1 << j;
-								if turf.adjacency & bit == bit {
-									if let Some(adj_orig) =
-										info.get(&adjacent_tile_id(j, idx, max_x, max_y))
+							for (j, loc) in adjacent_tile_ids(turf.adjacency, idx, max_x, max_y) {
+								if let Some(adj_orig) =
+									info.get(&adjacent_tile_id(j, idx, max_x, max_y))
+								{
+									let mut adj_info = adj_orig.get();
+									if taker_info.mole_delta >= 0.0 {
+										break;
+									}
+									if !adj_info.done_this_cycle
+										&& adj_info.last_slow_queue_cycle != queue_cycle_slow
 									{
-										let mut adj_info = adj_orig.get();
-										if taker_info.mole_delta >= 0.0 {
-											break;
-										}
-										if !adj_info.done_this_cycle
-											&& adj_info.last_slow_queue_cycle != queue_cycle_slow
-										{
-											queue.push_back((
-												*i,
-												*TURF_GASES.get(i).unwrap().value(),
-											));
-											adj_info.last_slow_queue_cycle = queue_cycle_slow;
-											adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
-											adj_info.curr_transfer_amount = 0.0;
-											if adj_info.mole_delta > 0.0 {
-												if adj_info.mole_delta > -taker_info.mole_delta {
-													adj_info.curr_transfer_amount -=
-														taker_info.mole_delta;
-													adj_info.mole_delta += taker_info.mole_delta;
-													taker_info.mole_delta = 0.0;
-												} else {
-													adj_info.curr_transfer_amount +=
-														adj_info.mole_delta;
-													taker_info.mole_delta += adj_info.mole_delta;
-													adj_info.mole_delta = 0.0;
-												}
+										queue.push_back((*i, *TURF_GASES.get(i).unwrap().value()));
+										adj_info.last_slow_queue_cycle = queue_cycle_slow;
+										adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
+										adj_info.curr_transfer_amount = 0.0;
+										if adj_info.mole_delta > 0.0 {
+											if adj_info.mole_delta > -taker_info.mole_delta {
+												adj_info.curr_transfer_amount -=
+													taker_info.mole_delta;
+												adj_info.mole_delta += taker_info.mole_delta;
+												taker_info.mole_delta = 0.0;
+											} else {
+												adj_info.curr_transfer_amount +=
+													adj_info.mole_delta;
+												taker_info.mole_delta += adj_info.mole_delta;
+												adj_info.mole_delta = 0.0;
 											}
-											adj_orig.set(adj_info);
-											taker_orig.set(taker_info);
 										}
+										adj_orig.set(adj_info);
+										taker_orig.set(taker_info);
 									}
 								}
 							}
@@ -983,6 +961,8 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 	))
 }
 
+// Expected function call: process_turf_equalize_extools((Master.current_ticklimit - TICK_USAGE) * world.tick_lag)
+// Returns: TRUE if not done, FALSE if done
 #[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_extools")]
 fn _hook_equalize() {
 	actual_equalize(src, args)

@@ -16,6 +16,27 @@ static PROCESSING_TURF_STEP: AtomicU8 = AtomicU8::new(TURF_STEP_NOT_STARTED);
 
 static TURF_PROCESS_TIME: AtomicU64 = AtomicU64::new(1000000);
 
+/*
+post_process_turf is the following function:
+/proc/post_process_turf(flags,turf/open/T,list/tiles_with_diffs)
+	if(!isopenturf(T))
+		return
+	if(flags & 2)
+		T.air.react()
+	if(flags & 1)
+		T.update_visuals()
+	for(var/list/pair in tiles_with_diffs)
+		var/turf/open/enemy_tile = pair[1]
+		if(istype(enemy_tile))
+			var/difference = pair[2]
+			if(difference > 0)
+				T.consider_pressure_difference(enemy_tile, difference)
+			else
+				enemy_tile.consider_pressure_difference(T, -difference)
+*/
+
+// Expected function call: process_turfs_extools(CALLBACK(GLOBAL_PROC,/proc/post_process_turf))
+// Returns: TRUE if not done, FALSE if done
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_extools")]
 fn _process_turf_hook() {
 	/*
@@ -76,7 +97,7 @@ fn _process_turf_hook() {
 									let mut should_share = false;
 									GasMixtures::with_all_mixtures(|all_mixtures| {
 										let gas = all_mixtures.get(m.mix).unwrap().read().unwrap();
-										for loc in adj_tiles.iter() {
+										for (_, loc) in adj_tiles.iter() {
 											if let Some(turf) = TURF_GASES.get(loc) {
 												if let Ok(adj_gas) =
 													all_mixtures.get(turf.mix).unwrap().read()
@@ -116,7 +137,7 @@ fn _process_turf_hook() {
 										*/
 										GasMixtures::with_all_mixtures(|all_mixtures| {
 											let mut j = 0;
-											for loc in adj_tiles.iter() {
+											for (_,loc) in adj_tiles.iter() {
 												if let Some(turf) = TURF_GASES.get(loc) {
 													if let Some(entry) = all_mixtures.get(turf.mix)
 													{
@@ -200,18 +221,16 @@ fn _process_turf_hook() {
 							*/
 							gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount));
 							let mut pressure_diff_exists = false;
-							let mut max_diff = f32::MIN;
-							let mut min_diff = f32::MAX;
+							let mut max_diff = 0.0f32;
 							for pressure_diff in pressure_diffs.iter_mut() {
 								// pressure_diff.1 here was set to a negative above, so we just add.
 								pressure_diff.1 += moved_pressure;
-								min_diff = min_diff.min(pressure_diff.1);
 								max_diff = max_diff.max(pressure_diff.1);
 								// See the explanation below.
 								pressure_diff_exists =
 									pressure_diff_exists || pressure_diff.1.abs() > f32::EPSILON
 							}
-							if (max_diff - min_diff) > 5.0 {
+							if max_diff > 1.0 {
 								let _ = high_pressure_sender.send(*i);
 							}
 							gas.merge(&end_gas);
@@ -240,24 +259,6 @@ fn _process_turf_hook() {
 							if pressure_diff_exists || flags > 0 {
 								let turf_id = *i;
 								let diffs_copy = *pressure_diffs;
-								/*
-								Here's the callback this is expecting:
-								/proc/post_process_turf(flags,turf/open/T,list/tiles_with_diffs)
-									if(!isopenturf(T))
-										return
-									if(flags & 2)
-										T.air.react()
-									if(flags & 1)
-										T.update_visuals()
-									for(var/list/pair in tiles_with_diffs)
-										var/turf/open/enemy_tile = pair[1]
-										if(istype(enemy_tile))
-											var/difference = pair[2]
-											if(difference > 0)
-												T.consider_pressure_difference(enemy_tile, difference)
-											else
-												enemy_tile.consider_pressure_difference(T, -difference)
-																*/
 								cb.invoke(move || {
 									let turf =
 										unsafe { Value::turf_by_id_unchecked(turf_id as u32) };
@@ -310,6 +311,15 @@ fn _process_turf_time() {
 
 static PROCESSING_HEAT: AtomicBool = AtomicBool::new(false);
 
+/*
+heat_post_process is the following function:
+/proc/heat_post_process(turf/T,new_temp)
+	T.temperature = new_temp
+	T.temperature_expose()
+*/
+
+// Expected function call: process_turf_heat(CALLBACK(GLOBAL_PROC,/proc/heat_post_process))
+// Returns: TRUE if started the thread, FALSE otherwise
 #[hook("/datum/controller/subsystem/air/proc/process_turf_heat")]
 fn _process_heat_hook() {
 	/*
@@ -366,7 +376,7 @@ fn _process_heat_hook() {
 							if t.thermal_conductivity > 0.0 && t.heat_capacity > 0.0 && adj > 0 {
 								let mut heat_delta = 0.0;
 								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
-								for loc in adj_tiles.iter() {
+								for (_, loc) in adj_tiles.iter() {
 									if let Some(other) = TURF_TEMPERATURES.get(loc) {
 										heat_delta +=
 											t.thermal_conductivity.min(other.thermal_conductivity)

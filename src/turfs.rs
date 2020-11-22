@@ -161,6 +161,7 @@ fn _hook_turf_update_temp() {
 	entry.heat_capacity = src.get_number("heat_capacity")?;
 	entry.adjacency = NORTH | SOUTH | WEST | EAST;
 	entry.adjacent_to_space = args[0].as_number()? != 0.0;
+	entry.temperature = src.get_number("temperature")?;
 	Ok(Value::null())
 }
 
@@ -196,8 +197,8 @@ fn _hook_adjacent_turfs() {
 }
 #[cfg(feature = "monstermos")]
 const SIMULATION_LEVEL_NONE: u8 = 0;
-//const SIMULATION_LEVEL_SHARE_FROM: u8 = 1;
-const SIMULATION_LEVEL_SIMULATE: u8 = 2;
+const SIMULATION_LEVEL_DIFFUSE: u8 = 1;
+const SIMULATION_LEVEL_ALL: u8 = 2;
 
 fn adjacent_tile_id(id: u8, i: usize, max_x: i32, max_y: i32) -> usize {
 	let z_size = max_x * max_y;

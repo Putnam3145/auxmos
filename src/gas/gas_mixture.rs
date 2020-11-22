@@ -213,24 +213,14 @@ impl GasMixture {
 	}
 	/// Returns true if the gases are sufficiently different, false otherwise.
 	pub fn compare(&self, sample: &GasMixture, min_delta: f32) -> bool {
-		for delta in self
-			.moles
+		self.moles
 			.iter()
 			.copied()
 			.zip_longest(sample.moles.iter().copied())
-			.map(|i| (i.reduce(|a, b| (a - b).abs())))
-		{
-			if delta > min_delta {
-				return true;
-			}
-		}
-		if self.total_moles() > min_delta {
-			if (self.temperature - sample.temperature).abs() > MINIMUM_TEMPERATURE_DELTA_TO_SUSPEND
-			{
-				return true;
-			}
-		}
-		false
+			.any(|i| (i.reduce(|a, b| (a - b).abs()) > min_delta))
+			|| (self.total_moles() > min_delta
+				&& (self.temperature - sample.temperature).abs()
+					> MINIMUM_TEMPERATURE_DELTA_TO_SUSPEND)
 	}
 	/// Clears the moles from the gas.
 	pub fn clear(&mut self) {

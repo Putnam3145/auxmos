@@ -44,6 +44,7 @@ fn _hook_init() {
 	})
 }
 
+#[cfg(not(test))]
 fn get_gas_info() -> Gases {
 	let gas_types_list: dm::List = Proc::find("/proc/gas_types")
 		.expect("Couldn't find proc gas_types!")
@@ -119,14 +120,7 @@ lazy_static! {
 		for i in 0..5 {
 			gas_ids.insert(i, i as usize);
 		}
-		let mut gas_specific_heat: Vec<f32> = vec![20.0, 20.0, 30.0, 200.0, 5.0];
-		let mut gas_id_to_type: Vec<Value> = vec![
-			Value::null(),
-			Value::null(),
-			Value::null(),
-			Value::null(),
-			Value::null(),
-		];
+		let gas_specific_heat: Vec<f32> = vec![20.0, 20.0, 30.0, 200.0, 5.0];
 		let total_num_gases: usize = 5;
 		let gas_vis_threshold = vec![None, None, None, None, None];
 		Gases {
@@ -136,7 +130,7 @@ lazy_static! {
 			gas_vis_threshold,
 		}
 	};
-	static ref REACTION_INFO: Vec<Reaction> = { Vec::new() };
+	static ref REACTION_INFO: Vec<Reaction> = Vec::new();
 }
 
 pub fn reactions() -> &'static Vec<Reaction> {
@@ -197,6 +191,13 @@ thread_local! {
 }
 
 impl GasMixtures {
+	#[cfg(test)]
+	pub fn register_gasmix_test(vol: f32) -> usize {
+		let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
+		let next_idx = gas_mixtures.len();
+		gas_mixtures.push(RwLock::new(GasMixture::from_vol(vol)));
+		next_idx
+	}
 	pub fn with_all_mixtures<F>(mut f: F)
 	where
 		F: FnMut(&Vec<RwLock<GasMixture>>),
@@ -211,8 +212,8 @@ impl GasMixtures {
 		let mix = mixtures
 			.get(id.to_bits() as usize)
 			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?
-			.read()
-			.unwrap();
+			.try_read()
+			.or_else(|_| Err(runtime!("Could not get read lock at this time.")))?;
 		f(&mix)
 	}
 	fn with_gas_mixture_mut<F>(id: f32, mut f: F) -> DMResult
@@ -223,8 +224,8 @@ impl GasMixtures {
 		let mut mix = gas_mixtures
 			.get(id.to_bits() as usize)
 			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?
-			.write()
-			.unwrap();
+			.try_write()
+			.or_else(|_| Err(runtime!("Could not get write lock at this time.")))?;
 		f(&mut mix)
 	}
 	fn with_gas_mixtures<F>(src: f32, arg: f32, mut f: F) -> DMResult
@@ -235,13 +236,13 @@ impl GasMixtures {
 		let src_gas = gas_mixtures
 			.get(src.to_bits() as usize)
 			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src.to_bits()))?
-			.read()
-			.unwrap();
+			.try_read()
+			.or_else(|_| Err(runtime!("Could not get read lock at this time.")))?;
 		let arg_gas = gas_mixtures
 			.get(arg.to_bits() as usize)
 			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg.to_bits()))?
-			.read()
-			.unwrap();
+			.try_read()
+			.or_else(|_| Err(runtime!("Could not get read lock at this time.")))?;
 		f(&src_gas, &arg_gas)
 	}
 	fn with_gas_mixtures_mut<F>(src: f32, arg: f32, mut f: F) -> DMResult
@@ -255,8 +256,8 @@ impl GasMixtures {
 			let mut entry = gas_mixtures
 				.get(src)
 				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?
-				.write()
-				.unwrap();
+				.try_write()
+				.or_else(|_| Err(runtime!("Could not get write lock at this time.")))?;
 			let mix = &mut entry;
 			let mut copied = mix.clone();
 			f(mix, &mut copied)

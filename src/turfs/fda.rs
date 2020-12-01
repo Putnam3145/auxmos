@@ -39,6 +39,15 @@ post_process_turf is the following function:
 // Returns: TRUE if not done, FALSE if done
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_extools")]
 fn _process_turf_hook() {
+	fda_process(
+		&TURF_GASES,
+		Callback::new(args.get(0).unwrap())?,
+		ctx.get_world().get_number("maxx")? as i32,
+		ctx.get_world().get_number("maxy")? as i32,
+	)
+}
+
+fn fda_process(turfs: &'static DashMap<usize, TurfMixture>, cb: CallbackHandle, max_x: i32, max_y: i32) -> DMResult {
 	/*
 		This is the replacement system for LINDA. LINDA requires a lot of bookkeeping,
 		which, when coefficient-wise operations are this fast, is all just unnecessary overhead.
@@ -50,145 +59,138 @@ fn _process_turf_hook() {
 	if PROCESSING_TURF_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
 		// The callback does the in-byond reaction, updating visuals, pressure diffs.
 		// It's run ASAP by the Auxtools callback subsystem.
-		let cb = Callback::new(args.get(0).unwrap())?;
-		let max_x = ctx.get_world().get_number("maxx")? as i32;
-		let max_y = ctx.get_world().get_number("maxy")? as i32;
 		rayon::spawn(move || {
 			PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
 			let start_time = Instant::now();
 			let high_pressure_sender = HIGH_PRESSURE_TURFS.0.clone();
-			let mut turfs_to_save: Vec<(usize, TurfMixture, GasMixture, [(u32, f32); 6])> =
-				TURF_GASES
-					/*
-						This uses the DashMap raw API to access the shards directly.
-						This allows for it to be parallelized much more efficiently
-						with rayon; the speedup gained from this is actually linear
-						with the amount of cores the CPU has, which, to be frank,
-						is way better than I was expecting, even though this operation
-						is technically embarassingly parallel. It'll probably reach
-						some maximum due to the global turf mixture lock access,
-						but it's already blazingly fast on my i7, so it should be fine.
-					*/
-					.shards()
-					.iter()
-					.par_bridge()
-					.map(|shard| {
-						shard
-							.read()
-							.iter()
-							.filter_map(|(&i, m_v)| {
-								// m_v is a SharedValue<TurfMixture>. Need to use get() on it to get the original.
-								// It's dereferenced to copy it. m_v is Copy, so this is reasonably fast.
-								// This is necessary because otherwise we're escaping a reference to the closure below.
-								let m = *m_v.get();
-								let adj = m.adjacency;
+			let mut turfs_to_save: Vec<(usize, TurfMixture, GasMixture, [(u32, f32); 6])> = turfs
+				/*
+					This uses the DashMap raw API to access the shards directly.
+					This allows for it to be parallelized much more efficiently
+					with rayon; the speedup gained from this is actually linear
+					with the amount of cores the CPU has, which, to be frank,
+					is way better than I was expecting, even though this operation
+					is technically embarassingly parallel. It'll probably reach
+					some maximum due to the global turf mixture lock access,
+					but it's already blazingly fast on my i7, so it should be fine.
+				*/
+				.shards()
+				.iter()
+				.par_bridge()
+				.map(|shard| {
+					shard
+						.read()
+						.iter()
+						.filter_map(|(&i, m_v)| {
+							// m_v is a SharedValue<TurfMixture>. Need to use get() on it to get the original.
+							// It's dereferenced to copy it. m_v is Copy, so this is reasonably fast.
+							// This is necessary because otherwise we're escaping a reference to the closure below.
+							let m = *m_v.get();
+							let adj = m.adjacency;
+							/*
+								We don't want to simulate space turfs or other unsimulated turfs. They're
+								still valid for sharing to and from, they just shouldn't be considered
+								for this particular step.
+							*/
+							if m.simulation_level >= SIMULATION_LEVEL_DIFFUSE && adj > 0 {
+								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 								/*
-									We don't want to simulate space turfs or other unsimulated turfs. They're
-									still valid for sharing to and from, they just shouldn't be considered
-									for this particular step.
+									Getting write locks is potential danger zone,
+									so we make sure we don't do that unless we
+									absolutely need to. Saving is fast enough.
 								*/
-								if m.simulation_level >= SIMULATION_LEVEL_DIFFUSE && adj > 0 {
-									let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
+								let mut should_share = false;
+								GasMixtures::with_all_mixtures(|all_mixtures| {
+									let gas = all_mixtures.get(m.mix).unwrap().read().unwrap();
+									for (_, loc) in adj_tiles.iter() {
+										if let Some(turf) = TURF_GASES.get(loc) {
+											if let Ok(adj_gas) =
+												all_mixtures.get(turf.mix).unwrap().read()
+											{
+												if gas
+													.compare(&adj_gas, MINIMUM_MOLES_DELTA_TO_MOVE)
+												{
+													should_share = true;
+													return;
+												}
+											}
+										}
+									}
+									if let Some(planet_atmos) = m.planetary_atmos {
+										if gas.compare(
+											PLANETARY_ATMOS.get(planet_atmos).unwrap().value(),
+											0.01,
+										) {
+											should_share = true;
+										}
+									}
+								});
+								if should_share {
+									let mut end_gas = GasMixture::from_vol(2500.0);
+									let mut pressure_diffs: [(u32, f32); 6] = Default::default();
 									/*
-										Getting write locks is potential danger zone,
-										so we make sure we don't do that unless we
-										absolutely need to. Saving is fast enough.
+										The pressure here is negative
+										because we're going to be adding it
+										to the base turf's pressure later on.
+										It's multiplied by the diffusion constant
+										because it's not representing the total
+										gas pressure difference but the force exerted
+										due to the pressure gradient.
+										Technically that's ρν², but, like, video games.
 									*/
-									let mut should_share = false;
 									GasMixtures::with_all_mixtures(|all_mixtures| {
-										let gas = all_mixtures.get(m.mix).unwrap().read().unwrap();
+										let mut j = 0;
 										for (_, loc) in adj_tiles.iter() {
 											if let Some(turf) = TURF_GASES.get(loc) {
-												if let Ok(adj_gas) =
-													all_mixtures.get(turf.mix).unwrap().read()
-												{
-													if gas.compare(
-														&adj_gas,
-														MINIMUM_MOLES_DELTA_TO_MOVE,
-													) {
-														should_share = true;
-														return;
+												if let Some(entry) = all_mixtures.get(turf.mix) {
+													if let Ok(mix) = entry.read() {
+														end_gas.merge(&mix);
+														pressure_diffs[j] = (
+															*loc as u32,
+															-mix.return_pressure()
+																* GAS_DIFFUSION_CONSTANT,
+														);
 													}
 												}
 											}
-										}
-										if let Some(planet_atmos) = m.planetary_atmos {
-											if gas.compare(
-												PLANETARY_ATMOS.get(planet_atmos).unwrap().value(),
-												0.01,
-											) {
-												should_share = true;
-											}
+											j += 1;
 										}
 									});
-									if should_share {
-										let mut end_gas = GasMixture::from_vol(2500.0);
-										let mut pressure_diffs: [(u32, f32); 6] =
-											Default::default();
-										/*
-											The pressure here is negative
-											because we're going to be adding it
-											to the base turf's pressure later on.
-											It's multiplied by the diffusion constant
-											because it's not representing the total
-											gas pressure difference but the force exerted
-											due to the pressure gradient.
-											Technically that's ρν², but, like, video games.
-										*/
-										GasMixtures::with_all_mixtures(|all_mixtures| {
-											let mut j = 0;
-											for (_, loc) in adj_tiles.iter() {
-												if let Some(turf) = TURF_GASES.get(loc) {
-													if let Some(entry) = all_mixtures.get(turf.mix)
-													{
-														if let Ok(mix) = entry.read() {
-															end_gas.merge(&mix);
-															pressure_diffs[j] = (
-																*loc as u32,
-																-mix.return_pressure()
-																	* GAS_DIFFUSION_CONSTANT,
-															);
-														}
-													}
-												}
-												j += 1;
-											}
-										});
-										// Obviously planetary atmos needs love too.
-										if let Some(planet_atmos) = m.planetary_atmos {
-											end_gas.merge(
-												PLANETARY_ATMOS.get(planet_atmos).unwrap().value(),
-											);
-										}
-										/*
-											This method of simulating diffusion
-											diverges at coefficients that are
-											larger than the inverse of the number
-											of adjacent finite elements.
-											As such, we must multiply it
-											by a coefficient that is at most
-											as big as this coefficient. The
-											GAS_DIFFUSION_CONSTANT chosen here
-											is 1/8, chosen both because it is
-											smaller than 1/7 and because, in
-											floats, 1/8 is exact and so are
-											all multiples of it up to 1.
-											(Technically up to 2,097,152,
-											but I digress.)
-										*/
-										end_gas.multiply(GAS_DIFFUSION_CONSTANT);
-										Some((i, m, end_gas, pressure_diffs))
-									} else {
-										None
+									// Obviously planetary atmos needs love too.
+									if let Some(planet_atmos) = m.planetary_atmos {
+										end_gas.merge(
+											PLANETARY_ATMOS.get(planet_atmos).unwrap().value(),
+										);
 									}
+									/*
+										This method of simulating diffusion
+										diverges at coefficients that are
+										larger than the inverse of the number
+										of adjacent finite elements.
+										As such, we must multiply it
+										by a coefficient that is at most
+										as big as this coefficient. The
+										GAS_DIFFUSION_CONSTANT chosen here
+										is 1/8, chosen both because it is
+										smaller than 1/7 and because, in
+										floats, 1/8 is exact and so are
+										all multiples of it up to 1.
+										(Technically up to 2,097,152,
+										but I digress.)
+									*/
+									end_gas.multiply(GAS_DIFFUSION_CONSTANT);
+									Some((i, m, end_gas, pressure_diffs))
 								} else {
 									None
 								}
-							})
-							.collect::<Vec<_>>()
-					})
-					.flatten()
-					.collect();
+							} else {
+								None
+							}
+						})
+						.collect::<Vec<_>>()
+				})
+				.flatten()
+				.collect();
 			/*
 				For the optimization-heads reading this: this is not an unnecessary collect().
 				Saving all this to the turfs_to_save vector is, in fact, the reason
@@ -293,12 +295,63 @@ fn _process_turf_hook() {
 	}
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
 	Ok(Value::from(
-		PROCESSING_TURF_STEP.compare_and_swap(
-			PROCESS_DONE,
-			PROCESS_NOT_STARTED,
-			Ordering::Relaxed,
-		) == PROCESS_DONE,
+		PROCESSING_TURF_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::Relaxed)
+			== PROCESS_DONE,
 	))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	lazy_static! {
+		static ref FDA_TEST_TURFS: DashMap<usize, TurfMixture> = DashMap::new();
+	}
+	#[test]
+	fn test_fda() {
+		for i in 1..10 {
+			FDA_TEST_TURFS.insert(
+				i,
+				TurfMixture {
+					mix: GasMixtures::register_gasmix_test(2500.0),
+					adjacency: (if i < 7 { NORTH } else { 0 })
+						| (if i % 3 != 1 { WEST } else { 0 })
+						| (if i > 3 { SOUTH } else { 0 })
+						| (if i % 3 != 0 { EAST } else { 0 }),
+					simulation_level: SIMULATION_LEVEL_ALL,
+					planetary_atmos: None,
+				},
+			);
+		}
+		let middle = FDA_TEST_TURFS.get(&5).unwrap();
+		assert_eq!(middle.adjacency,NORTH|SOUTH|EAST|WEST);
+		GasMixtures::with_all_mixtures(|all_mixtures| {
+			let entry = all_mixtures.get(FDA_TEST_TURFS.get(&5).unwrap().mix).unwrap();
+			let mut mix = entry.write().unwrap();
+			mix.set_moles(0,800.0);
+		});
+		fda_process(&FDA_TEST_TURFS,Callback::new(Value::null()).unwrap(),3,3).unwrap();
+		while PROCESSING_TURF_STEP.compare_and_swap(PROCESS_DONE,PROCESS_NOT_STARTED, Ordering::Relaxed) != PROCESS_DONE {
+			std::thread::yield_now();
+		}
+		let first_step_post_adj = 800.0*GAS_DIFFUSION_CONSTANT;
+		let first_step_post_center = 800.0*(1.0-(4.0*GAS_DIFFUSION_CONSTANT));
+		assert_eq!(FDA_TEST_TURFS.get(&5).unwrap().total_moles(),first_step_post_center);
+		assert_eq!(FDA_TEST_TURFS.get(&2).unwrap().total_moles(),first_step_post_adj);
+		assert_eq!(FDA_TEST_TURFS.get(&4).unwrap().total_moles(),first_step_post_adj);
+		assert_eq!(FDA_TEST_TURFS.get(&6).unwrap().total_moles(),first_step_post_adj);
+		assert_eq!(FDA_TEST_TURFS.get(&8).unwrap().total_moles(),first_step_post_adj);
+		fda_process(&FDA_TEST_TURFS,Callback::new(Value::null()).unwrap(),3,3).unwrap();
+		while PROCESSING_TURF_STEP.compare_and_swap(PROCESS_DONE,PROCESS_NOT_STARTED, Ordering::Relaxed) != PROCESS_DONE {
+			std::thread::yield_now();
+		}
+		let second_step_post_adj = first_step_post_adj*(1.0-(3.0*GAS_DIFFUSION_CONSTANT)) + first_step_post_center*GAS_DIFFUSION_CONSTANT;
+		let second_step_post_center = first_step_post_center * (1.0-(4.0*GAS_DIFFUSION_CONSTANT)) + first_step_post_adj*(4.0*GAS_DIFFUSION_CONSTANT);
+		assert_eq!(FDA_TEST_TURFS.get(&5).unwrap().total_moles(),second_step_post_center);
+		assert_eq!(FDA_TEST_TURFS.get(&2).unwrap().total_moles(),second_step_post_adj);
+		assert_eq!(FDA_TEST_TURFS.get(&4).unwrap().total_moles(),second_step_post_adj);
+		assert_eq!(FDA_TEST_TURFS.get(&6).unwrap().total_moles(),second_step_post_adj);
+		assert_eq!(FDA_TEST_TURFS.get(&8).unwrap().total_moles(),second_step_post_adj);
+	}
 }
 
 #[hook("/datum/controller/subsystem/air/proc/turf_process_time")]

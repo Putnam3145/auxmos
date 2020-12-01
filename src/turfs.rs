@@ -3,9 +3,6 @@ pub mod fda;
 #[cfg(feature = "monstermos")]
 pub mod monstermos;
 
-#[cfg(feature = "putnamos")]
-pub mod putnamos;
-
 use super::gas::gas_mixture::GasMixture;
 
 use dm::*;
@@ -28,7 +25,7 @@ const WEST: u8 = 8;
 //const DOWN: u8 = 32;
 // TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 struct TurfMixture {
 	pub mix: usize,
 	pub adjacency: u8,
@@ -100,7 +97,7 @@ impl TurfMixture {
 }
 
 // all non-space turfs get these, not just ones with air--a lot of gas logic relies on all TurfMixtures having a valid mix
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 struct ThermalInfo {
 	pub temperature: f32,
 	pub thermal_conductivity: f32,
@@ -150,13 +147,7 @@ fn _hook_register_turf() {
 fn _hook_turf_update_temp() {
 	let mut entry = TURF_TEMPERATURES
 		.entry(unsafe { src.value.data.id as usize })
-		.or_insert_with(|| ThermalInfo {
-			temperature: 293.15,
-			thermal_conductivity: 0.0,
-			heat_capacity: 0.0,
-			adjacency: NORTH | SOUTH | WEST | EAST,
-			adjacent_to_space: false,
-		});
+		.or_default();
 	entry.thermal_conductivity = src.get_number("thermal_conductivity")?;
 	entry.heat_capacity = src.get_number("heat_capacity")?;
 	entry.adjacency = NORTH | SOUTH | WEST | EAST;

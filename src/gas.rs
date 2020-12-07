@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use gas_mixture::GasMixture;
 
-use std::sync::RwLock;
+use parking_lot::RwLock;
 
 use std::cell::RefCell;
 
@@ -136,7 +136,7 @@ lazy_static! {
 			gas_vis_threshold,
 		}
 	};
-	static ref REACTION_INFO: Vec<Reaction> = { Vec::new() };
+	static ref REACTION_INFO: Vec<Reaction> = Vec::new() ;
 }
 
 pub fn reactions() -> &'static Vec<Reaction> {
@@ -201,47 +201,43 @@ impl GasMixtures {
 	where
 		F: FnMut(&Vec<RwLock<GasMixture>>),
 	{
-		f(&GAS_MIXTURES.read().unwrap());
+		f(&GAS_MIXTURES.read());
 	}
 	fn with_gas_mixture<F>(id: f32, mut f: F) -> DMResult
 	where
 		F: FnMut(&GasMixture) -> DMResult,
 	{
-		let mixtures = GAS_MIXTURES.read().unwrap();
+		let mixtures = GAS_MIXTURES.read();
 		let mix = mixtures
 			.get(id.to_bits() as usize)
 			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?
-			.read()
-			.unwrap();
+			.read();
 		f(&mix)
 	}
 	fn with_gas_mixture_mut<F>(id: f32, mut f: F) -> DMResult
 	where
 		F: FnMut(&mut GasMixture) -> DMResult,
 	{
-		let gas_mixtures = GAS_MIXTURES.read().unwrap();
+		let gas_mixtures = GAS_MIXTURES.read();
 		let mut mix = gas_mixtures
 			.get(id.to_bits() as usize)
 			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?
-			.write()
-			.unwrap();
+			.write();
 		f(&mut mix)
 	}
 	fn with_gas_mixtures<F>(src: f32, arg: f32, mut f: F) -> DMResult
 	where
 		F: FnMut(&GasMixture, &GasMixture) -> DMResult,
 	{
-		let gas_mixtures = GAS_MIXTURES.read().unwrap();
+		let gas_mixtures = GAS_MIXTURES.read();
 		let src_gas = gas_mixtures
 			.get(src.to_bits() as usize)
 			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src.to_bits()))?
-			.read()
-			.unwrap();
+			.read();
 		let arg_gas = gas_mixtures
 			.get(arg.to_bits() as usize)
 			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg.to_bits()))?
-			.read()
-			.unwrap();
+			.read();
 		f(&src_gas, &arg_gas)
 	}
 	fn with_gas_mixtures_mut<F>(src: f32, arg: f32, mut f: F) -> DMResult
@@ -250,13 +246,12 @@ impl GasMixtures {
 	{
 		let src = src.to_bits() as usize;
 		let arg = arg.to_bits() as usize;
-		let gas_mixtures = GAS_MIXTURES.read().unwrap();
+		let gas_mixtures = GAS_MIXTURES.read();
 		if src == arg {
 			let mut entry = gas_mixtures
 				.get(src)
 				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?
-				.write()
-				.unwrap();
+				.write();
 			let mix = &mut entry;
 			let mut copied = mix.clone();
 			f(mix, &mut copied)
@@ -265,13 +260,11 @@ impl GasMixtures {
 				&mut gas_mixtures
 					.get(src)
 					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?
-					.write()
-					.unwrap(),
+					.write(),
 				&mut gas_mixtures
 					.get(arg)
 					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?
-					.write()
-					.unwrap(),
+					.write(),
 			)
 		}
 	}
@@ -279,7 +272,7 @@ impl GasMixtures {
 	pub fn register_gasmix(mix: &Value) -> DMResult {
 		NEXT_GAS_IDS.with(|gas_ids| -> DMResult {
 			if gas_ids.borrow().is_empty() {
-				let mut gas_mixtures = GAS_MIXTURES.write().unwrap();
+				let mut gas_mixtures = GAS_MIXTURES.write();
 				let next_idx = gas_mixtures.len();
 				gas_mixtures.push(RwLock::new(GasMixture::from_vol(
 					mix.get_number("initial_volume")?,
@@ -290,8 +283,7 @@ impl GasMixtures {
 				);
 			} else {
 				let idx = gas_ids.borrow_mut().pop().unwrap();
-				*GAS_MIXTURES.write().unwrap().get_mut(idx).unwrap() =
-					RwLock::new(GasMixture::from_vol(mix.get_number("initial_volume")?));
+				GAS_MIXTURES.read().get(idx).unwrap().write().clear_with_vol(mix.get_number("initial_volume")?);
 				mix.set("_extools_pointer_gasmixture", f32::from_bits(idx as u32));
 			}
 			Ok(Value::null())
@@ -347,10 +339,9 @@ where
 }
 
 pub(crate) fn amt_gases() -> usize {
-	NEXT_GAS_IDS
-		.with(|next_gas_ids| GAS_MIXTURES.read().unwrap().len() - next_gas_ids.borrow().len())
+	NEXT_GAS_IDS.with(|next_gas_ids| GAS_MIXTURES.read().len() - next_gas_ids.borrow().len())
 }
 
 pub(crate) fn tot_gases() -> usize {
-	GAS_MIXTURES.read().unwrap().len()
+	GAS_MIXTURES.read().len()
 }

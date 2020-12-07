@@ -3,9 +3,6 @@ pub mod fda;
 #[cfg(feature = "monstermos")]
 pub mod monstermos;
 
-#[cfg(feature = "putnamos")]
-pub mod putnamos;
-
 use super::gas::gas_mixture::GasMixture;
 
 use dm::*;
@@ -45,7 +42,6 @@ impl TurfMixture {
 				.get(self.mix)
 				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
 				.read()
-				.unwrap()
 				.is_immutable()
 		});
 		res
@@ -57,7 +53,6 @@ impl TurfMixture {
 				.get(self.mix)
 				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
 				.read()
-				.unwrap()
 				.return_pressure()
 		});
 		res
@@ -69,7 +64,6 @@ impl TurfMixture {
 				.get(self.mix)
 				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
 				.read()
-				.unwrap()
 				.total_moles()
 		});
 		res
@@ -80,7 +74,6 @@ impl TurfMixture {
 				.get(self.mix)
 				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
 				.write()
-				.unwrap()
 				.clear();
 		});
 	}
@@ -90,8 +83,7 @@ impl TurfMixture {
 			let to_copy = all_mixtures
 				.get(self.mix)
 				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
-				.read()
-				.unwrap();
+				.read();
 			ret.copy_from_mutable(&to_copy);
 			ret.volume = to_copy.volume;
 		});

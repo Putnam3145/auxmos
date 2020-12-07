@@ -23,7 +23,11 @@ float-ord = "0.2.0"
 crossbeam = "0.8.0"
 flume = "0.9.1"
 coarsetime = "0.1.16"
+parking_lot = "0.11.1"
 
 [dependencies.dashmap]
 version = "3.11.10"
 features = ["raw-api"]
+
+[profile.release]
+debug = true

@@ -1,7 +1,7 @@
 pub mod constants;
 pub mod gas_mixture;
 pub mod reaction;
-use dm::*;
+use auxtools::*;
 
 use std::collections::HashMap;
 

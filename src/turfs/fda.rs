@@ -2,7 +2,9 @@ use super::*;
 
 use crate::GasMixtures;
 
-use coarsetime::{Duration, Instant};
+use std::time::{Duration, Instant};
+
+use auxcallback::{process_callbacks_for,callback_sender_by_id_insert};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
@@ -18,26 +20,8 @@ static TURF_PROCESS_TIME: AtomicU64 = AtomicU64::new(1000000);
 
 static SUBSYSTEM_FIRE_COUNT: AtomicU32 = AtomicU32::new(0);
 
-/*
-post_process_turf is the following function:
-/proc/post_process_turf(flags,turf/open/T,list/tiles_with_diffs)
-	if(!isopenturf(T))
-		return
-	if(flags & 2)
-		T.air.react()
-	if(flags & 1)
-		T.update_visuals()
-	for(var/list/pair in tiles_with_diffs)
-		var/turf/open/enemy_tile = pair[1]
-		if(istype(enemy_tile))
-			var/difference = pair[2]
-			if(difference > 0)
-				T.consider_pressure_difference(enemy_tile, difference)
-			else
-				enemy_tile.consider_pressure_difference(T, -difference)
-*/
+const SSAIR_NAME: &'static str = "SSair";
 
-// Expected function call: process_turfs_extools(CALLBACK(GLOBAL_PROC,/proc/post_process_turf))
 // Returns: TRUE if not done, FALSE if done
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_extools")]
 fn _process_turf_hook() {
@@ -51,9 +35,6 @@ fn _process_turf_hook() {
 	// Don't want to start it while there's already a thread running, so we only start it if it hasn't been started.
 	SUBSYSTEM_FIRE_COUNT.store(src.get_number("times_fired")? as u32, Ordering::Relaxed);
 	if PROCESSING_TURF_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
-		// The callback does the in-byond reaction, updating visuals, pressure diffs.
-		// It's run ASAP by the Auxtools callback subsystem.
-		let cb = Callback::new(args.get(0).unwrap())?;
 		let fda_max_steps = src.get_number("share_max_steps").unwrap_or_else(|_| 1.0) as usize;
 		let fda_pressure_goal = src
 			.get_number("share_pressure_diff_to_stop")
@@ -62,6 +43,7 @@ fn _process_turf_hook() {
 		let max_y = ctx.get_world().get_number("maxy")? as i32;
 		rayon::spawn(move || {
 			PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
+			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 			let start_time = Instant::now();
 			let high_pressure_sender = HIGH_PRESSURE_TURFS.0.clone();
 			let initial_fire_count = SUBSYSTEM_FIRE_COUNT.load(Ordering::Relaxed);
@@ -279,26 +261,25 @@ fn _process_turf_hook() {
 								if pressure_diff_exists || flags > 0 {
 									let turf_id = *i;
 									let diffs_copy = *pressure_diffs;
-									cb.invoke(move || {
+									sender.send(Box::new(move |_| {
 										let turf =
 											unsafe { Value::turf_by_id_unchecked(turf_id as u32) };
-										let true_pressure_diffs = List::new();
+										if flags & 2 == 2 {
+											turf.get("air")?.call("react",&[turf.clone()])?;
+										}
+										if flags & 1 == 1 {
+											turf.call("update_visuals",&[&Value::null()])?;
+										}
 										for &(id, diff) in diffs_copy.iter() {
-											if diff.abs() > f32::EPSILON {
-												let sub_list = List::new();
-												sub_list.append(&unsafe {
-													Value::turf_by_id_unchecked(id)
-												});
-												sub_list.append(diff);
-												true_pressure_diffs.append(&Value::from(sub_list));
+											let enemy_tile = unsafe { Value::turf_by_id_unchecked(id as u32) };
+											if diff > 0.0 {
+												turf.call("consider_pressure_difference",&[enemy_tile,Value::from(diff)])?;
+											} else {
+												enemy_tile.call("consider_pressure_difference",&[turf.clone(),Value::from(-diff)])?;
 											}
 										}
-										vec![
-											Value::from(flags as f32),
-											turf,
-											Value::from(true_pressure_diffs),
-										]
-									});
+										Ok(Value::null())
+									})).unwrap();
 								}
 							}
 						});
@@ -320,9 +301,14 @@ fn _process_turf_hook() {
 			PROCESSING_TURF_STEP.store(PROCESS_DONE, Ordering::SeqCst);
 			let old_bench = TURF_PROCESS_TIME.load(Ordering::Relaxed);
 			// We display this as part of the MC atmospherics stuff.
-			TURF_PROCESS_TIME.store((old_bench * 3 + bench * 7) / 10, Ordering::Relaxed);
+			TURF_PROCESS_TIME.store((old_bench * 3 + (bench * 7) as u64) / 10, Ordering::Relaxed);
 		});
 	}
+	let arg_limit = args
+		.get(0)
+		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 0"))?
+		.as_number()?;
+	process_callbacks_for(ctx, SSAIR_NAME.to_string(), Duration::from_millis(arg_limit as u64));
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
 	Ok(Value::from(
 		PROCESSING_TURF_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::Relaxed)
@@ -334,21 +320,14 @@ fn _process_turf_hook() {
 fn _process_turf_time() {
 	let tot = TURF_PROCESS_TIME.load(Ordering::Relaxed);
 	Ok(Value::from(
-		(Duration::new(tot / 1_000_000_000, (tot % 1_000_000_000) as u32).as_f64() * 1e3) as f32,
+		Duration::new(tot / 1_000_000_000, (tot % 1_000_000_000) as u32).as_millis() as f32,
 	))
 }
 
 static PROCESSING_HEAT: AtomicBool = AtomicBool::new(false);
 
-/*
-heat_post_process is the following function:
-/proc/heat_post_process(turf/T,new_temp)
-	T.temperature = new_temp
-	T.temperature_expose()
-*/
-
-// Expected function call: process_turf_heat(CALLBACK(GLOBAL_PROC,/proc/heat_post_process))
-// Returns: TRUE if started the thread, FALSE otherwise
+// Expected function call: process_turf_heat()
+// Returns: TRUE if thread not done, FALSE otherwise
 #[hook("/datum/controller/subsystem/air/proc/process_turf_heat")]
 fn _process_heat_hook() {
 	/*
@@ -378,10 +357,10 @@ fn _process_heat_hook() {
 				T.temperature = new_temp
 				T.temperature_expose()
 		*/
-		let cb = Callback::new(args.get(0).unwrap())?;
 		let max_x = ctx.get_world().get_number("maxx")? as i32;
 		let max_y = ctx.get_world().get_number("maxy")? as i32;
 		rayon::spawn(move || {
+			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * time_delta;
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * time_delta;
 			let post_temps: Vec<(usize, f32)> = TURF_TEMPERATURES
@@ -469,17 +448,23 @@ fn _process_heat_hook() {
 				// Temp diffs of less than 0.05 are meaningless and this callback, while not slow,
 				// is still going to lag the hell out of the server if run for every turf
 				if (original_temp - t.temperature).abs() > 0.1 {
-					cb.invoke(move || {
-						vec![
-							unsafe { Value::turf_by_id_unchecked(i as u32) },
-							Value::from(new_temp),
-						]
-					});
+					let temp = t.temperature;
+					sender.send(Box::new(move |_| {
+						let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
+						turf.set("temperature",temp);
+						turf.call("temperature_expose",&[&Value::null()])?;
+						Ok(Value::null())
+					})).unwrap();
 				}
 			});
 			PROCESSING_HEAT.store(false, Ordering::SeqCst);
 		});
 	}
+	let arg_limit = args
+		.get(0)
+		.ok_or_else(|| runtime!("Wrong number of arguments to heat processing: 0"))?
+		.as_number()?;
+	process_callbacks_for(ctx, SSAIR_NAME.to_string(), Duration::from_millis(arg_limit as u64));
 	Ok(Value::from(PROCESSING_HEAT.load(Ordering::SeqCst)))
 }
 
@@ -488,12 +473,12 @@ static EXCITED_GROUP_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
 #[hook("/datum/controller/subsystem/air/proc/process_excited_groups")]
 fn process_excited_groups() {
 	if EXCITED_GROUP_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
-		let cb = Callback::new(args.get(0).unwrap())?;
 		let max_x = ctx.get_world().get_number("maxx")? as i32;
 		let max_y = ctx.get_world().get_number("maxy")? as i32;
 		rayon::spawn(move || {
 			use std::collections::{BTreeSet, VecDeque};
 			EXCITED_GROUP_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
+			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 			let mut found_turfs: BTreeSet<usize> = BTreeSet::new();
 			for init in TURF_GASES
 				.iter()
@@ -542,9 +527,10 @@ fn process_excited_groups() {
 							mix.copy_from_mutable(&fully_mixed);
 							if should_display {
 								let arg_i = *i as u32;
-								cb.invoke(move || {
-									vec![unsafe { Value::turf_by_id_unchecked(arg_i) }]
-								});
+								sender.send(Box::new(move |_| {
+									unsafe { Value::turf_by_id_unchecked(arg_i) }.call("update_visuals",&[&Value::null()])?;
+									Ok(Value::null())
+								})).unwrap();
 							}
 						})
 					});
@@ -553,6 +539,11 @@ fn process_excited_groups() {
 			EXCITED_GROUP_STEP.store(PROCESS_DONE, Ordering::SeqCst);
 		});
 	}
+	let arg_limit = args
+		.get(0)
+		.ok_or_else(|| runtime!("Wrong number of arguments to heat processing: 0"))?
+		.as_number()?;
+	process_callbacks_for(ctx, SSAIR_NAME.to_string(), Duration::from_millis(arg_limit as u64));
 	Ok(Value::from(
 		EXCITED_GROUP_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)
 			== PROCESS_DONE,

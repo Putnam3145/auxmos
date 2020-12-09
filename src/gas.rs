@@ -45,7 +45,7 @@ fn _hook_init() {
 }
 
 fn get_gas_info() -> Gases {
-	let gas_types_list: dm::List = Proc::find("/proc/gas_types")
+	let gas_types_list: auxtools::List = Proc::find("/proc/gas_types")
 		.expect("Couldn't find proc gas_types!")
 		.call(&[])
 		.expect("gas_types didn't return correctly!")
@@ -55,7 +55,7 @@ fn get_gas_info() -> Gases {
 	let total_num_gases: usize = gas_types_list.len() as usize;
 	let mut gas_specific_heat: Vec<f32> = Vec::with_capacity(total_num_gases);
 	let mut gas_vis_threshold: Vec<Option<f32>> = Vec::with_capacity(total_num_gases);
-	let meta_gas_visibility_list: dm::List = Proc::find("/proc/meta_gas_visibility_list")
+	let meta_gas_visibility_list: auxtools::List = Proc::find("/proc/meta_gas_visibility_list")
 		.expect("Couldn't find proc meta_gas_visibility_list!")
 		.call(&[])
 		.expect("meta_gas_visibility_list didn't return correctly!")

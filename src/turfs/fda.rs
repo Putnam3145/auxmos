@@ -4,7 +4,7 @@ use crate::GasMixtures;
 
 use std::time::{Duration, Instant};
 
-use auxcallback::{process_callbacks_for,callback_sender_by_id_insert};
+use auxcallback::{callback_sender_by_id_insert, process_callbacks_for};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
@@ -261,25 +261,36 @@ fn _process_turf_hook() {
 								if pressure_diff_exists || flags > 0 {
 									let turf_id = *i;
 									let diffs_copy = *pressure_diffs;
-									sender.send(Box::new(move |_| {
-										let turf =
-											unsafe { Value::turf_by_id_unchecked(turf_id as u32) };
-										if flags & 2 == 2 {
-											turf.get("air")?.call("react",&[turf.clone()])?;
-										}
-										if flags & 1 == 1 {
-											turf.call("update_visuals",&[&Value::null()])?;
-										}
-										for &(id, diff) in diffs_copy.iter() {
-											let enemy_tile = unsafe { Value::turf_by_id_unchecked(id as u32) };
-											if diff > 0.0 {
-												turf.call("consider_pressure_difference",&[enemy_tile,Value::from(diff)])?;
-											} else {
-												enemy_tile.call("consider_pressure_difference",&[turf.clone(),Value::from(-diff)])?;
+									sender
+										.send(Box::new(move |_| {
+											let turf = unsafe {
+												Value::turf_by_id_unchecked(turf_id as u32)
+											};
+											if flags & 2 == 2 {
+												turf.get("air")?.call("react", &[turf.clone()])?;
 											}
-										}
-										Ok(Value::null())
-									})).unwrap();
+											if flags & 1 == 1 {
+												turf.call("update_visuals", &[&Value::null()])?;
+											}
+											for &(id, diff) in diffs_copy.iter() {
+												let enemy_tile = unsafe {
+													Value::turf_by_id_unchecked(id as u32)
+												};
+												if diff > 0.0 {
+													turf.call(
+														"consider_pressure_difference",
+														&[enemy_tile, Value::from(diff)],
+													)?;
+												} else {
+													enemy_tile.call(
+														"consider_pressure_difference",
+														&[turf.clone(), Value::from(-diff)],
+													)?;
+												}
+											}
+											Ok(Value::null())
+										}))
+										.unwrap();
 								}
 							}
 						});
@@ -308,7 +319,11 @@ fn _process_turf_hook() {
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 0"))?
 		.as_number()?;
-	process_callbacks_for(ctx, SSAIR_NAME.to_string(), Duration::from_millis(arg_limit as u64));
+	process_callbacks_for(
+		ctx,
+		SSAIR_NAME.to_string(),
+		Duration::from_millis(arg_limit as u64),
+	);
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
 	Ok(Value::from(
 		PROCESSING_TURF_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::Relaxed)
@@ -449,12 +464,14 @@ fn _process_heat_hook() {
 				// is still going to lag the hell out of the server if run for every turf
 				if (original_temp - t.temperature).abs() > 0.1 {
 					let temp = t.temperature;
-					sender.send(Box::new(move |_| {
-						let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
-						turf.set("temperature",temp);
-						turf.call("temperature_expose",&[&Value::null()])?;
-						Ok(Value::null())
-					})).unwrap();
+					sender
+						.send(Box::new(move |_| {
+							let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
+							turf.set("temperature", temp);
+							turf.call("temperature_expose", &[&Value::null()])?;
+							Ok(Value::null())
+						}))
+						.unwrap();
 				}
 			});
 			PROCESSING_HEAT.store(false, Ordering::SeqCst);
@@ -464,7 +481,11 @@ fn _process_heat_hook() {
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to heat processing: 0"))?
 		.as_number()?;
-	process_callbacks_for(ctx, SSAIR_NAME.to_string(), Duration::from_millis(arg_limit as u64));
+	process_callbacks_for(
+		ctx,
+		SSAIR_NAME.to_string(),
+		Duration::from_millis(arg_limit as u64),
+	);
 	Ok(Value::from(PROCESSING_HEAT.load(Ordering::SeqCst)))
 }
 
@@ -527,10 +548,13 @@ fn process_excited_groups() {
 							mix.copy_from_mutable(&fully_mixed);
 							if should_display {
 								let arg_i = *i as u32;
-								sender.send(Box::new(move |_| {
-									unsafe { Value::turf_by_id_unchecked(arg_i) }.call("update_visuals",&[&Value::null()])?;
-									Ok(Value::null())
-								})).unwrap();
+								sender
+									.send(Box::new(move |_| {
+										unsafe { Value::turf_by_id_unchecked(arg_i) }
+											.call("update_visuals", &[&Value::null()])?;
+										Ok(Value::null())
+									}))
+									.unwrap();
 							}
 						})
 					});
@@ -543,7 +567,11 @@ fn process_excited_groups() {
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to heat processing: 0"))?
 		.as_number()?;
-	process_callbacks_for(ctx, SSAIR_NAME.to_string(), Duration::from_millis(arg_limit as u64));
+	process_callbacks_for(
+		ctx,
+		SSAIR_NAME.to_string(),
+		Duration::from_millis(arg_limit as u64),
+	);
 	Ok(Value::from(
 		EXCITED_GROUP_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)
 			== PROCESS_DONE,

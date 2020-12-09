@@ -41,9 +41,9 @@ mod tests {
 	fn test_eq_movement() {
 		let mut info_a: MonstermosInfo = Default::default();
 		let mut info_b: MonstermosInfo = Default::default();
-		info_a.adjust_eq_movement(&mut info_b,1,5.0);
-		assert_eq!(info_a.transfer_dirs[1],5.0);
-		assert_eq!(info_b.transfer_dirs[0],-5.0);
+		info_a.adjust_eq_movement(&mut info_b, 1, 5.0);
+		assert_eq!(info_a.transfer_dirs[1], 5.0);
+		assert_eq!(info_b.transfer_dirs[0], -5.0);
 	}
 }
 
@@ -482,13 +482,11 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 						break;
 					}
 					let (cur_idx, cur_turf) = border_turfs.pop_front().unwrap();
-					let cur_orig = info.entry(cur_idx).or_default();
-					let mut cur_info = cur_orig.get();
+					let cur_info = info.entry(cur_idx).or_default().get_mut();
 					cur_info.distance_score = 0.0;
 					if turfs.len() < monstermos_turf_limit {
 						let turf_moles = cur_turf.total_moles();
 						cur_info.mole_delta = turf_moles;
-						cur_orig.set(cur_info);
 						if cur_turf.planetary_atmos.is_some() {
 							planet_turfs.push((cur_idx, cur_turf));
 							continue;
@@ -557,9 +555,9 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 				}
 				let average_moles = total_moles / (turfs.len() as f32 - planet_turfs.len() as f32);
 				let mut giver_turfs: Vec<(usize, TurfMixture)> =
-					Vec::with_capacity(turfs.len() / 4);
+					Vec::with_capacity(turfs.len() / 2);
 				let mut taker_turfs: Vec<(usize, TurfMixture)> =
-					Vec::with_capacity(turfs.len() / 4);
+					Vec::with_capacity(turfs.len() / 2);
 				for (i, m) in turfs.iter() {
 					let cur_info = info.entry(*i).or_default().get_mut();
 					cur_info.mole_delta -= average_moles;
@@ -576,7 +574,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 					});
 					for (i, m) in turfs.iter() {
 						let cur_orig = info.get(i).unwrap();
-						let mut cur_info = cur_orig.get();
+						let mut cur_info = cur_orig.take();
 						cur_info.fast_done = true;
 						let mut eligible_adjacents: i32 = 0;
 						if cur_info.mole_delta > 0.0 {
@@ -591,25 +589,28 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 								}
 							}
 							let amt_eligible = eligible_adjacents.count_ones();
+							if amt_eligible == 0 {
+								continue;
+							}
 							let moles_to_move = cur_info.mole_delta / amt_eligible as f32;
 							for j in 0..6 {
 								let bit = 1 << j;
 								if eligible_adjacents & bit == bit {
 									let adj_orig =
 										info.get(&adjacent_tile_id(j, *i, max_x, max_y)).unwrap();
-									let mut adj_turf = adj_orig.get();
+									let mut adj_info = adj_orig.take();
 									cur_info.adjust_eq_movement(
-										&mut adj_turf,
+										&mut adj_info,
 										j as usize,
 										moles_to_move,
 									);
 									cur_info.mole_delta -= moles_to_move;
-									adj_turf.mole_delta += moles_to_move;
-									adj_orig.set(adj_turf);
-									cur_orig.set(cur_info);
+									adj_info.mole_delta += moles_to_move;
+									adj_orig.set(adj_info);
 								}
 							}
 						}
+						cur_orig.set(cur_info);
 					}
 					giver_turfs.clear();
 					taker_turfs.clear();
@@ -877,9 +878,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 		rayon::spawn(move || {
 			let turf_receiver = MONSTERMOS_TURF_CHANNEL.1.clone();
 			while !turf_receiver.is_empty()
-				|| EQUALIZATION_STEP.load(
-					Ordering::SeqCst
-				) < EQUALIZATION_FINALIZING
+				|| EQUALIZATION_STEP.load(Ordering::SeqCst) < EQUALIZATION_FINALIZING
 			{
 				let mut res = turf_receiver.recv_timeout(std::time::Duration::from_millis(1));
 				while res.is_ok() {
@@ -890,7 +889,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 					res = turf_receiver.recv_timeout(std::time::Duration::from_micros(50));
 				}
 			}
-			EQUALIZATION_STEP.store(EQUALIZATION_DONE,Ordering::SeqCst);
+			EQUALIZATION_STEP.store(EQUALIZATION_DONE, Ordering::SeqCst);
 		});
 	}
 	let arg_limit = args

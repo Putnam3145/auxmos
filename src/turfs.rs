@@ -160,22 +160,23 @@ fn _hook_turf_update_temp() {
 #[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn _hook_adjacent_turfs() {
 	if let Ok(adjacent_list) = src.get_list("atmos_adjacent_turfs") {
-		let id: usize;
-		unsafe {
-			id = src.value.data.id as usize;
-		}
 		let mut adjacency = 0;
 		for i in 1..adjacent_list.len() + 1 {
 			adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
 		}
-		if let Some(mut turf) = TURF_GASES.get_mut(&id) {
-			turf.adjacency = adjacency as u8;
-		}
+		TURF_GASES
+			.entry(unsafe { src.value.data.id as usize })
+			.and_modify(|turf| {
+				turf.adjacency = adjacency as u8;
+			});
 	}
 	if let Ok(atmos_supeconductivity) = src.get_number("conductivity_blocked_directions") {
 		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_supeconductivity as u8);
-		let mut entry = TURF_TEMPERATURES
+		TURF_TEMPERATURES
 			.entry(unsafe { src.value.data.id as usize })
+			.and_modify(|entry| {
+				entry.adjacency = adjacency;
+			})
 			.or_insert_with(|| ThermalInfo {
 				temperature: src.get_number("temperature").unwrap(),
 				thermal_conductivity: src.get_number("thermal_conductivity").unwrap(),
@@ -183,7 +184,6 @@ fn _hook_adjacent_turfs() {
 				adjacency: adjacency,
 				adjacent_to_space: args[0].as_number().unwrap() != 0.0,
 			});
-		entry.adjacency = adjacency;
 	}
 	Ok(Value::null())
 }

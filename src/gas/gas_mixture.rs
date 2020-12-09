@@ -228,7 +228,7 @@ impl GasMixture {
 			self.moles.clear();
 		}
 	}
-	pub fn clear_with_vol(&mut self,vol: f32) {
+	pub fn clear_with_vol(&mut self, vol: f32) {
 		self.temperature = 0.0;
 		self.volume = vol;
 		self.min_heat_capacity = 0.0;
@@ -356,12 +356,12 @@ mod tests {
 		removed.set_moles(0, 22.0);
 		removed.set_moles(1, 82.0);
 		let new = removed.remove_ratio(0.5);
-		assert_eq!(removed.compare(&new,MINIMUM_MOLES_DELTA_TO_MOVE), false);
+		assert_eq!(removed.compare(&new, MINIMUM_MOLES_DELTA_TO_MOVE), false);
 		assert_eq!(removed.get_moles(0), 11.0);
 		assert_eq!(removed.get_moles(1), 41.0);
 		removed.mark_immutable();
 		let new_two = removed.remove_ratio(0.5);
-		assert_eq!(removed.compare(&new_two,MINIMUM_MOLES_DELTA_TO_MOVE), true);
+		assert_eq!(removed.compare(&new_two, MINIMUM_MOLES_DELTA_TO_MOVE), true);
 		assert_eq!(removed.get_moles(0), 11.0);
 		assert_eq!(removed.get_moles(1), 41.0);
 		assert_eq!(new_two.get_moles(0), 5.5);

@@ -136,7 +136,7 @@ lazy_static! {
 			gas_vis_threshold,
 		}
 	};
-	static ref REACTION_INFO: Vec<Reaction> = Vec::new() ;
+	static ref REACTION_INFO: Vec<Reaction> = Vec::new();
 }
 
 pub fn reactions() -> &'static Vec<Reaction> {
@@ -283,7 +283,12 @@ impl GasMixtures {
 				);
 			} else {
 				let idx = gas_ids.borrow_mut().pop().unwrap();
-				GAS_MIXTURES.read().get(idx).unwrap().write().clear_with_vol(mix.get_number("initial_volume")?);
+				GAS_MIXTURES
+					.read()
+					.get(idx)
+					.unwrap()
+					.write()
+					.clear_with_vol(mix.get_number("initial_volume")?);
 				mix.set("_extools_pointer_gasmixture", f32::from_bits(idx as u32));
 			}
 			Ok(Value::null())

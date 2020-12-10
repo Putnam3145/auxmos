@@ -18,9 +18,10 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 [[package]]
 name = "auxcallback"
 version = "0.1.0"
-source = "git+https://github.com/Putnam3145/auxcallback#8acf760f3749a7fb3cba8da6e57cf07e35b6da80"
+source = "git+https://github.com/Putnam3145/auxcallback#fe10360232fa36466d17096144c6b975c5eb09e2"
 dependencies = [
  "auxtools",
+ "coarsetime",
  "dashmap",
  "flume",
  "lazy_static",
@@ -47,7 +48,7 @@ dependencies = [
 [[package]]
 name = "auxtools"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#6acfe8e5da696508dbd1d3b08737cc9df767a5c8"
+source = "git+https://github.com/willox/auxtools#3e2141ee24576ec48b5080646fa71bb1a3d83a80"
 dependencies = [
  "auxtools-impl",
  "cc",
@@ -63,7 +64,7 @@ dependencies = [
 [[package]]
 name = "auxtools-impl"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#6acfe8e5da696508dbd1d3b08737cc9df767a5c8"
+source = "git+https://github.com/willox/auxtools#3e2141ee24576ec48b5080646fa71bb1a3d83a80"
 dependencies = [
  "hex",
  "proc-macro2",

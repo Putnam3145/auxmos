@@ -4,7 +4,7 @@ use crate::GasMixtures;
 
 use std::time::{Duration, Instant};
 
-use auxcallback::{callback_sender_by_id_insert, process_callbacks_for};
+use auxcallback::{callback_sender_by_id_insert, process_callbacks_for_millis};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 
@@ -317,10 +317,10 @@ fn _process_turf_hook() {
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 0"))?
 		.as_number()?;
-	process_callbacks_for(
+	process_callbacks_for_millis(
 		ctx,
 		SSAIR_NAME.to_string(),
-		Duration::from_millis(arg_limit as u64),
+		arg_limit as u64,
 	);
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
 	Ok(Value::from(
@@ -479,10 +479,10 @@ fn _process_heat_hook() {
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to heat processing: 0"))?
 		.as_number()?;
-	process_callbacks_for(
+	process_callbacks_for_millis(
 		ctx,
 		SSAIR_NAME.to_string(),
-		Duration::from_millis(arg_limit as u64),
+		arg_limit as u64,
 	);
 	Ok(Value::from(PROCESSING_HEAT.load(Ordering::SeqCst)))
 }
@@ -565,10 +565,10 @@ fn process_excited_groups() {
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to heat processing: 0"))?
 		.as_number()?;
-	process_callbacks_for(
+	process_callbacks_for_millis(
 		ctx,
 		SSAIR_NAME.to_string(),
-		Duration::from_millis(arg_limit as u64),
+		arg_limit as u64,
 	);
 	Ok(Value::from(
 		EXCITED_GROUP_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)

@@ -132,22 +132,20 @@ fn _process_turf_hook() {
 												Technically that's ρν², but, like, video games.
 											*/
 											GasMixtures::with_all_mixtures(|all_mixtures| {
-												let mut j = 0;
-												for (_, loc) in adj_tiles.iter() {
-													if let Some(turf) = TURF_GASES.get(loc) {
+												for &(j, loc) in adj_tiles.iter() {
+													if let Some(turf) = TURF_GASES.get(&loc) {
 														if let Some(entry) =
 															all_mixtures.get(turf.mix)
 														{
 															let mix = entry.read();
 															end_gas.merge(&mix);
-															pressure_diffs[j] = (
-																*loc as u32,
+															pressure_diffs[j as usize] = (
+																loc as u32,
 																-mix.return_pressure()
 																	* GAS_DIFFUSION_CONSTANT,
 															);
 														}
 													}
-													j += 1;
 												}
 											});
 											// Obviously planetary atmos needs love too.

@@ -530,8 +530,8 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 							if !adj_info.done_this_cycle
 								&& adj_turf.simulation_level != SIMULATION_LEVEL_NONE
 							{
-								adj_info.done_this_cycle = true;
 								adj_info = Default::default();
+								adj_info.done_this_cycle = true;
 								adj_orig.set(adj_info);
 								border_turfs.push_back((*loc, *adj_turf.value()));
 							}

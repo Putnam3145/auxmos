@@ -153,7 +153,7 @@ fn _hook_turf_update_temp() {
 	entry.heat_capacity = src.get_number("heat_capacity")?;
 	entry.adjacency = NORTH | SOUTH | WEST | EAST;
 	entry.adjacent_to_space = args[0].as_number()? != 0.0;
-	entry.temperature = src.get_number("temperature")?;
+	entry.temperature = src.get_number("initial_temperature")?;
 	Ok(Value::null())
 }
 
@@ -178,7 +178,7 @@ fn _hook_adjacent_turfs() {
 				entry.adjacency = adjacency;
 			})
 			.or_insert_with(|| ThermalInfo {
-				temperature: src.get_number("temperature").unwrap(),
+				temperature: src.get_number("initial_temperature").unwrap(),
 				thermal_conductivity: src.get_number("thermal_conductivity").unwrap(),
 				heat_capacity: src.get_number("heat_capacity").unwrap(),
 				adjacency: adjacency,
@@ -187,6 +187,31 @@ fn _hook_adjacent_turfs() {
 	}
 	Ok(Value::null())
 }
+
+#[hook("/turf/proc/return_temperature")]
+fn _hook_turf_temperature() {
+	if let Some(temp_info) = TURF_TEMPERATURES.get(&unsafe { src.value.data.id as usize }) {
+		Ok(Value::from(temp_info.temperature))
+	} else {
+		Ok(src.get("initial_temperature")?)
+	}
+}
+
+#[hook("/turf/proc/set_temperature")]
+fn _hook_set_temperature() {
+	let argument = args.get(0).ok_or_else(|| runtime!("Invalid argument count to turf temperature set: 0"))?.as_number()?;
+	TURF_TEMPERATURES.entry(unsafe { src.value.data.id as usize }).and_modify(|turf| {
+		turf.temperature = argument;
+	}).or_insert_with(|| ThermalInfo {
+		temperature: argument,
+		thermal_conductivity: src.get_number("thermal_conductivity").unwrap(),
+		heat_capacity: src.get_number("heat_capacity").unwrap(),
+		adjacency: 0,
+		adjacent_to_space: false,
+	});
+	Ok(Value::null())
+}
+
 #[cfg(feature = "monstermos")]
 const SIMULATION_LEVEL_NONE: u8 = 0;
 const SIMULATION_LEVEL_DIFFUSE: u8 = 1;

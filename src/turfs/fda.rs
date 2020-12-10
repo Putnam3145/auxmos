@@ -274,12 +274,12 @@ fn _process_turf_hook() {
 												let enemy_tile = unsafe {
 													Value::turf_by_id_unchecked(id as u32)
 												};
-												if diff > 0.0 {
+												if diff > 5.0 {
 													turf.call(
 														"consider_pressure_difference",
 														&[enemy_tile, Value::from(diff)],
 													)?;
-												} else {
+												} else if diff < -5.0 {
 													enemy_tile.call(
 														"consider_pressure_difference",
 														&[turf.clone(), Value::from(-diff)],
@@ -376,7 +376,7 @@ fn _process_heat_hook() {
 			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * time_delta;
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * time_delta;
-			let post_temps: Vec<(usize, f32)> = TURF_TEMPERATURES
+			TURF_TEMPERATURES
 				/*
 					Same weird shard trick as above.
 				*/
@@ -397,6 +397,17 @@ fn _process_heat_hook() {
 							if t.thermal_conductivity > 0.0 && t.heat_capacity > 0.0 && adj > 0 {
 								let mut heat_delta = 0.0;
 								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
+								let mut is_temp_delta_with_air = false;
+								if let Some(m) = TURF_GASES.get(&i) {
+									GasMixtures::with_all_mixtures(|all_mixtures| {
+										if let Some(entry) = all_mixtures.get(m.mix) {
+											let gas: &GasMixture = &entry.read();
+											if (t.temperature - gas.get_temperature()).abs() > 1.0 {
+												is_temp_delta_with_air = true;
+											}
+										}
+									});
+								}
 								for (_, loc) in adj_tiles.iter() {
 									if let Some(other) = TURF_TEMPERATURES.get(loc) {
 										heat_delta +=
@@ -426,7 +437,11 @@ fn _process_heat_hook() {
 										- radiation_from_space_tick;
 									heat_delta -= blackbody_radiation as f32;
 								}
-								Some((i, (cur_heat + heat_delta) / t.heat_capacity))
+								if is_temp_delta_with_air || heat_delta.abs() > 0.1 {
+									Some((i, (cur_heat + heat_delta) / t.heat_capacity))
+								} else {
+									None
+								}
 							} else {
 								None
 							}
@@ -434,10 +449,8 @@ fn _process_heat_hook() {
 						.collect::<Vec<_>>()
 				})
 				.flatten()
-				.collect();
-			post_temps.par_iter().for_each(|&(i, new_temp)| {
+				.for_each(|(i, new_temp)| {
 				let t: &mut ThermalInfo = &mut TURF_TEMPERATURES.get_mut(&i).unwrap();
-				let original_temp = t.temperature;
 				if let Some(m) = TURF_GASES.get(&i) {
 					GasMixtures::with_all_mixtures(|all_mixtures| {
 						if let Some(entry) = all_mixtures.get(m.mix) {
@@ -458,18 +471,13 @@ fn _process_heat_hook() {
 				} else {
 					t.temperature = new_temp;
 				}
-				// Temp diffs of less than 0.05 are meaningless and this callback, while not slow,
-				// is still going to lag the hell out of the server if run for every turf
-				if (original_temp - t.temperature).abs() > 0.1 {
-					let temp = t.temperature;
-					sender
-						.send(Box::new(move |_| {
+				if t.temperature > t.heat_capacity { // not what heat capacity means but whatever
+					let _ = sender
+						.try_send(Box::new(move |_| {
 							let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
-							turf.set("temperature", temp);
-							turf.call("temperature_expose", &[&Value::null()])?;
+							turf.set("to_be_destroyed", 1.0);
 							Ok(Value::null())
-						}))
-						.unwrap();
+						}));
 				}
 			});
 			PROCESSING_HEAT.store(false, Ordering::SeqCst);

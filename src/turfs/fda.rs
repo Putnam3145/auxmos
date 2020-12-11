@@ -192,7 +192,7 @@ fn _process_turf_hook() {
 					that gases don't need an archive anymore--this *is* the archival step,
 					simultaneously saving how the gases will change after the fact.
 					In short: the above actually needs to finish before the below starts
-					for consistency, so collect() is desired.
+					for consistency, so collect() is desired. This has been tested, by the way.
 				*/
 				if !turfs_to_save
 					.par_iter_mut()
@@ -487,12 +487,11 @@ fn _process_heat_hook() {
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to heat processing: 0"))?
 		.as_number()?;
-	process_callbacks_for_millis(
+	Ok(Value::from(process_callbacks_for_millis(
 		ctx,
 		SSAIR_NAME.to_string(),
 		arg_limit as u64,
-	);
-	Ok(Value::from(PROCESSING_HEAT.load(Ordering::SeqCst)))
+	)))
 }
 
 static EXCITED_GROUP_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);

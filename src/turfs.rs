@@ -25,6 +25,8 @@ const WEST: u8 = 8;
 //const DOWN: u8 = 32;
 // TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
 
+const SSAIR_NAME: &'static str = "SSair";
+
 #[derive(Clone, Copy, Default)]
 struct TurfMixture {
 	pub mix: usize,
@@ -199,16 +201,22 @@ fn _hook_turf_temperature() {
 
 #[hook("/turf/proc/set_temperature")]
 fn _hook_set_temperature() {
-	let argument = args.get(0).ok_or_else(|| runtime!("Invalid argument count to turf temperature set: 0"))?.as_number()?;
-	TURF_TEMPERATURES.entry(unsafe { src.value.data.id as usize }).and_modify(|turf| {
-		turf.temperature = argument;
-	}).or_insert_with(|| ThermalInfo {
-		temperature: argument,
-		thermal_conductivity: src.get_number("thermal_conductivity").unwrap(),
-		heat_capacity: src.get_number("heat_capacity").unwrap(),
-		adjacency: 0,
-		adjacent_to_space: false,
-	});
+	let argument = args
+		.get(0)
+		.ok_or_else(|| runtime!("Invalid argument count to turf temperature set: 0"))?
+		.as_number()?;
+	TURF_TEMPERATURES
+		.entry(unsafe { src.value.data.id as usize })
+		.and_modify(|turf| {
+			turf.temperature = argument;
+		})
+		.or_insert_with(|| ThermalInfo {
+			temperature: argument,
+			thermal_conductivity: src.get_number("thermal_conductivity").unwrap(),
+			heat_capacity: src.get_number("heat_capacity").unwrap(),
+			adjacency: 0,
+			adjacent_to_space: false,
+		});
 	Ok(Value::null())
 }
 

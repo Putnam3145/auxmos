@@ -20,8 +20,6 @@ static TURF_PROCESS_TIME: AtomicU64 = AtomicU64::new(1000000);
 
 static SUBSYSTEM_FIRE_COUNT: AtomicU32 = AtomicU32::new(0);
 
-const SSAIR_NAME: &'static str = "SSair";
-
 // Returns: TRUE if not done, FALSE if done
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_extools")]
 fn _process_turf_hook() {
@@ -300,6 +298,7 @@ fn _process_turf_hook() {
 				{
 					break;
 				}
+				drop(turfs_to_save);
 				if SUBSYSTEM_FIRE_COUNT.load(Ordering::Relaxed) != initial_fire_count {
 					break;
 				}
@@ -317,11 +316,7 @@ fn _process_turf_hook() {
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 0"))?
 		.as_number()?;
-	process_callbacks_for_millis(
-		ctx,
-		SSAIR_NAME.to_string(),
-		arg_limit as u64,
-	);
+	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
 	Ok(Value::from(
 		PROCESSING_TURF_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::Relaxed)
@@ -450,36 +445,36 @@ fn _process_heat_hook() {
 				})
 				.flatten()
 				.for_each(|(i, new_temp)| {
-				let t: &mut ThermalInfo = &mut TURF_TEMPERATURES.get_mut(&i).unwrap();
-				if let Some(m) = TURF_GASES.get(&i) {
-					GasMixtures::with_all_mixtures(|all_mixtures| {
-						if let Some(entry) = all_mixtures.get(m.mix) {
-							let gas: &mut GasMixture = &mut entry.write();
-							t.temperature = gas.temperature_share_non_gas(
-								/*
-									This value should be lower than the
-									turf-to-turf conductivity for balance reasons
-									as well as realism, otherwise fires will
-									just sort of solve theirselves over time.
-								*/
-								t.thermal_conductivity * OPEN_HEAT_TRANSFER_COEFFICIENT,
-								new_temp,
-								t.heat_capacity,
-							);
-						}
-					});
-				} else {
-					t.temperature = new_temp;
-				}
-				if t.temperature > t.heat_capacity { // not what heat capacity means but whatever
-					let _ = sender
-						.try_send(Box::new(move |_| {
+					let t: &mut ThermalInfo = &mut TURF_TEMPERATURES.get_mut(&i).unwrap();
+					if let Some(m) = TURF_GASES.get(&i) {
+						GasMixtures::with_all_mixtures(|all_mixtures| {
+							if let Some(entry) = all_mixtures.get(m.mix) {
+								let gas: &mut GasMixture = &mut entry.write();
+								t.temperature = gas.temperature_share_non_gas(
+									/*
+										This value should be lower than the
+										turf-to-turf conductivity for balance reasons
+										as well as realism, otherwise fires will
+										just sort of solve theirselves over time.
+									*/
+									t.thermal_conductivity * OPEN_HEAT_TRANSFER_COEFFICIENT,
+									new_temp,
+									t.heat_capacity,
+								);
+							}
+						});
+					} else {
+						t.temperature = new_temp;
+					}
+					if t.temperature > t.heat_capacity {
+						// not what heat capacity means but whatever
+						let _ = sender.try_send(Box::new(move |_| {
 							let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
 							turf.set("to_be_destroyed", 1.0);
 							Ok(Value::null())
 						}));
-				}
-			});
+					}
+				});
 			PROCESSING_HEAT.store(false, Ordering::SeqCst);
 		});
 	}
@@ -521,7 +516,7 @@ fn process_excited_groups() {
 				let mut fully_mixed = GasMixture::from_vol(2500.0);
 				border_turfs.push_back((initial_turf, initial_mix));
 				found_turfs.insert(initial_turf);
-				while !border_turfs.is_empty() {
+				while !border_turfs.is_empty() && turfs.len() < 6400 {
 					let (i, turf) = border_turfs.pop_front().unwrap();
 					turfs.push((i, turf));
 					let adj_tiles = adjacent_tile_ids(turf.adjacency, i, max_x, max_y);
@@ -532,13 +527,16 @@ fn process_excited_groups() {
 						max_pressure = max_pressure.max(pressure);
 						fully_mixed.merge(&mix);
 					});
+					if (max_pressure - min_pressure).abs() >= 1.0 {
+						break;
+					}
 					for (_, loc) in adj_tiles.iter() {
 						if found_turfs.contains(loc) {
 							continue;
 						}
 						found_turfs.insert(*loc);
 						if let Some(border_mix) = TURF_GASES.get(loc) {
-							if border_mix.simulation_level >= SIMULATION_LEVEL_DIFFUSE {
+							if border_mix.simulation_level >= SIMULATION_LEVEL_ALL {
 								border_turfs.push_back((*loc, *border_mix));
 							}
 						}
@@ -572,11 +570,7 @@ fn process_excited_groups() {
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to heat processing: 0"))?
 		.as_number()?;
-	process_callbacks_for_millis(
-		ctx,
-		SSAIR_NAME.to_string(),
-		arg_limit as u64,
-	);
+	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
 	Ok(Value::from(
 		EXCITED_GROUP_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)
 			== PROCESS_DONE,

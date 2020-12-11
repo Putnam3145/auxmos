@@ -30,7 +30,7 @@ impl GasMixture {
 	pub fn new() -> Self {
 		GasMixture {
 			moles: SmallVec::new(),
-			temperature: 0.0,
+			temperature: 2.7,
 			volume: 2500.0,
 			min_heat_capacity: 0.0,
 			immutable: false,
@@ -90,7 +90,7 @@ impl GasMixture {
 	pub fn heat_capacity(&self) -> f32 {
 		self.moles
 			.iter()
-			.zip(gas_specific_heats().iter())
+			.zip(gas_specific_heats())
 			.fold(0.0, |acc, (gas, cap)| acc + (gas * cap))
 	}
 	/// The total mole count of the mixture. Moles.

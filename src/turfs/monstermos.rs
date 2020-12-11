@@ -4,18 +4,19 @@ use std::collections::VecDeque;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use std::cell::Cell;
+use auxcallback::{callback_sender_by_id_insert, process_callbacks_for_millis};
 
-use std::time::{Duration, Instant};
+use std::cell::Cell;
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
+type TransferInfo = [f32; 7];
+
 #[derive(Copy, Clone, Default)]
 struct MonstermosInfo {
-	transfer_dirs: [f32; 7],
+	transfer_dirs: TransferInfo,
 	mole_delta: f32,
 	curr_transfer_amount: f32,
-	distance_score: f32,
 	curr_transfer_dir: usize,
 	last_slow_queue_cycle: i32,
 	fast_done: bool,
@@ -47,57 +48,11 @@ mod tests {
 	}
 }
 
-#[allow(dead_code)]
-enum ByondArg {
-	Turf(u32),
-	Float(f32),
-	Str(String),
-	Null,
-}
-
-impl ByondArg {
-	pub fn to_usable_arg(&self) -> Value {
-		match self {
-			Self::Turf(n) => unsafe { Value::turf_by_id_unchecked(*n) },
-			Self::Float(n) => Value::from(*n),
-			Self::Str(s) => Value::from_string(s),
-			Self::Null => Value::null(),
-		}
-	}
-	pub fn to_string(&self) -> Option<&str> {
-		match self {
-			Self::Str(s) => Some(s),
-			_ => None,
-		}
-	}
-}
-
-const BLOCKS_CALLER: u32 = 1;
-
-// turf, flags (see above), what to call, arguments
-type ByondMessage<'a> = (
-	u32,
-	u32,
-	&'a str,
-	Vec<ByondArg>,
-	Option<flume::Sender<bool>>,
-);
-
 lazy_static! {
-	static ref EQUALIZE_FINALIZE_CHANNEL: (
-		flume::Sender<(usize, usize, f32)>,
-		flume::Receiver<(usize, usize, f32)>
-	) = flume::unbounded();
-	static ref CALL_CHANNEL: (
-		flume::Sender<ByondMessage<'static>>,
-		flume::Receiver<ByondMessage<'static>>
-	) = flume::unbounded();
 	static ref MONSTERMOS_TURF_CHANNEL: (
-		flume::Sender<BTreeMap<usize, (TurfMixture, Cell<MonstermosInfo>)>>,
-		flume::Receiver<BTreeMap<usize, (TurfMixture, Cell<MonstermosInfo>)>>
+		flume::Sender<BTreeMap<usize, (TurfMixture, Cell<TransferInfo>)>>,
+		flume::Receiver<BTreeMap<usize, (TurfMixture, Cell<TransferInfo>)>>
 	) = flume::unbounded();
-	static ref HIGH_PRESSURE_DELTA_CHANNEL: (flume::Sender<Vec<ByondArg>>, flume::Receiver<Vec<ByondArg>>,) =
-		flume::unbounded();
 }
 
 const EQUALIZATION_NONE: u8 = 0;
@@ -110,24 +65,17 @@ static EQUALIZATION_STEP: AtomicU8 = AtomicU8::new(0);
 fn finalize_eq(
 	i: usize,
 	turf: &TurfMixture,
-	monstermos_orig: &Cell<MonstermosInfo>,
-	other_turfs: &BTreeMap<usize, (TurfMixture, Cell<MonstermosInfo>)>,
+	monstermos_orig: &Cell<TransferInfo>,
+	other_turfs: &BTreeMap<usize, (TurfMixture, Cell<TransferInfo>)>,
 	max_x: i32,
 	max_y: i32,
 ) {
-	let sender = EQUALIZE_FINALIZE_CHANNEL.0.clone();
-	let mut monstermos_info = monstermos_orig.take();
-	let transfer_dirs = monstermos_info.transfer_dirs.clone();
-	monstermos_info
-		.transfer_dirs
-		.iter_mut()
-		.for_each(|m| *m = 0.0);
-	monstermos_orig.set(monstermos_info);
+	let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
+	let transfer_dirs = monstermos_orig.take();
 	let planet_transfer_amount = transfer_dirs[6];
 	if planet_transfer_amount > 0.0 {
 		if turf.total_moles() < planet_transfer_amount {
 			finalize_eq_neighbors(i, &transfer_dirs, turf, other_turfs, max_x, max_y);
-			monstermos_info = monstermos_orig.get();
 		}
 		GasMixtures::with_all_mixtures(|all_mixtures| {
 			all_mixtures
@@ -156,11 +104,10 @@ fn finalize_eq(
 		if amount > 0.0 {
 			if turf.total_moles() < amount {
 				finalize_eq_neighbors(i, &transfer_dirs, turf, other_turfs, max_x, max_y);
-				monstermos_info = monstermos_orig.get();
 			}
 			if let Some((adj_turf, adj_orig)) = other_turfs.get(&adj_id) {
 				let mut adj_info = adj_orig.take();
-				adj_info.transfer_dirs[OPP_DIR_INDEX[j as usize]] = 0.0;
+				adj_info[OPP_DIR_INDEX[j as usize]] = 0.0;
 				if turf.mix != adj_turf.mix {
 					GasMixtures::with_all_mixtures(|all_mixtures| {
 						let our_entry = all_mixtures.get(turf.mix).unwrap();
@@ -171,8 +118,28 @@ fn finalize_eq(
 					});
 				}
 				adj_orig.set(adj_info);
-				monstermos_orig.set(monstermos_info);
-				sender.send((i, adj_id, amount)).unwrap();
+				sender
+					.send(Box::new(move |_| {
+						let real_amount = Value::from(-amount);
+						let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
+						let other_turf = unsafe { Value::turf_by_id_unchecked(adj_id as u32) };
+						if let Err(e) = turf.call("update_visuals", &[Value::null()]) {
+							turf.call("stack_trace", &[&Value::from_string(e.message.as_str())])
+								.unwrap();
+						}
+						if let Err(e) = other_turf.call("update_visuals", &[Value::null()]) {
+							turf.call("stack_trace", &[&Value::from_string(e.message.as_str())])
+								.unwrap();
+						}
+						if let Err(e) =
+							turf.call("consider_pressure_difference", &[other_turf, real_amount])
+						{
+							turf.call("stack_trace", &[&Value::from_string(e.message.as_str())])
+								.unwrap();
+						}
+						Ok(Value::null())
+					}))
+					.unwrap();
 			}
 		}
 	}
@@ -182,7 +149,7 @@ fn finalize_eq_neighbors(
 	i: usize,
 	transfer_dirs: &[f32; 7],
 	turf: &TurfMixture,
-	other_turfs: &BTreeMap<usize, (TurfMixture, Cell<MonstermosInfo>)>,
+	other_turfs: &BTreeMap<usize, (TurfMixture, Cell<TransferInfo>)>,
 	max_x: i32,
 	max_y: i32,
 ) {
@@ -207,7 +174,7 @@ fn finalize_eq_neighbors(
 fn explosively_depressurize(
 	turf_idx: usize,
 	turf: TurfMixture,
-	info: &mut BTreeMap<usize, Cell<MonstermosInfo>>,
+	info: &mut BTreeMap<usize, Cell<[MonstermosInfo]>>,
 	queue_cycle_slow: &mut i32,
 	monstermos_hard_turf_limit: usize,
 	max_x: i32,
@@ -224,8 +191,7 @@ fn explosively_depressurize(
 	cur_orig.set(cur_info);
 	let mut warned_about_planet_atmos = false;
 	let mut cur_queue_idx = 0;
-	let call_sender = CALL_CHANNEL.0.clone();
-	let hpd_sender = HIGH_PRESSURE_DELTA_CHANNEL.0.clone();
+	let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 	while cur_queue_idx < turfs.len() {
 		let (i, m) = turfs[cur_queue_idx];
 		cur_queue_idx += 1;
@@ -240,17 +206,14 @@ fn explosively_depressurize(
 		}
 		if m.is_immutable() {
 			space_turfs.push((i, m));
-			call_sender
-				.send((
-					i as u32,
-					0,
-					"set",
-					vec![
-						ByondArg::Str("pressure_specific_target".to_string()),
-						ByondArg::Turf(i as u32),
-					],
-					None,
-				))
+			sender
+				.send(Box::new(move |_| {
+					unsafe { Value::turf_by_id_unchecked(i) }.set(
+						"pressure_specific_target",
+						&[&unsafe { Value::turf_by_id_unchecked(i) }],
+					)?;
+					Ok(Value::null())
+				}))
 				.unwrap();
 		} else {
 			if cur_queue_idx > monstermos_hard_turf_limit {
@@ -268,14 +231,15 @@ fn explosively_depressurize(
 						continue;
 					}
 					let (call_result_sender, call_result_receiver) = flume::bounded(0);
-					call_sender
-						.send((
-							i as u32,
-							BLOCKS_CALLER,
-							"consider_firelocks",
-							vec![ByondArg::Turf(loc as u32)],
-							Some(call_result_sender),
-						))
+					sender
+						.send(Box::new(move |_| {
+							unsafe { Value::turf_by_id_unchecked(i) }.call(
+								"consider_firelocks",
+								&[&unsafe { Value::turf_by_id_unchecked(loc) }],
+							)?;
+							call_result_sender.send(true).unwrap();
+							Ok(Value::null())
+						}))
 						.unwrap();
 					call_result_receiver.recv().unwrap();
 					let new_m = TURF_GASES[i];
@@ -314,17 +278,14 @@ fn explosively_depressurize(
 			{
 				adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 				adj_info.curr_transfer_amount = 0.0;
-				call_sender
-					.send((
-						*adj_i as u32,
-						0,
-						"set",
-						vec![
-							ByondArg::Str("pressure_specific_target".to_string()),
-							ByondArg::Turf(i as u32),
-						],
-						None,
-					))
+				sender
+					.send(Box::new(move |_| {
+						unsafe { Value::turf_by_id_unchecked(adj_i) }.set(
+							"pressure_specific_target",
+							&[&unsafe { Value::turf_by_id_unchecked(i) }],
+						)?;
+						Ok(Value::null())
+					}))
 					.unwrap();
 				adj_info.last_slow_queue_cycle = *queue_cycle_slow;
 				adj_orig.set(adj_info);
@@ -350,73 +311,36 @@ fn explosively_depressurize(
 		total_gases_deleted += sum;
 		cur_info.curr_transfer_amount += sum;
 		adj_info.curr_transfer_amount += cur_info.curr_transfer_amount;
-		call_sender
-			.send((
-				*i as u32,
-				0,
-				"set",
-				vec![
-					ByondArg::Str("pressure_difference".to_string()),
-					ByondArg::Float(cur_info.curr_transfer_amount),
-				],
-				None,
-			))
-			.unwrap();
-		call_sender
-			.send((
-				*i as u32,
-				0,
-				"set",
-				vec![
-					ByondArg::Str("pressure_direction".to_string()),
-					ByondArg::Float((1 << cur_info.curr_transfer_dir) as f32),
-				],
-				None,
-			))
-			.unwrap();
 		if adj_info.curr_transfer_dir == 6 {
-			call_sender
-				.send((
-					*adj_i as u32,
-					0,
-					"set",
-					vec![
-						ByondArg::Str("pressure_difference".to_string()),
-						ByondArg::Float(cur_info.curr_transfer_amount),
-					],
-					None,
-				))
-				.unwrap();
-			call_sender
-				.send((
-					*adj_i as u32,
-					0,
-					"set",
-					vec![
-						ByondArg::Str("pressure_direction".to_string()),
-						ByondArg::Float((1 << cur_info.curr_transfer_dir) as f32),
-					],
-					None,
-				))
+			sender
+				.send(Box::new(move |_| {
+					let byond_turf = unsafe { Value::turf_by_id_unchecked(adj_i) };
+					byond_turf.set("pressure_difference", cur_info.curr_transfer_amount)?;
+					byond_turf.set(
+						"pressure_direction",
+						(1 << cur_info.curr_transfer_dir) as f32,
+					)?;
+					Ok(Value::null())
+				}))
 				.unwrap();
 		}
 		m.clear_air();
-		call_sender
-			.send((*i as u32, 0, "update_visuals", vec![ByondArg::Null], None))
-			.unwrap();
-		call_sender
-			.send((
-				*i as u32,
-				0,
-				"handle decompression floor rip",
-				vec![ByondArg::Float(sum)],
-				None,
-			))
+		sender
+			.send(Box::new(move |_| {
+				let byond_turf = unsafe { Value::turf_by_id_unchecked(i) };
+				byond_turf.set("pressure_difference", cur_info.curr_transfer_amount)?;
+				byond_turf.set(
+					"pressure_direction",
+					(1 << cur_info.curr_transfer_dir) as f32,
+				)?;
+				byond_turf.call("update_visuals", &[&Value::null()])?;
+				byond_turf.call("handle decompression floor rip", &[&Value::from(sum)])?;
+				Ok(Value::null())
+			}))
 			.unwrap();
 	}
 	if (total_gases_deleted / turfs.len() as f32) > 20.0 && turfs.len() > 10 { // logging I guess
 	}
-	hpd_sender.send(hpd_entries).unwrap();
 }
 
 // In its own function due to the Rust compiler not liking a massive function in a hook.
@@ -436,8 +360,8 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 		rayon::spawn(move || {
 			let mut info: BTreeMap<usize, Cell<MonstermosInfo>> = BTreeMap::new();
 			let mut queue_cycle_slow = 0;
-			let call_sender = CALL_CHANNEL.0.clone();
 			let turf_sender = MONSTERMOS_TURF_CHANNEL.0.clone();
+			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 			for i in turf_receiver.try_iter() {
 				let m = TURF_GASES.get(&i).unwrap();
 				if m.simulation_level >= SIMULATION_LEVEL_ALL && m.adjacency > 0 {
@@ -447,7 +371,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 						}
 					}
 					let our_moles = m.total_moles();
-					if our_moles < 1.0 {
+					if our_moles < 10.0 {
 						continue;
 					}
 					let adj_tiles = adjacent_tile_ids(m.adjacency, i, max_x, max_y);
@@ -482,16 +406,12 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 						break;
 					}
 					let (cur_idx, cur_turf) = border_turfs.pop_front().unwrap();
-					let cur_info = info.entry(cur_idx).or_default().get_mut();
-					cur_info.distance_score = 0.0;
 					if turfs.len() < monstermos_turf_limit {
-						let turf_moles = cur_turf.total_moles();
-						cur_info.mole_delta = turf_moles;
 						if cur_turf.planetary_atmos.is_some() {
 							planet_turfs.push((cur_idx, cur_turf));
 							continue;
 						}
-						total_moles += turf_moles;
+						total_moles += cur_turf.total_moles();
 					}
 					for (_, loc) in
 						adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y).iter()
@@ -560,7 +480,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 					Vec::with_capacity(turfs.len() / 2);
 				for (i, m) in turfs.iter() {
 					let cur_info = info.entry(*i).or_default().get_mut();
-					cur_info.mole_delta -= average_moles;
+					cur_info.mole_delta = m.total_moles() - average_moles;
 					if cur_info.mole_delta > 0.0 {
 						giver_turfs.push((*i, *m));
 					} else {
@@ -819,14 +739,17 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 									}
 									let (call_result_sender, call_result_receiver) =
 										flume::bounded(0);
-									call_sender
-										.send((
-											i as u32,
-											BLOCKS_CALLER,
-											"consider_firelocks",
-											vec![ByondArg::Turf(loc as u32)],
-											Some(call_result_sender),
-										))
+									sender
+										.send(Box::new(move |_| {
+											unsafe { Value::turf_by_id_unchecked(i as u32) }.call(
+												"consider_firelocks",
+												&[&unsafe {
+													Value::turf_by_id_unchecked(loc as u32)
+												}],
+											)?;
+											call_result_sender.send(true).unwrap();
+											Ok(Value::null())
+										}))
 										.unwrap();
 									call_result_receiver.recv().unwrap();
 									let (_, new_m) = progression_order[queue_idx];
@@ -869,8 +792,13 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 				}
 				let info_to_send = turfs
 					.iter()
-					.map(|(i, m)| (*i, (*m, info.get(i).unwrap().clone())))
-					.collect::<BTreeMap<usize, (TurfMixture, Cell<MonstermosInfo>)>>();
+					.map(|(i, m)| {
+						(
+							*i,
+							(*m, Cell::new(info.get(i).unwrap().get().transfer_dirs)),
+						)
+					})
+					.collect::<BTreeMap<usize, (TurfMixture, Cell<TransferInfo>)>>();
 				turf_sender.send(info_to_send).unwrap();
 			}
 			EQUALIZATION_STEP.store(EQUALIZATION_FINALIZING, Ordering::Relaxed);
@@ -899,69 +827,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 	if arg_limit <= 0.0 {
 		return Ok(Value::from(1.0));
 	}
-	let time_limit = Duration::from_millis(arg_limit as u64);
-	let start_time = Instant::now();
-	let end_time = start_time + time_limit;
-	let final_receiver = EQUALIZE_FINALIZE_CHANNEL.1.clone();
-	let call_receiver = CALL_CHANNEL.1.clone();
-	let hpd_receiver = HIGH_PRESSURE_DELTA_CHANNEL.1.clone();
-	while !final_receiver.is_empty() || !call_receiver.is_empty() || !hpd_receiver.is_empty() {
-		let res = flume::Selector::new()
-			.recv(&call_receiver, |call_res| {
-				let (turf_idx, flags, fn_name, args, call_result_sender) = call_res.unwrap();
-				let turf = unsafe { Value::turf_by_id_unchecked(turf_idx as u32) };
-				match fn_name {
-					"set" => turf.set(args[0].to_string().unwrap(), &args[1].to_usable_arg()),
-					_ => {
-						let true_args: Vec<Value> =
-							args.iter().map(|v| v.to_usable_arg()).collect();
-						if let Err(e) = turf.call(fn_name, &true_args) {
-							src.call("stack_trace", &[&Value::from_string(e.message.as_str())])
-								.unwrap();
-						}
-					}
-				}
-				if flags & BLOCKS_CALLER == BLOCKS_CALLER {
-					call_result_sender.unwrap().send(true).unwrap();
-				}
-			})
-			.recv(&final_receiver, |final_res| {
-				let (turf_idx, other_idx, amount) = final_res.unwrap();
-				let real_amount = Value::from(-amount);
-				let turf = unsafe { Value::turf_by_id_unchecked(turf_idx as u32) };
-				let other_turf = unsafe { Value::turf_by_id_unchecked(other_idx as u32) };
-				if let Err(e) = turf.call("update_visuals", &[Value::null()]) {
-					src.call("stack_trace", &[&Value::from_string(e.message.as_str())])
-						.unwrap();
-				}
-				if let Err(e) = other_turf.call("update_visuals", &[Value::null()]) {
-					src.call("stack_trace", &[&Value::from_string(e.message.as_str())])
-						.unwrap();
-				}
-				if let Err(e) =
-					turf.call("consider_pressure_difference", &[other_turf, real_amount])
-				{
-					src.call("stack_trace", &[&Value::from_string(e.message.as_str())])
-						.unwrap();
-				}
-			})
-			.recv(&hpd_receiver, |hpd_res| {
-				let hpd: List = src.get_list("high_pressure_delta").unwrap();
-				let true_value = Value::from(1.0);
-				for hpd_turf in hpd_res.unwrap().iter().map(|item| item.to_usable_arg()) {
-					if let Err(e) = hpd.set(&hpd_turf, &true_value) {
-						src.call("stack_trace", &[&Value::from_string(e.message.as_str())])
-							.unwrap();
-					};
-				}
-			})
-			.wait_deadline(end_time);
-		if let Err(e) = res {
-			if e == flume::select::SelectError::Timeout {
-				return Ok(Value::from(true));
-			}
-		}
-	}
+	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
 	let prev_value =
 		EQUALIZATION_STEP.compare_and_swap(EQUALIZATION_DONE, EQUALIZATION_NONE, Ordering::SeqCst);
 	Ok(Value::from(

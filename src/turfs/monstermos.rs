@@ -20,7 +20,7 @@ struct MonstermosInfo {
 	curr_transfer_dir: usize,
 	last_slow_queue_cycle: i32,
 	fast_done: bool,
-	done_this_cycle: bool,
+	last_cycle: i32,
 }
 
 const OPP_DIR_INDEX: [usize; 7] = [1, 0, 3, 2, 5, 4, 6];
@@ -123,14 +123,6 @@ fn finalize_eq(
 						let real_amount = Value::from(-amount);
 						let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
 						let other_turf = unsafe { Value::turf_by_id_unchecked(adj_id as u32) };
-						if let Err(e) = turf.call("update_visuals", &[Value::null()]) {
-							turf.call("stack_trace", &[&Value::from_string(e.message.as_str())])
-								.unwrap();
-						}
-						if let Err(e) = other_turf.call("update_visuals", &[Value::null()]) {
-							turf.call("stack_trace", &[&Value::from_string(e.message.as_str())])
-								.unwrap();
-						}
 						if let Err(e) =
 							turf.call("consider_pressure_difference", &[other_turf, real_amount])
 						{
@@ -333,7 +325,6 @@ fn explosively_depressurize(
 					"pressure_direction",
 					(1 << cur_info.curr_transfer_dir) as f32,
 				)?;
-				byond_turf.call("update_visuals", &[&Value::null()])?;
 				byond_turf.call("handle decompression floor rip", &[&Value::from(sum)])?;
 				Ok(Value::null())
 			}))
@@ -359,16 +350,16 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 	{
 		rayon::spawn(move || {
 			let mut info: BTreeMap<usize, Cell<MonstermosInfo>> = BTreeMap::new();
-			let mut queue_cycle_slow = 0;
+			let mut queue_cycle_slow = 1;
+			let mut queue_cycle = 1;
 			let turf_sender = MONSTERMOS_TURF_CHANNEL.0.clone();
 			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 			for i in turf_receiver.try_iter() {
 				let m = TURF_GASES.get(&i).unwrap();
 				if m.simulation_level >= SIMULATION_LEVEL_ALL && m.adjacency > 0 {
-					if let Some(our_info) = info.get(&i) {
-						if our_info.get().done_this_cycle {
-							continue;
-						}
+					let our_info = info.entry(i).or_default().get();
+					if our_info.last_cycle >= queue_cycle {
+						continue;
 					}
 					let our_moles = m.total_moles();
 					if our_moles < 10.0 {
@@ -390,6 +381,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 				} else {
 					continue;
 				}
+				queue_cycle += 1;
 				let mut turfs: Vec<(usize, TurfMixture)> =
 					Vec::with_capacity(monstermos_turf_limit);
 				let mut border_turfs: VecDeque<(usize, TurfMixture)> =
@@ -401,6 +393,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 				let mut space_this_time = false;
 				#[warn(unused_mut)]
 				border_turfs.push_back((i, *m));
+				info.entry(i).or_default().get_mut().last_cycle = queue_cycle;
 				while border_turfs.len() > 0 {
 					if turfs.len() > monstermos_hard_turf_limit {
 						break;
@@ -424,9 +417,9 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 						let mut adj_info = adj_orig.get();
 						#[cfg(feature = "explosive_decompression")]
 						{
-							if !adj_info.done_this_cycle {
+							if !adj_info.last_cycle != queue_cycle {
 								adj_info = Default::default();
-								adj_info.done_this_cycle = true;
+								adj_info.last_cycle = queue_cycle;
 								adj_orig.set(adj_info);
 								border_turfs.push_back((*loc, *adj_turf.value()));
 								if adj_turf.value().is_immutable() {
@@ -447,11 +440,11 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 						}
 						#[cfg(not(feature = "explosive_decompression"))]
 						{
-							if !adj_info.done_this_cycle
+							if !adj_info.last_cycle != queue_cycle
 								&& adj_turf.simulation_level != SIMULATION_LEVEL_NONE
 							{
 								adj_info = Default::default();
-								adj_info.done_this_cycle = true;
+								adj_info.last_cycle = queue_cycle;
 								adj_orig.set(adj_info);
 								border_turfs.push_back((*loc, *adj_turf.value()));
 							}
@@ -469,7 +462,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 				if turfs.len() > monstermos_turf_limit {
 					for i in monstermos_turf_limit..turfs.len() {
 						let (idx, _) = turfs[i];
-						info.entry(idx).or_default().get_mut().done_this_cycle = false;
+						info.entry(idx).or_default().get_mut().last_cycle = 0;
 					}
 					turfs.resize(monstermos_turf_limit, Default::default());
 				}
@@ -480,6 +473,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 					Vec::with_capacity(turfs.len() / 2);
 				for (i, m) in turfs.iter() {
 					let cur_info = info.entry(*i).or_default().get_mut();
+					cur_info.last_cycle = queue_cycle;
 					cur_info.mole_delta = m.total_moles() - average_moles;
 					if cur_info.mole_delta > 0.0 {
 						giver_turfs.push((*i, *m));
@@ -501,7 +495,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 							for (j, loc) in adjacent_tile_ids(m.adjacency, *i, max_x, max_y) {
 								if let Some(adj_orig) = info.get(&loc) {
 									let adj_info = adj_orig.get();
-									if adj_info.fast_done || adj_info.done_this_cycle {
+									if adj_info.fast_done || adj_info.last_cycle != queue_cycle {
 										continue;
 									} else {
 										eligible_adjacents |= 1 << j;
@@ -557,6 +551,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 						queue_cycle_slow += 1;
 						queue.clear();
 						queue.push_back((*i, *m));
+						giver_info.last_slow_queue_cycle = queue_cycle_slow;
 						let mut queue_idx = 0;
 						while queue_idx < queue.len() {
 							if giver_info.mole_delta <= 0.0 {
@@ -570,7 +565,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 											break;
 										}
 										let mut adj_info = adj_orig.get();
-										if !adj_info.done_this_cycle
+										if !adj_info.last_cycle == queue_cycle
 											&& adj_info.last_slow_queue_cycle != queue_cycle_slow
 										{
 											queue.push_back((loc, *adj_mix.value()));
@@ -635,6 +630,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 						queue_cycle_slow += 1;
 						queue.clear();
 						queue.push_front((*i, *m));
+						taker_info.last_slow_queue_cycle = queue_cycle_slow;
 						let mut queue_idx = 0;
 						while queue_idx < queue.len() {
 							if taker_info.mole_delta >= 0.0 {
@@ -648,7 +644,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 										if taker_info.mole_delta >= 0.0 {
 											break;
 										}
-										if !adj_info.done_this_cycle
+										if !adj_info.last_cycle == queue_cycle
 											&& adj_info.last_slow_queue_cycle != queue_cycle_slow
 										{
 											queue.push_back((loc, *adj_mix));
@@ -717,7 +713,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 						Vec::with_capacity(planet_turfs.len());
 					for (i, m) in planet_turfs.iter() {
 						progression_order.push((*i, *m));
-						let mut cur_info = info.get_mut(i).unwrap().get_mut();
+						let mut cur_info = info.entry(*i).or_default().get_mut();
 						cur_info.curr_transfer_dir = 6;
 						cur_info.last_slow_queue_cycle = queue_cycle_slow;
 					}
@@ -733,7 +729,9 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 									let mut adj_info = adj_orig.get();
 									let adj = TURF_GASES.get(&loc).unwrap();
 									if adj_info.last_slow_queue_cycle == queue_cycle_slow
-										|| adj.value().planetary_atmos.is_some()
+										|| adj.value().planetary_atmos.is_some() || adj_info
+										.last_cycle
+										!= queue_cycle
 									{
 										continue;
 									}

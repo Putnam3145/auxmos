@@ -23,10 +23,10 @@ const EAST: u8 = 4;
 const WEST: u8 = 8;
 //const UP: u8 = 16;
 //const DOWN: u8 = 32;
+
+const SSAIR_NAME: &str = "SSair";
+
 // TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
-
-const SSAIR_NAME: &'static str = "SSair";
-
 #[derive(Clone, Copy, Default)]
 struct TurfMixture {
 	pub mix: usize,
@@ -220,6 +220,62 @@ fn _hook_set_temperature() {
 	Ok(Value::null())
 }
 
+/*Miserable performance, I mean seriously terrible, 1000x worse than in byond, why?
+#[hook("/turf/open/proc/update_visuals")]
+fn _hook_update_visuals() {
+	use super::gas;
+	let old_overlay_types_value = src.get("atmos_overlay_types")?;
+	let mut overlay_types: Vec<Value> = Vec::new();
+	let gas_overlays = ctx.get_global("meta_gas_overlays")?.as_list()?;
+	GasMixtures::with_all_mixtures(|all_mixtures| {
+		all_mixtures
+			.get(
+				TURF_GASES
+					.get(&unsafe { src.value.data.id as usize })
+					.unwrap()
+					.mix,
+			)
+			.unwrap()
+			.read()
+			.for_each_gas(|(i, &n)| {
+				if let Some(amt) = gas::gas_visibility(i) {
+					if n > amt {
+						if let Ok(this_gas_overlays_v) =
+							gas_overlays.get(gas::gas_id_to_type(i).unwrap().as_ref())
+						{
+							if let Ok(this_gas_overlays) = this_gas_overlays_v.as_list() {
+								let this_idx = FACTOR_GAS_VISIBLE_MAX
+									.min((n / MOLES_GAS_VISIBLE_STEP).ceil()) as u32;
+								if let Ok(this_gas_overlay) = this_gas_overlays.get(this_idx + 1) {
+									overlay_types.push(this_gas_overlay);
+								}
+							}
+						}
+					}
+				}
+			});
+	});
+	if overlay_types.is_empty() {
+		return Ok(Value::null());
+	}
+	if let Ok(old_overlay_types) = old_overlay_types_value.as_list() {
+		if old_overlay_types.len() as usize == overlay_types.len() {
+			if overlay_types.iter().enumerate().all(|(i, v)| {
+				let v1 = v.value;
+				let v2 = old_overlay_types.get((i+1) as u32).unwrap().value;
+				unsafe { v1.data.id == v2.data.id && v1.tag == v2.tag }
+			}) {
+				return Ok(Value::null());
+			}
+		}
+	}
+	let l = List::new();
+	for v in overlay_types.iter() {
+		l.append(v);
+	}
+	src.call("set_visuals", &[&Value::from(l)])
+}
+*/
 #[cfg(feature = "monstermos")]
 const SIMULATION_LEVEL_NONE: u8 = 0;
 const SIMULATION_LEVEL_DIFFUSE: u8 = 1;

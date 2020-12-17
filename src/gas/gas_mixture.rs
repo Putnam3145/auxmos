@@ -48,14 +48,16 @@ impl GasMixture {
 	}
 	/// Sets the temperature, if the mix isn't immutable. T
 	pub fn set_temperature(&mut self, temp: f32) {
-		assert!(
-			temp.is_normal(),
-			"temp was {}, it really shouldn't be",
-			temp
-		);
 		if !self.immutable && temp.is_normal() {
 			self.temperature = temp;
 		}
+	}
+	/// Allows closures to iterate over each gas.
+	pub fn for_each_gas<F>(&self, f: F)
+	where
+		F: FnMut((usize, &f32)),
+	{
+		self.moles.iter().enumerate().for_each(f);
 	}
 	/// Returns a slice representing the non-zero gases in the mix.
 	pub fn get_gases(&self) -> Vec<usize> {
@@ -67,7 +69,7 @@ impl GasMixture {
 	}
 	/// Returns (by value) the amount of moles of a given index the mix has. M
 	pub fn get_moles(&self, idx: usize) -> f32 {
-		*self.moles.get(idx).unwrap_or(&0.0)
+		*self.moles.get(idx).unwrap_or_else(|| &0.0)
 	}
 	/// Sets the mix to be internally immutable. Rust doesn't know about any of this, obviously.
 	pub fn mark_immutable(&mut self) {

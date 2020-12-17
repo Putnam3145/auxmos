@@ -26,7 +26,14 @@ thread_local! {
 
 #[hook("/proc/auxtools_atmos_init")]
 fn _hook_init() {
-	let gas_types_list: dm::List = Proc::find("/proc/gas_types")
+	let old_hook = std::panic::take_hook();
+	std::panic::set_hook(Box::new(move |err| {
+		if let Some(s) = err.payload().downcast_ref::<&str>() {
+			std::fs::write("fewajfeowa.txt", format!("{:?}", s));
+		}
+		old_hook(err)
+	}));
+	let gas_types_list: auxtools::List = Proc::find("/proc/gas_types")
 		.ok_or(runtime!("Could not find gas_types!"))?
 		.call(&[])?
 		.as_list()?;
@@ -153,6 +160,7 @@ pub fn total_num_gases() -> usize {
 	GAS_INFO.total_num_gases
 }
 
+/// Gets the gas visibility threshold for the given gas ID.
 pub fn gas_visibility(idx: usize) -> Option<f32> {
 	*GAS_INFO.gas_vis_threshold.get(idx).unwrap()
 }

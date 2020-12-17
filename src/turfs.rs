@@ -3,6 +3,9 @@ pub mod fda;
 #[cfg(feature = "monstermos")]
 pub mod monstermos;
 
+#[cfg(feature = "putnamos")]
+pub mod putnamos;
+
 use super::gas::gas_mixture::GasMixture;
 
 use auxtools::*;

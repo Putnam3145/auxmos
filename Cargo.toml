@@ -8,6 +8,7 @@ edition = "2018"
 
 [features]
 monstermos = []
+putnamos = []
 explosive_decompression = ["monstermos"]
 
 [lib]

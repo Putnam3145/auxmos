@@ -34,11 +34,16 @@ fn _process_turf_hook() {
 	*/
 	// Don't want to start it while there's already a thread running, so we only start it if it hasn't been started.
 	SUBSYSTEM_FIRE_COUNT.store(src.get_number("times_fired")? as u32, Ordering::SeqCst);
-	if PROCESSING_TURF_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
-		let fda_max_steps = src.get_number("share_max_steps").unwrap_or_else(|_| 1.0) as usize;
+	let resumed = args
+		.get(0)
+		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 0"))?
+		.as_number()?
+		== 1.0;
+	if !resumed && PROCESSING_TURF_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
+		let fda_max_steps = src.get_number("share_max_steps").unwrap_or_else(|_| 1.0) as i32;
 		let fda_pressure_goal = src
 			.get_number("share_pressure_diff_to_stop")
-			.unwrap_or_else(|_| 101.0);
+			.unwrap_or_else(|_| 101.325);
 		let max_x = ctx.get_world().get_number("maxx")? as i32;
 		let max_y = ctx.get_world().get_number("maxy")? as i32;
 		rayon::spawn(move || {
@@ -52,7 +57,7 @@ fn _process_turf_hook() {
 				if cur_count > fda_max_steps {
 					break;
 				}
-				let mut turfs_to_save: Vec<(usize, TurfMixture, GasMixture, [(u32, f32); 6])> =
+				let mut turfs_to_save: Vec<(TurfID, TurfMixture, GasMixture, [(TurfID, f32); 6])> =
 					TURF_GASES
 						/*
 							This uses the DashMap raw API to access the shards directly.
@@ -93,34 +98,41 @@ fn _process_turf_hook() {
 												absolutely need to. Saving is fast enough.
 											*/
 											let mut should_share = false;
-											let gas = all_mixtures.get(m.mix).unwrap().read();
-											for (_, loc) in adj_tiles.iter() {
-												if let Some(turf) = TURF_GASES.get(loc) {
-													let adj_gas =
-														all_mixtures.get(turf.mix).unwrap().read();
-													if gas.compare(
-														&adj_gas,
-														MINIMUM_MOLES_DELTA_TO_MOVE,
-													) {
-														should_share = true;
-														break;
+											if let Some(gas) =
+												all_mixtures.get(m.mix).unwrap().try_read()
+											{
+												for (_, loc) in adj_tiles.iter() {
+													if let Some(turf) = TURF_GASES.get(loc) {
+														if let Some(adj_gas) = all_mixtures
+															.get(turf.mix)
+															.unwrap()
+															.try_read()
+														{
+															if gas.compare(
+																&adj_gas,
+																MINIMUM_MOLES_DELTA_TO_MOVE,
+															) {
+																should_share = true;
+																break;
+															}
+														}
 													}
 												}
-											}
-											if let Some(planet_atmos) = m.planetary_atmos {
-												if gas.compare(
-													PLANETARY_ATMOS
-														.get(planet_atmos)
-														.unwrap()
-														.value(),
-													0.01,
-												) {
-													should_share = true;
+												if let Some(planet_atmos) = m.planetary_atmos {
+													if gas.compare(
+														PLANETARY_ATMOS
+															.get(planet_atmos)
+															.unwrap()
+															.value(),
+														0.005,
+													) {
+														should_share = true;
+													}
 												}
 											}
 											if should_share {
 												let mut end_gas = GasMixture::from_vol(2500.0);
-												let mut pressure_diffs: [(u32, f32); 6] =
+												let mut pressure_diffs: [(TurfID, f32); 6] =
 													Default::default();
 												/*
 													The pressure here is negative
@@ -137,13 +149,16 @@ fn _process_turf_hook() {
 														if let Some(entry) =
 															all_mixtures.get(turf.mix)
 														{
-															let mix = entry.read();
-															end_gas.merge(&mix);
-															pressure_diffs[j as usize] = (
-																loc as u32,
-																-mix.return_pressure()
-																	* GAS_DIFFUSION_CONSTANT,
-															);
+															if let Some(mix) = entry.try_read() {
+																end_gas.merge(&mix);
+																pressure_diffs[j as usize] = (
+																	loc,
+																	-mix.return_pressure()
+																		* GAS_DIFFUSION_CONSTANT,
+																);
+															} else {
+																return None;
+															}
 														}
 													}
 												}
@@ -195,7 +210,7 @@ fn _process_turf_hook() {
 					In short: the above actually needs to finish before the below starts
 					for consistency, so collect() is desired. This has been tested, by the way.
 				*/
-				if !turfs_to_save
+				let should_break = !turfs_to_save
 					.par_iter_mut()
 					.map(|(i, m, end_gas, pressure_diffs)| {
 						let adj_amount = (m.adjacency.count_ones()
@@ -230,8 +245,8 @@ fn _process_turf_hook() {
 									this_high_pressure = this_high_pressure
 										|| pressure_diff.1.abs() > fda_pressure_goal;
 								}
-								if max_diff > 1.0 {
-									let _ = high_pressure_sender.send(*i);
+								if max_diff.abs() > 0.25 {
+									let _ = high_pressure_sender.try_send(*i);
 								}
 								gas.merge(&end_gas);
 								/*
@@ -245,24 +260,24 @@ fn _process_turf_hook() {
 									let turf_id = *i;
 									let diffs_copy = *pressure_diffs;
 									sender
-										.send(Box::new(move |_| {
-											let turf = unsafe {
-												Value::turf_by_id_unchecked(turf_id as u32)
-											};
+										.try_send(Box::new(move |_| {
+											let turf =
+												unsafe { Value::turf_by_id_unchecked(turf_id) };
 											for &(id, diff) in diffs_copy.iter() {
-												let enemy_tile = unsafe {
-													Value::turf_by_id_unchecked(id as u32)
-												};
-												if diff > 5.0 {
-													turf.call(
-														"consider_pressure_difference",
-														&[enemy_tile, Value::from(diff)],
-													)?;
-												} else if diff < -5.0 {
-													enemy_tile.call(
-														"consider_pressure_difference",
-														&[turf.clone(), Value::from(-diff)],
-													)?;
+												if id != 0 {
+													let enemy_tile =
+														unsafe { Value::turf_by_id_unchecked(id) };
+													if diff > 5.0 {
+														turf.call(
+															"consider_pressure_difference",
+															&[&enemy_tile, &Value::from(diff)],
+														)?;
+													} else if diff < -5.0 {
+														enemy_tile.call(
+															"consider_pressure_difference",
+															&[&turf.clone(), &Value::from(-diff)],
+														)?;
+													}
 												}
 											}
 											Ok(Value::null())
@@ -275,12 +290,10 @@ fn _process_turf_hook() {
 					})
 					.collect::<Vec<bool>>()
 					.iter()
-					.any(|i| *i)
-				{
-					break;
-				}
+					.any(|i| *i);
 				drop(turfs_to_save);
-				if SUBSYSTEM_FIRE_COUNT.load(Ordering::SeqCst) != initial_fire_count {
+				if should_break || SUBSYSTEM_FIRE_COUNT.load(Ordering::SeqCst) != initial_fire_count
+				{
 					break;
 				}
 				cur_count += 1;
@@ -294,14 +307,14 @@ fn _process_turf_hook() {
 		});
 	}
 	let arg_limit = args
-		.get(0)
-		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 0"))?
+		.get(1)
+		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 1"))?
 		.as_number()?;
 	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
 	Ok(Value::from(
 		PROCESSING_TURF_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)
-			== PROCESS_DONE,
+			!= PROCESS_DONE,
 	))
 }
 
@@ -386,9 +399,12 @@ fn _process_heat_hook() {
 								if let Some(m) = TURF_GASES.get(&i) {
 									GasMixtures::with_all_mixtures(|all_mixtures| {
 										if let Some(entry) = all_mixtures.get(m.mix) {
-											let gas: &GasMixture = &entry.read();
-											if (t.temperature - gas.get_temperature()).abs() > 1.0 {
-												is_temp_delta_with_air = true;
+											if let Some(gas) = entry.try_read() {
+												if (t.temperature - gas.get_temperature()).abs()
+													> 1.0
+												{
+													is_temp_delta_with_air = true;
+												}
 											}
 										}
 									});
@@ -459,7 +475,7 @@ fn _process_heat_hook() {
 					if t.temperature > t.heat_capacity {
 						// not what heat capacity means but whatever
 						let _ = sender.try_send(Box::new(move |_| {
-							let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
+							let turf = unsafe { Value::turf_by_id_unchecked(i) };
 							turf.set("to_be_destroyed", 1.0);
 							Ok(Value::null())
 						}));
@@ -484,6 +500,8 @@ fn _process_heat_hook() {
 	)))
 }
 
+static POST_PROCESSING: AtomicBool = AtomicBool::new(false);
+
 #[hook("/datum/controller/subsystem/air/proc/post_process_turfs")]
 fn _post_process_turfs() {
 	let resumed = args
@@ -491,42 +509,46 @@ fn _post_process_turfs() {
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf post processing: 0"))?
 		.as_number()?
 		== 1.0;
-	let arg_limit = args
+	let mut arg_limit = args
 		.get(1)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf post processing: 1"))?
 		.as_number()?;
 	if !resumed {
+		let time = std::time::Instant::now();
 		TURF_GASES.shards().iter().par_bridge().for_each(|shard| {
 			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 			GasMixtures::with_all_mixtures(|all_mixtures| {
-				shard.read().iter().for_each(|(&i, m_v)| {
-					let m = *m_v.get();
+				shard.write().iter_mut().for_each(|(&i, m_v)| {
+					let m = m_v.get_mut();
 					if m.simulation_level >= SIMULATION_LEVEL_DIFFUSE {
-						let gas = all_mixtures.get(m.mix).unwrap().read();
-						let visible = gas.is_visible();
-						let reactable = gas.can_react();
-						if visible || reactable {
-							let _ = sender.try_send(Box::new(move |_| {
-								let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
-								if reactable {
-									turf.get("air")?.call("react", &[&turf])?;
-								}
-								if visible {
-									turf.call("update_visuals", &[&Value::null()])?;
-								}
-								Ok(Value::null())
-							}));
+						if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
+							let visibility = gas.visibility_hash();
+							let should_update_visuals = m.vis_hash != visibility;
+							m.vis_hash = visibility;
+							let reactable = gas.can_react();
+							if should_update_visuals || reactable {
+								let _ = sender.try_send(Box::new(move |_| {
+									let turf = unsafe { Value::turf_by_id_unchecked(i) };
+									if reactable {
+										turf.get("air")?.call("react", &[&turf])?;
+									}
+									if should_update_visuals {
+										turf.call("update_visuals", &[&Value::null()])?;
+									}
+									Ok(Value::null())
+								}));
+							}
 						}
 					}
 				});
 			});
 		});
+		arg_limit -= time.elapsed().as_millis() as f32
 	}
-	Ok(Value::from(process_callbacks_for_millis(
-		ctx,
-		SSAIR_NAME.to_string(),
-		arg_limit as u64,
-	)))
+	Ok(Value::from(
+		process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64)
+			|| POST_PROCESSING.load(Ordering::SeqCst),
+	))
 }
 
 static EXCITED_GROUP_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
@@ -538,14 +560,18 @@ static EXCITED_GROUP_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
 */
 #[hook("/datum/controller/subsystem/air/proc/process_excited_groups")]
 fn process_excited_groups() {
-	if EXCITED_GROUP_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
+	let resumed = args
+		.get(0)
+		.ok_or_else(|| runtime!("Wrong number of arguments to excited group processing: 0"))?
+		.as_number()?
+		== 1.0;
+	if !resumed && EXCITED_GROUP_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
 		let max_x = ctx.get_world().get_number("maxx")? as i32;
 		let max_y = ctx.get_world().get_number("maxy")? as i32;
 		rayon::spawn(move || {
 			use std::collections::{BTreeSet, VecDeque};
 			EXCITED_GROUP_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
-			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
-			let mut found_turfs: BTreeSet<usize> = BTreeSet::new();
+			let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
 			for init in TURF_GASES
 				.iter()
 				.filter(|e| e.value().simulation_level >= SIMULATION_LEVEL_ALL)
@@ -554,8 +580,8 @@ fn process_excited_groups() {
 				if found_turfs.contains(&initial_turf) {
 					continue;
 				}
-				let mut border_turfs: VecDeque<(usize, TurfMixture)> = VecDeque::with_capacity(40);
-				let mut turfs: Vec<(usize, TurfMixture)> = Vec::with_capacity(200);
+				let mut border_turfs: VecDeque<(TurfID, TurfMixture)> = VecDeque::with_capacity(40);
+				let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
 				let mut min_pressure = initial_mix.return_pressure();
 				let mut max_pressure = min_pressure;
 				let mut fully_mixed = GasMixture::from_vol(2500.0);
@@ -564,7 +590,7 @@ fn process_excited_groups() {
 				GasMixtures::with_all_mixtures(|all_mixtures| {
 					while !border_turfs.is_empty() && turfs.len() < 400 {
 						let (i, turf) = border_turfs.pop_front().unwrap();
-						turfs.push((i, turf));
+						turfs.push(turf);
 						let adj_tiles = adjacent_tile_ids(turf.adjacency, i, max_x, max_y);
 						let mix = all_mixtures.get(turf.mix).unwrap().read();
 						let pressure = mix.return_pressure();
@@ -588,21 +614,10 @@ fn process_excited_groups() {
 					}
 					if max_pressure - min_pressure < 1.0 {
 						fully_mixed.multiply((turfs.len() as f64).recip() as f32);
-						let should_display = fully_mixed.is_visible();
-						turfs.par_iter().for_each(|(i, turf)| {
+						for turf in turfs.iter() {
 							let mut mix = all_mixtures.get(turf.mix).unwrap().write();
 							mix.copy_from_mutable(&fully_mixed);
-							if should_display {
-								let arg_i = *i as u32;
-								sender
-									.send(Box::new(move |_| {
-										unsafe { Value::turf_by_id_unchecked(arg_i) }
-											.call("update_visuals", &[&Value::null()])?;
-										Ok(Value::null())
-									}))
-									.unwrap();
-							}
-						});
+						}
 					}
 				});
 			}
@@ -610,12 +625,12 @@ fn process_excited_groups() {
 		});
 	}
 	let arg_limit = args
-		.get(0)
-		.ok_or_else(|| runtime!("Wrong number of arguments to excited group processing: 0"))?
+		.get(1)
+		.ok_or_else(|| runtime!("Wrong number of arguments to excited group processing: 1"))?
 		.as_number()?;
 	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
 	Ok(Value::from(
 		EXCITED_GROUP_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)
-			== PROCESS_DONE,
+			!= PROCESS_DONE,
 	))
 }

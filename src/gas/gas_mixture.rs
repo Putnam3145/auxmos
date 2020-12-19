@@ -269,6 +269,21 @@ impl GasMixture {
 			}
 		})
 	}
+	pub fn visibility_hash(&self) -> u64 {
+		use std::hash::Hasher;
+		let mut hasher = std::collections::hash_map::DefaultHasher::new();
+		for (i, gas) in self.moles.iter().enumerate() {
+			if let Some(amt) = gas_visibility(i) {
+				if gas >= &amt {
+					hasher.write(&[
+						i as u8,
+						FACTOR_GAS_VISIBLE_MAX.min((gas / MOLES_GAS_VISIBLE_STEP).ceil()) as u8,
+					]);
+				}
+			}
+		}
+		hasher.finish()
+	}
 }
 
 use std::ops::{Add, Mul};

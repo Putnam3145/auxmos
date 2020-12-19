@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use auxtools::*;
 
 use std::cell::RefCell;
@@ -17,7 +15,7 @@ pub struct Reaction {
 	min_temp_req: Option<f32>,
 	max_temp_req: Option<f32>,
 	min_ener_req: Option<f32>,
-	min_gas_reqs: BTreeMap<usize, f32>,
+	min_gas_reqs: Vec<(usize, f32)>,
 }
 
 impl Ord for Reaction {
@@ -40,7 +38,9 @@ impl PartialOrd for Reaction {
 	}
 }
 
-thread_local! {static REACTION_VALUES: RefCell<BTreeMap<Reaction,Value>> = RefCell::new(BTreeMap::new())}
+thread_local! {
+	static REACTION_VALUES: RefCell<std::collections::BTreeMap<Reaction,Value>> = RefCell::new(std::collections::BTreeMap::new())
+}
 
 impl Reaction {
 	/// Takes a /datum/reaction and makes a byond reaction out of it.
@@ -49,11 +49,11 @@ impl Reaction {
 	///  anything but a /datum/reaction.
 	pub fn from_byond_reaction(reaction: &Value) -> Self {
 		let min_reqs = reaction.get_list("min_requirements").unwrap();
-		let mut min_gas_reqs: BTreeMap<usize, f32> = BTreeMap::new();
+		let mut min_gas_reqs: Vec<(usize, f32)> = Vec::new();
 		for i in 0..total_num_gases() {
 			if let Ok(gas_req) = min_reqs.get(&gas_id_to_type(i).unwrap()) {
 				if let Ok(req_amount) = gas_req.as_number() {
-					min_gas_reqs.insert(i, req_amount);
+					min_gas_reqs.push((i, req_amount));
 				}
 			}
 		}
@@ -90,18 +90,27 @@ impl Reaction {
 	}
 	/// Checks if the given gas mixture can react with this reaction.
 	pub fn check_conditions(&self, mix: &GasMixture) -> bool {
-		if self.min_temp_req.is_some() && mix.get_temperature() < self.min_temp_req.unwrap() {
+		if self
+			.min_temp_req
+			.map_or(false, |temp_req| mix.get_temperature() < temp_req)
+		{
 			return false;
 		}
-		if self.max_temp_req.is_some() && mix.get_temperature() > self.max_temp_req.unwrap() {
+		if self
+			.max_temp_req
+			.map_or(false, |temp_req| mix.get_temperature() > temp_req)
+		{
 			return false;
 		}
-		if self.min_ener_req.is_some() && mix.thermal_energy() < self.min_ener_req.unwrap() {
+		if self
+			.min_ener_req
+			.map_or(false, |ener_req| mix.thermal_energy() < ener_req)
+		{
 			return false;
 		}
 		self.min_gas_reqs
 			.iter()
-			.all(|(&k, &v)| mix.get_moles(k) >= v)
+			.all(|&(k, v)| mix.get_moles(k) >= v)
 	}
 	/// Returns the priority of the reaction.
 	pub fn get_priority(&self) -> f32 {

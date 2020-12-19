@@ -26,13 +26,6 @@ thread_local! {
 
 #[hook("/proc/auxtools_atmos_init")]
 fn _hook_init() {
-	let old_hook = std::panic::take_hook();
-	std::panic::set_hook(Box::new(move |err| {
-		if let Some(s) = err.payload().downcast_ref::<&str>() {
-			std::fs::write("fewajfeowa.txt", format!("{:?}", s));
-		}
-		old_hook(err)
-	}));
 	let gas_types_list: auxtools::List = Proc::find("/proc/gas_types")
 		.ok_or(runtime!("Could not find gas_types!"))?
 		.call(&[])?
@@ -100,10 +93,7 @@ fn get_gas_info() -> Gases {
 
 #[cfg(not(test))]
 lazy_static! {
-	static ref GAS_INFO: Gases = {
-		println!("foo");
-		get_gas_info()
-	};
+	static ref GAS_INFO: Gases = get_gas_info();
 	static ref REACTION_INFO: Vec<Reaction> = {
 		let gas_reactions = Value::globals()
 			.get("SSair")

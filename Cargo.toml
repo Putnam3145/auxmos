@@ -10,6 +10,7 @@ edition = "2018"
 monstermos = []
 putnamos = []
 explosive_decompression = ["monstermos"]
+putnamos_decompression = ["putnamos"]
 
 [lib]
 crate-type = ["cdylib"]

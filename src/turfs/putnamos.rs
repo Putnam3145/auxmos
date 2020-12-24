@@ -2,7 +2,9 @@ use super::*;
 
 use std::collections::VecDeque;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet,BTreeMap};
+
+use std::cell::Cell;
 
 use auxcallback::{callback_sender_by_id_insert, process_callbacks_for_millis};
 
@@ -14,20 +16,123 @@ const EQUALIZATION_DONE: u8 = 2;
 
 static EQUALIZATION_STEP: AtomicU8 = AtomicU8::new(0);
 
+const OPP_DIR_INDEX: [u8; 7] = [1, 0, 3, 2, 5, 4, 6];
+
 // If you can't tell, this is mostly a massively simplified copy of monstermos.
 
-#[cfg(feature = "explosive_decompression")]
+#[cfg(feature = "putnamos_decompression")]
 fn explosively_depressurize(
+	ctx: &DMContext,
 	turf_idx: TurfID,
 	turf: TurfMixture,
 	equalize_hard_turf_limit: usize,
 	max_x: i32,
 	max_y: i32,
-) {
+) -> DMResult {
+	let mut turfs: Vec<(TurfID, TurfMixture)> = Vec::new();
+	let mut space_turfs: Vec<(TurfID, TurfMixture)> = Vec::new();
+	turfs.push((turf_idx, turf));
+	let mut warned_about_planet_atmos = false;
+	let mut cur_queue_idx = 0;
+	while cur_queue_idx < turfs.len() {
+		let (i, m) = turfs[cur_queue_idx];
+		let actual_turf = unsafe { Value::turf_by_id_unchecked(i) };
+		cur_queue_idx += 1;
+		if m.planetary_atmos.is_some() {
+			warned_about_planet_atmos = true;
+			continue;
+		}
+		if m.is_immutable() {
+			space_turfs.push((i, m));
+			actual_turf.set("pressure_specific_target", &actual_turf);
+		} else {
+			if cur_queue_idx > equalize_hard_turf_limit {
+				continue;
+			}
+			for j in 0..6 {
+				let bit = 1 << j;
+				if m.adjacency & bit == bit {
+					let loc = adjacent_tile_id(j as u8, i, max_x, max_y);
+					actual_turf.call(
+						"consider_firelocks",
+						&[&unsafe { Value::turf_by_id_unchecked(loc) }],
+					)?;
+					let new_m = TURF_GASES.get(&i).unwrap();
+					if new_m.adjacency & bit == bit {
+						if let Some(adj) = TURF_GASES.get(&loc) {
+							let (&adj_i, &adj_m) = (adj.key(), adj.value());
+							turfs.push((adj_i, adj_m));
+						}
+					}
+				}
+			}
+		}
+		if warned_about_planet_atmos {
+			return Ok(Value::null()); // planet atmos > space
+		}
+	}
+	let mut progression_order: Vec<(TurfID, TurfMixture)> = Vec::with_capacity(space_turfs.len());
+	let mut adjacency_info: BTreeMap<TurfID, Cell<(u8, f32)>> = BTreeMap::new();
+	for (i, m) in space_turfs.iter() {
+		progression_order.push((*i, *m));
+		adjacency_info.insert(*i,Cell::new((6,0.0)));
+	}
+	cur_queue_idx = 0;
+	while cur_queue_idx < progression_order.len() {
+		let (i, m) = progression_order[cur_queue_idx];
+		let actual_turf = unsafe { Value::turf_by_id_unchecked(i) };
+		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
+			if let Some(adj) = TURF_GASES.get(&loc) {
+				let (adj_i, adj_m) = (*adj.key(), adj.value());
+				if !adjacency_info.contains_key(&adj_i) && !adj_m.is_immutable() {
+					adjacency_info.insert(i, Cell::new((OPP_DIR_INDEX[j as usize], 0.0)));
+					unsafe { Value::turf_by_id_unchecked(adj_i) }
+						.set("pressure_specific_target", &actual_turf);
+					progression_order.push((adj_i, *adj_m));
+				}
+			}
+		}
+		cur_queue_idx += 1;
+	}
+	let hpd = ctx.get_global("SSAir")?.get_list("high_pressure_delta")?;
+	for (i, m) in progression_order.iter().rev() {
+		let cur_orig = adjacency_info.get(i).unwrap();
+		let mut cur_info = cur_orig.get();
+		if cur_info.0 == 6 {
+			continue;
+		}
+		let actual_turf = unsafe { Value::turf_by_id_unchecked(*i) };
+		hpd.set(&actual_turf,1.0)?;
+		let loc = adjacent_tile_id(cur_info.0, *i, max_x, max_y);
+		if let Some(adj) = TURF_GASES.get(&loc) {
+			let (adj_i, adj_m) = (*adj.key(), adj.value());
+			let adj_orig = adjacency_info.get(&adj_i).unwrap();
+			let mut adj_info = adj_orig.get();
+			let sum = adj_m.total_moles();
+			cur_info.1 += sum;
+			adj_info.1 += cur_info.1;
+			if adj_info.0 != 6 {
+				let adj_turf = unsafe { Value::turf_by_id_unchecked(adj_i) };
+				adj_turf.set("pressure_difference", cur_info.1);
+				adj_turf.set("pressure_direction", (1 << cur_info.0) as f32);
+			}
+			m.clear_air();
+			actual_turf.set("pressure_difference", cur_info.1);
+			actual_turf.set(
+				"pressure_direction",
+				(1 << cur_info.0) as f32,
+			);
+			actual_turf.call("handle decompression floor rip", &[&Value::from(sum)])?;
+			adj_orig.set(adj_info);
+			cur_orig.set(cur_info);
+		}
+	}
+	Ok(Value::null())
 }
 
 fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 	let equalize_turf_limit = src.get_number("equalize_turf_limit")? as usize;
+	let equalize_hard_turf_limit = src.get_number("equalize_hard_turf_limit")? as usize;
 	let max_x = ctx.get_world().get_number("maxx")? as i32;
 	let max_y = ctx.get_world().get_number("maxy")? as i32;
 	let turf_receiver = HIGH_PRESSURE_TURFS.1.clone();
@@ -46,7 +151,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 	{
 		rayon::spawn(move || {
 			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
-			for initial_idx in turf_receiver.try_iter() {
+			'turf_loop: for initial_idx in turf_receiver.try_iter() {
 				if let Some(initial_turf) = TURF_GASES.get(&initial_idx) {
 					if initial_turf.simulation_level >= SIMULATION_LEVEL_ALL
 						&& initial_turf.adjacency > 0
@@ -65,6 +170,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 						VecDeque::with_capacity(equalize_turf_limit);
 					let mut final_mix = GasMixture::new();
 					border_turfs.push_back((initial_idx, *initial_turf, initial_idx, 0.0));
+					let mut was_space = false;
 					GasMixtures::with_all_mixtures(|all_mixtures| {
 						while border_turfs.len() > 0 && turfs.len() < equalize_turf_limit {
 							let (cur_idx, cur_turf, parent_turf, pressure_delta) =
@@ -84,6 +190,20 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 								if let Some(adj_turf) = TURF_GASES.get(loc) {
 									if let Some(entry) = all_mixtures.get(adj_turf.mix) {
 										let gas: &GasMixture = &entry.read();
+										if cfg!(putnamos_decompression) && gas.is_immutable() {
+											let _ = sender.try_send(Box::new(move |new_ctx| {
+												explosively_depressurize(
+													new_ctx,
+													cur_idx,
+													cur_turf,
+													equalize_hard_turf_limit,
+													max_x,
+													max_y,
+												)
+											}));
+											was_space = true;
+											return;
+										}
 										let delta =
 											gas.return_pressure() - final_mix.return_pressure();
 										if delta < 0.0 {
@@ -100,6 +220,9 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 							found_turfs.insert(cur_idx);
 						}
 					});
+					if was_space {
+						continue 'turf_loop;
+					}
 					final_mix.multiply(1.0 / turfs.len() as f32);
 					GasMixtures::with_all_mixtures(|all_mixtures| {
 						for (cur_idx, cur_turf, parent_turf, pressure_delta) in turfs.iter() {

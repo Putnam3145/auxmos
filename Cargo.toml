@@ -33,4 +33,8 @@ version = "3.11.10"
 features = ["raw-api"]
 
 [profile.release]
+opt-level = 3
+lto = 'thin'
+codegen-units = 1
+incremental = true
 debug = true

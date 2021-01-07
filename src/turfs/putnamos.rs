@@ -20,7 +20,6 @@ const OPP_DIR_INDEX: [u8; 7] = [1, 0, 3, 2, 5, 4, 6];
 
 // If you can't tell, this is mostly a massively simplified copy of monstermos.
 
-#[cfg(feature = "putnamos_decompression")]
 fn explosively_depressurize(
 	ctx: &DMContext,
 	turf_idx: TurfID,

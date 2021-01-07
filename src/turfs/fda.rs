@@ -558,7 +558,7 @@ static EXCITED_GROUP_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
 	the entire region if it doesn't find a pressure delta of
 	more than 1 kilopascal.
 */
-#[hook("/datum/controller/subsystem/air/proc/process_excited_groups")]
+#[hook("/datum/controller/subsystem/air/proc/process_excited_groups_extools")]
 fn process_excited_groups() {
 	let resumed = args
 		.get(0)

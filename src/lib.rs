@@ -216,10 +216,7 @@ fn _scrub_into_hook() {
 			let mut buffer = gas::gas_mixture::GasMixture::from_vol(gas::constants::CELL_VOLUME);
 			buffer.set_temperature(src_gas.get_temperature());
 			for idx in 1..mixes_to_scrub.len() + 1 {
-				let res = gas_id_from_type(&mixes_to_scrub.get(idx).unwrap());
-				if res.is_ok() {
-					// it's allowed to continue after failure here
-					let idx = res.unwrap();
+				if let Ok(idx) = gas_id_from_type(&mixes_to_scrub.get(idx).unwrap()) {
 					buffer.set_moles(idx, buffer.get_moles(idx) + src_gas.get_moles(idx));
 					src_gas.set_moles(idx, 0.0);
 				}

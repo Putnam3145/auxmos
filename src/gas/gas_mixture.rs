@@ -230,6 +230,7 @@ impl GasMixture {
 			self.moles.clear();
 		}
 	}
+	/// Resets the gas mixture to an initialized-with-volume state.
 	pub fn clear_with_vol(&mut self, vol: f32) {
 		self.temperature = 0.0;
 		self.volume = vol;
@@ -256,10 +257,12 @@ impl GasMixture {
 			.filter(|r| r.check_conditions(self))
 			.collect()
 	}
+	/// Adds heat directly to the gas mixture, in joules (probably).
 	pub fn adjust_heat(&mut self, heat: f32) {
 		let cap = self.heat_capacity();
 		self.set_temperature(((cap * self.temperature) + heat) / cap);
 	}
+	/// Returns true if there's a visible gas in this mix.
 	pub fn is_visible(&self) -> bool {
 		self.moles.iter().enumerate().any(|(i, gas)| {
 			if let Some(amt) = gas_visibility(i) {
@@ -269,6 +272,7 @@ impl GasMixture {
 			}
 		})
 	}
+	/// A hashed representation of the visibility of a gas, so that it only needs to update vis when actually changed.
 	pub fn visibility_hash(&self) -> u64 {
 		use std::hash::Hasher;
 		let mut hasher = std::collections::hash_map::DefaultHasher::new();

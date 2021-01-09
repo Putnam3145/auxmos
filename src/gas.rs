@@ -294,9 +294,11 @@ impl GasMixtures {
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
 	pub fn unregister_gasmix(mix: &Value) -> DMResult {
-		let idx = mix.get_number("_extools_pointer_gasmixture")?.to_bits();
-		NEXT_GAS_IDS.with(|gas_ids| gas_ids.borrow_mut().push(idx as usize));
-		mix.set("_extools_pointer_gasmixture", &Value::null());
+		if let Ok(float_bits) = mix.get_number("_extools_pointer_gasmixture") {
+			let idx = float_bits.to_bits();
+			NEXT_GAS_IDS.with(|gas_ids| gas_ids.borrow_mut().push(idx as usize));
+			mix.set("_extools_pointer_gasmixture", &Value::null());
+		}
 		Ok(Value::null())
 	}
 }

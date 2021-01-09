@@ -2,7 +2,7 @@ use super::*;
 
 use std::collections::VecDeque;
 
-use std::collections::{BTreeSet,BTreeMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use std::cell::Cell;
 
@@ -74,7 +74,7 @@ fn explosively_depressurize(
 	let mut adjacency_info: BTreeMap<TurfID, Cell<(u8, f32)>> = BTreeMap::new();
 	for (i, m) in space_turfs.iter() {
 		progression_order.push((*i, *m));
-		adjacency_info.insert(*i,Cell::new((6,0.0)));
+		adjacency_info.insert(*i, Cell::new((6, 0.0)));
 	}
 	cur_queue_idx = 0;
 	while cur_queue_idx < progression_order.len() {
@@ -101,7 +101,7 @@ fn explosively_depressurize(
 			continue;
 		}
 		let actual_turf = unsafe { Value::turf_by_id_unchecked(*i) };
-		hpd.set(&actual_turf,1.0)?;
+		hpd.set(&actual_turf, 1.0)?;
 		let loc = adjacent_tile_id(cur_info.0, *i, max_x, max_y);
 		if let Some(adj) = TURF_GASES.get(&loc) {
 			let (adj_i, adj_m) = (*adj.key(), adj.value());
@@ -117,10 +117,7 @@ fn explosively_depressurize(
 			}
 			m.clear_air();
 			actual_turf.set("pressure_difference", cur_info.1);
-			actual_turf.set(
-				"pressure_direction",
-				(1 << cur_info.0) as f32,
-			);
+			actual_turf.set("pressure_direction", (1 << cur_info.0) as f32);
 			actual_turf.call("handle decompression floor rip", &[&Value::from(sum)])?;
 			adj_orig.set(adj_info);
 			cur_orig.set(cur_info);
@@ -152,7 +149,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 			'turf_loop: for initial_idx in turf_receiver.try_iter() {
 				if let Some(initial_turf) = TURF_GASES.get(&initial_idx) {
-					if initial_turf.simulation_level >= SIMULATION_LEVEL_ALL
+					if initial_turf.simulation_level == SIMULATION_LEVEL_ALL
 						&& initial_turf.adjacency > 0
 					{
 						let our_moles = initial_turf.total_moles();
@@ -189,29 +186,32 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 								if let Some(adj_turf) = TURF_GASES.get(loc) {
 									if let Some(entry) = all_mixtures.get(adj_turf.mix) {
 										let gas: &GasMixture = &entry.read();
-										if cfg!(putnamos_decompression) && gas.is_immutable() {
-											let _ = sender.try_send(Box::new(move |new_ctx| {
-												explosively_depressurize(
-													new_ctx,
+										if gas.is_immutable() {
+											if cfg!(putnamos_decompression) {
+												let _ = sender.try_send(Box::new(move |new_ctx| {
+													explosively_depressurize(
+														new_ctx,
+														cur_idx,
+														cur_turf,
+														equalize_hard_turf_limit,
+														max_x,
+														max_y,
+													)
+												}));
+												was_space = true;
+												return;
+											}
+										} else {
+											let delta =
+												gas.return_pressure() - final_mix.return_pressure();
+											if delta < 0.0 {
+												border_turfs.push_back((
+													*loc,
+													*adj_turf.value(),
 													cur_idx,
-													cur_turf,
-													equalize_hard_turf_limit,
-													max_x,
-													max_y,
-												)
-											}));
-											was_space = true;
-											return;
-										}
-										let delta =
-											gas.return_pressure() - final_mix.return_pressure();
-										if delta < 0.0 {
-											border_turfs.push_back((
-												*loc,
-												*adj_turf.value(),
-												cur_idx,
-												-delta,
-											));
+													-delta,
+												));
+											}
 										}
 									}
 								}
@@ -233,13 +233,15 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 							let parent_copy = *parent_turf;
 							let actual_delta = *pressure_delta;
 							let _ = sender.try_send(Box::new(move |_| {
-								let turf = unsafe { Value::turf_by_id_unchecked(idx_copy) };
-								let enemy_turf =
-									unsafe { Value::turf_by_id_unchecked(parent_copy) };
-								turf.call(
-									"consider_pressure_difference",
-									&[&enemy_turf, &Value::from(actual_delta)],
-								)?;
+								if parent_copy != 0 {
+									let turf = unsafe { Value::turf_by_id_unchecked(idx_copy) };
+									let enemy_turf =
+										unsafe { Value::turf_by_id_unchecked(parent_copy) };
+									enemy_turf.call(
+										"consider_pressure_difference",
+										&[&turf, &Value::from(actual_delta)],
+									)?;
+								}
 								Ok(Value::null())
 							}));
 						}

@@ -364,7 +364,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 			for i in turf_receiver.try_iter() {
 				if let Some(m) = TURF_GASES.get(&i) {
-					if m.simulation_level >= SIMULATION_LEVEL_ALL && m.adjacency > 0 {
+					if m.simulation_level == SIMULATION_LEVEL_ALL && m.adjacency > 0 {
 						let our_info = info.entry(i).or_default().get();
 						if our_info.last_cycle >= queue_cycle {
 							continue;
@@ -452,6 +452,8 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 								{
 									if !adj_info.last_cycle != queue_cycle
 										&& adj_turf.simulation_level != SIMULATION_LEVEL_NONE
+										&& (adj_turf.simulation_level & SIMULATION_LEVEL_DISABLED
+											!= SIMULATION_LEVEL_DISABLED)
 									{
 										adj_info = Default::default();
 										adj_info.last_cycle = queue_cycle;

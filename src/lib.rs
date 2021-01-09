@@ -212,17 +212,17 @@ fn _scrub_into_hook() {
 		Err(runtime!("Incorrect arg len for scrub_into (less than 2)."))
 	} else {
 		with_mixes_mut(src, &args[0], |src_gas, dest_gas| {
-			let mixes_to_scrub = args[1].as_list().unwrap();
+			let gases_to_scrub = args[1].as_list()?;
 			let mut buffer = gas::gas_mixture::GasMixture::from_vol(gas::constants::CELL_VOLUME);
 			buffer.set_temperature(src_gas.get_temperature());
-			for idx in 1..mixes_to_scrub.len() + 1 {
-				if let Ok(idx) = gas_id_from_type(&mixes_to_scrub.get(idx).unwrap()) {
-					buffer.set_moles(idx, buffer.get_moles(idx) + src_gas.get_moles(idx));
-					src_gas.set_moles(idx, 0.0);
+			for idx in 1..gases_to_scrub.len() + 1 {
+				if let Ok(gas_id) = gas_id_from_type(&gases_to_scrub.get(idx).unwrap()) {
+					buffer.set_moles(gas_id, src_gas.get_moles(gas_id));
+					src_gas.set_moles(gas_id, 0.0);
 				}
 			}
 			dest_gas.merge(&buffer);
-			Ok(args[0].clone())
+			Ok(Value::from(true))
 		})
 	}
 }

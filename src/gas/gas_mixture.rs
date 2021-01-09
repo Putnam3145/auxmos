@@ -113,13 +113,13 @@ impl GasMixture {
 			return;
 		}
 		let tot_energy = self.thermal_energy() + giver.thermal_energy();
-		self.moles = self
-			.moles
-			.iter()
-			.copied()
-			.zip_longest(giver.moles.iter().copied())
-			.map(|i| (i.reduce(|a, b| a + b)))
-			.collect();
+		for (a, b) in self.moles.iter_mut().zip(giver.moles.iter()) {
+			*a += *b
+		}
+		if self.moles.len() < giver.moles.len() {
+			self.moles
+				.extend_from_slice(&giver.moles[self.moles.len()..giver.moles.len()]);
+		}
 		let cap = self.heat_capacity();
 		if cap > MINIMUM_HEAT_CAPACITY {
 			self.set_temperature(tot_energy / cap);

@@ -103,50 +103,13 @@ fn _process_turf_hook() {
 												!= SIMULATION_LEVEL_DISABLED) && adj > 0
 										{
 											let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
+											if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read()
+											{
 											/*
 												Getting write locks is potential danger zone,
 												so we make sure we don't do that unless we
 												absolutely need to. Saving is fast enough.
 											*/
-											let mut should_share = false;
-											if let Some(gas) =
-												all_mixtures.get(m.mix).unwrap().try_read()
-											{
-												for (_, loc) in adj_tiles.iter() {
-													if let Some(turf) = TURF_GASES.get(loc) {
-														if turf.simulation_level
-															& SIMULATION_LEVEL_DISABLED
-															!= SIMULATION_LEVEL_DISABLED
-														{
-															if let Some(adj_gas) = all_mixtures
-																.get(turf.mix)
-																.unwrap()
-																.try_read()
-															{
-																if gas.compare(
-																	&adj_gas,
-																	MINIMUM_MOLES_DELTA_TO_MOVE,
-																) {
-																	should_share = true;
-																	break;
-																}
-															}
-														}
-													}
-												}
-												if let Some(planet_atmos) = m.planetary_atmos {
-													if gas.compare(
-														PLANETARY_ATMOS
-															.get(planet_atmos)
-															.unwrap()
-															.value(),
-														0.005,
-													) {
-														should_share = true;
-													}
-												}
-											}
-											if should_share {
 												let mut end_gas = GasMixture::from_vol(2500.0);
 												let mut pressure_diffs: [(TurfID, f32); 6] =
 													Default::default();
@@ -160,7 +123,8 @@ fn _process_turf_hook() {
 													due to the pressure gradient.
 													Technically that's ρν², but, like, video games.
 												*/
-												for &(j, loc) in adj_tiles.iter() {
+												let mut should_share = false;
+												for (j, loc) in adj_tiles {
 													if let Some(turf) = TURF_GASES.get(&loc) {
 														if turf.simulation_level
 															& SIMULATION_LEVEL_DISABLED
@@ -176,7 +140,10 @@ fn _process_turf_hook() {
 																	loc,
 																	-mix.return_pressure()
 																		* GAS_DIFFUSION_CONSTANT,
-																);
+																	);
+																	if !should_share && gas.compare(&mix,MINIMUM_MOLES_DELTA_TO_MOVE) {
+																		should_share = true;
+																	}
 																} else {
 																	return None;
 																}
@@ -209,8 +176,12 @@ fn _process_turf_hook() {
 													(Technically up to 2,097,152,
 													but I digress.)
 												*/
-												end_gas.multiply(GAS_DIFFUSION_CONSTANT);
-												Some((i, m, end_gas, pressure_diffs))
+												if should_share {
+													end_gas.multiply(GAS_DIFFUSION_CONSTANT);
+													Some((i, m, end_gas, pressure_diffs))
+												} else {
+													None
+												}
 											} else {
 												None
 											}
@@ -431,8 +402,8 @@ fn _process_heat_hook() {
 										});
 									}
 								}
-								for (_, loc) in adj_tiles.iter() {
-									if let Some(other) = TURF_TEMPERATURES.get(loc) {
+								for (_, loc) in adj_tiles {
+									if let Some(other) = TURF_TEMPERATURES.get(&loc) {
 										heat_delta +=
 											t.thermal_conductivity.min(other.thermal_conductivity)
 												* (other.temperature - t.temperature) * (t
@@ -501,7 +472,7 @@ fn _process_heat_hook() {
 					} else {
 						t.temperature = new_temp;
 					}
-					if t.temperature > t.heat_capacity {
+					if t.heat_capacity > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION && t.temperature > t.heat_capacity {
 						// not what heat capacity means but whatever
 						let _ = sender.try_send(Box::new(move |_| {
 							let turf = unsafe { Value::turf_by_id_unchecked(i) };
@@ -631,14 +602,14 @@ fn process_excited_groups() {
 								return;
 							}
 							fully_mixed.merge(&mix);
-							for (_, loc) in adj_tiles.iter() {
-								if found_turfs.contains(loc) {
+							for (_, loc) in adj_tiles {
+								if found_turfs.contains(&loc) {
 									continue;
 								}
-								found_turfs.insert(*loc);
-								if let Some(border_mix) = TURF_GASES.get(loc) {
+								found_turfs.insert(loc);
+								if let Some(border_mix) = TURF_GASES.get(&loc) {
 									if border_mix.simulation_level == SIMULATION_LEVEL_ALL {
-										border_turfs.push_back((*loc, *border_mix));
+										border_turfs.push_back((loc, *border_mix));
 									}
 								}
 							}

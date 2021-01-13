@@ -178,12 +178,12 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 							}
 							turfs.push((cur_idx, cur_turf, parent_turf, pressure_delta));
 							for (_, loc) in
-								adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y).iter()
+								adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y)
 							{
-								if found_turfs.contains(loc) {
+								if found_turfs.contains(&loc) {
 									continue;
 								}
-								if let Some(adj_turf) = TURF_GASES.get(loc) {
+								if let Some(adj_turf) = TURF_GASES.get(&loc) {
 									if let Some(entry) = all_mixtures.get(adj_turf.mix) {
 										let gas: &GasMixture = &entry.read();
 										if gas.is_immutable() {
@@ -206,7 +206,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 												gas.return_pressure() - final_mix.return_pressure();
 											if delta < 0.0 {
 												border_turfs.push_back((
-													*loc,
+													loc,
 													*adj_turf.value(),
 													cur_idx,
 													-delta,

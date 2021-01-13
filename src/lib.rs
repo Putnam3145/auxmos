@@ -34,7 +34,7 @@ fn _min_heat_cap_hook() {
 		))
 	} else {
 		with_mix_mut(src, |mix| {
-			mix.min_heat_capacity = args[0].as_number().unwrap_or(0.0);
+			mix.set_min_heat_capacity(args[0].as_number().unwrap_or(0.0));
 			Ok(Value::null())
 		})
 	}

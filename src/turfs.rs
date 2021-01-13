@@ -38,6 +38,7 @@ struct TurfMixture {
 	pub adjacency: u8,
 	pub simulation_level: u8,
 	pub vis_hash: u64,
+	pub cooldown: u8,
 	pub planetary_atmos: Option<&'static str>,
 }
 
@@ -241,7 +242,7 @@ fn _hook_turf_temperature() {
 	if let Some(temp_info) = TURF_TEMPERATURES.get(&unsafe { src.value.data.id }) {
 		Ok(Value::from(temp_info.temperature))
 	} else {
-		Ok(src.get("initial_temperature")?)
+		src.get("initial_temperature")
 	}
 }
 
@@ -342,13 +343,40 @@ fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {
 	}
 }
 
-fn adjacent_tile_ids(adj: u8, i: TurfID, max_x: i32, max_y: i32) -> Vec<(u8, TurfID)> {
-	let mut ret = Vec::with_capacity(adj.count_ones() as usize);
-	for j in 0..6 {
-		let bit = 1 << j;
-		if adj & bit == bit {
-			ret.push((j, adjacent_tile_id(j, i, max_x, max_y)));
+struct AdjacentTileIDs {
+	adj: u8,
+	i: TurfID,
+	max_x: i32,
+	max_y: i32,
+	count: u8
+}
+
+impl Iterator for AdjacentTileIDs {
+	type Item = (u8,TurfID);
+
+	fn next(&mut self) -> Option<Self::Item> {
+		loop {
+			if self.count > 6 {
+				return None;
+			} else {
+				self.count += 1;
+				let bit = 1 << (self.count - 1);
+				if self.adj & bit == bit {
+					return Some((self.count - 1, adjacent_tile_id(self.count - 1, self.i, self.max_x, self.max_y)));
+				}
+			}
 		}
 	}
-	ret
+
+	fn size_hint(&self) -> (usize, Option<usize>) {
+		(0, Some(self.adj.count_ones() as usize))
+	}
+}
+
+use std::iter::FusedIterator;
+
+impl FusedIterator for AdjacentTileIDs {}
+
+fn adjacent_tile_ids(adj: u8, i: TurfID, max_x: i32, max_y: i32) -> AdjacentTileIDs {
+	AdjacentTileIDs { adj, i, max_x, max_y, count: 0 }
 }

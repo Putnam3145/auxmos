@@ -14,9 +14,9 @@ use std::cell::RefCell;
 use reaction::Reaction;
 
 struct Gases {
-	pub gas_ids: HashMap<u32, usize>,
+	pub gas_ids: HashMap<u32, u8>,
 	pub gas_specific_heat: Vec<f32>,
-	pub total_num_gases: usize,
+	pub total_num_gases: u8,
 	pub gas_vis_threshold: Vec<Option<f32>>,
 }
 
@@ -51,10 +51,10 @@ fn get_gas_info() -> Gases {
 		.expect("gas_types didn't return correctly!")
 		.as_list()
 		.expect("gas_types' return wasn't a list!");
-	let mut gas_ids: HashMap<u32, usize> = HashMap::new();
-	let total_num_gases: usize = gas_types_list.len() as usize;
-	let mut gas_specific_heat: Vec<f32> = Vec::with_capacity(total_num_gases);
-	let mut gas_vis_threshold: Vec<Option<f32>> = Vec::with_capacity(total_num_gases);
+	let mut gas_ids: HashMap<u32, u8> = HashMap::new();
+	let total_num_gases: u8 = gas_types_list.len() as u8;
+	let mut gas_specific_heat: Vec<f32> = Vec::with_capacity(total_num_gases as usize);
+	let mut gas_vis_threshold: Vec<Option<f32>> = Vec::with_capacity(total_num_gases as usize);
 	let meta_gas_visibility_list: auxtools::List = Proc::find("/proc/meta_gas_visibility_list")
 		.expect("Couldn't find proc meta_gas_visibility_list!")
 		.call(&[])
@@ -66,7 +66,7 @@ fn get_gas_info() -> Gases {
 			.get((i + 1) as u32)
 			.expect("An incorrect index was given to the gas_types list!");
 		unsafe {
-			gas_ids.insert(v.value.data.id, i);
+			gas_ids.insert(v.value.data.id, i as u8);
 		}
 		gas_specific_heat.push(
 			gas_types_list
@@ -146,7 +146,7 @@ pub fn gas_specific_heats() -> &'static Vec<f32> {
 }
 
 /// Returns the total number of gases in use. Only used by gas mixtures; should probably stay that way.
-pub fn total_num_gases() -> usize {
+pub fn total_num_gases() -> u8 {
 	GAS_INFO.total_num_gases
 }
 
@@ -156,7 +156,7 @@ pub fn gas_visibility(idx: usize) -> Option<f32> {
 }
 
 /// Returns the appropriate index to be used by the game for a given gas datum.
-pub fn gas_id_from_type(path: &Value) -> Result<usize, Runtime> {
+pub fn gas_id_from_type(path: &Value) -> Result<u8, Runtime> {
 	let id: u32;
 	unsafe {
 		id = path.value.data.id;
@@ -167,11 +167,11 @@ pub fn gas_id_from_type(path: &Value) -> Result<usize, Runtime> {
 }
 
 /// Takes an index and returns a Value representing the datum typepath of gas datum stored in that index.
-pub fn gas_id_to_type(id: usize) -> DMResult {
+pub fn gas_id_to_type(id: u8) -> DMResult {
 	GAS_ID_TO_TYPE.with(|g| {
 		let gas_id_to_type = g.borrow();
 		Ok(gas_id_to_type
-			.get(id)
+			.get(id as usize)
 			.ok_or(runtime!("Invalid gas ID: {}", id))?
 			.clone())
 	})

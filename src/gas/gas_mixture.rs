@@ -1,6 +1,6 @@
 use itertools::Itertools;
 
-use std::collections::BTreeMap;
+use itertools::EitherOrBoth::{Both, Left, Right};
 
 use super::constants::*;
 
@@ -18,7 +18,8 @@ use super::reaction::Reaction;
 /// sleeping turfs.
 #[derive(Clone)]
 pub struct GasMixture {
-	moles: BTreeMap<usize, f32>,
+	mole_ids: Vec<u8>,
+	moles: Vec<f32>,
 	temperature: f32,
 	pub volume: f32,
 	min_heat_capacity: f32,
@@ -35,7 +36,8 @@ impl GasMixture {
 	/// Makes an empty gas mixture.
 	pub fn new() -> Self {
 		GasMixture {
-			moles: BTreeMap::new(),
+			mole_ids: Vec::with_capacity(8),
+			moles: Vec::with_capacity(2),
 			temperature: 2.7,
 			volume: 2500.0,
 			min_heat_capacity: 0.0,
@@ -61,23 +63,27 @@ impl GasMixture {
 	pub fn set_min_heat_capacity(&mut self, amt: f32) {
 		self.min_heat_capacity = amt;
 	}
+	fn enumerate(&self) -> impl Iterator<Item = (&u8, &f32)> {
+		self.mole_ids.iter().zip_eq(self.moles.iter())
+	}
 	/// Allows closures to iterate over each gas.
 	pub fn for_each_gas<F>(&self, f: F)
 	where
-		F: FnMut((&usize, &f32)),
+		F: FnMut((&u8, &f32)),
 	{
-		self.moles.iter().for_each(f);
+		self.enumerate().for_each(f);
 	}
 	/// Returns a slice representing the non-zero gases in the mix.
-	pub fn get_gases(&self) -> Vec<usize> {
-		self.moles
-			.iter()
-			.filter_map(|(&i, &n)| if n >= GAS_MIN_MOLES { Some(i) } else { None })
-			.collect()
+	pub fn get_gases(&self) -> &[u8] {
+		&self.mole_ids
 	}
 	/// Returns (by value) the amount of moles of a given index the mix has. M
-	pub fn get_moles(&self, idx: usize) -> f32 {
-		*self.moles.get(&idx).unwrap_or_else(|| &0.0)
+	pub fn get_moles(&self, idx: u8) -> f32 {
+		if let Ok(i) = self.mole_ids.binary_search(&idx) {
+			*unsafe { self.moles.get_unchecked(i) } // mole_ids and moles have same size, so `i` is always in bounds
+		} else {
+			0.0
+		}
 	}
 	/// Sets the mix to be internally immutable. Rust doesn't know about any of this, obviously.
 	pub fn mark_immutable(&mut self) {
@@ -88,19 +94,30 @@ impl GasMixture {
 		self.immutable
 	}
 	/// If mix is not immutable, sets the gas at the given `idx` to the given `amt`.
-	pub fn set_moles(&mut self, idx: usize, amt: f32) {
+	pub fn set_moles(&mut self, idx: u8, amt: f32) {
 		if !self.immutable && amt.is_normal() {
-			self.moles.insert(idx,amt);
+			match self.mole_ids.binary_search(&idx) {
+				Ok(i) => unsafe { *self.moles.get_unchecked_mut(i) = amt },
+				Err(i) => {
+					self.mole_ids.insert(i, idx);
+					self.moles.insert(i, amt);
+				}
+			}
 		}
 	}
 	/// The heat capacity of the material. [joules?]/mole-kelvin.
 	pub fn heat_capacity(&self) -> f32 {
 		let heats = gas_specific_heats();
-		self.moles.iter().map(|(&i, &g)| g * heats[i]).sum::<f32>().max(self.min_heat_capacity)
+		self.mole_ids
+			.iter()
+			.enumerate()
+			.map(|(idx, &id)| self.moles[idx] * heats[id as usize])
+			.sum::<f32>()
+			.max(self.min_heat_capacity)
 	}
 	/// The total mole count of the mixture. Moles.
 	pub fn total_moles(&self) -> f32 {
-		self.moles.values().sum()
+		self.moles.iter().sum()
 	}
 	/// Pressure. Kilopascals.
 	pub fn return_pressure(&self) -> f32 {
@@ -116,8 +133,17 @@ impl GasMixture {
 			return;
 		}
 		let tot_energy = self.thermal_energy() + giver.thermal_energy();
-		for (&i, &g) in giver.moles.iter() {
-			self.moles.entry(i).and_modify(|gas| *gas += g).or_insert(g);
+		for (giver_idx, id) in giver.mole_ids.iter().enumerate() {
+			match self.mole_ids.binary_search(id) {
+				Ok(idx) => unsafe {
+					*self.moles.get_unchecked_mut(idx) += giver.moles.get_unchecked(giver_idx)
+				},
+				Err(idx) => {
+					self.moles
+						.insert(idx, unsafe { *giver.moles.get_unchecked(giver_idx) });
+					self.mole_ids.insert(idx, *id);
+				}
+			}
 		}
 		self.garbage_collect();
 		let cap = self.heat_capacity();
@@ -150,6 +176,7 @@ impl GasMixture {
 		if self.immutable {
 			return;
 		}
+		self.mole_ids = sample.mole_ids.clone();
 		self.moles = sample.moles.clone();
 		self.temperature = sample.temperature;
 	}
@@ -213,19 +240,47 @@ impl GasMixture {
 	}
 	/// Returns true if the gases are sufficiently different, false otherwise.
 	pub fn compare(&self, sample: &GasMixture, min_delta: f32) -> bool {
-		self.moles
-			.keys()
-			.merge(sample.moles.keys())
-			.dedup()
-			.any(|idx| {
-				(self.moles.get(idx).unwrap_or(&0.0) - sample.moles.get(idx).unwrap_or(&0.0)).abs()
-					> min_delta
-			}) || (self.total_moles() > min_delta
-			&& (self.temperature - sample.temperature).abs() > MINIMUM_TEMPERATURE_DELTA_TO_SUSPEND)
+		let mut our_idx = 0;
+		let mut sample_idx = 0;
+		for e in self
+			.mole_ids
+			.iter()
+			.merge_join_by(sample.mole_ids.iter(), |a, b| a.cmp(b))
+		{
+			unsafe {
+				match e {
+					Both(_, _) => {
+						if (self.moles.get_unchecked(our_idx)
+							- sample.moles.get_unchecked(sample_idx))
+						.abs() > min_delta
+						{
+							return true;
+						}
+						our_idx += 1;
+						sample_idx += 1;
+					}
+					Left(_) => {
+						if *self.moles.get_unchecked(our_idx) > min_delta {
+							return true;
+						}
+						our_idx += 1;
+					}
+					Right(_) => {
+						if *sample.moles.get_unchecked(sample_idx) > min_delta {
+							return true;
+						}
+						sample_idx += 1;
+					}
+				}
+			}
+		}
+		self.total_moles() > min_delta
+			&& (self.temperature - sample.temperature).abs() > MINIMUM_TEMPERATURE_DELTA_TO_SUSPEND
 	}
 	/// Clears the moles from the gas.
 	pub fn clear(&mut self) {
 		if !self.immutable {
+			self.mole_ids.clear();
 			self.moles.clear();
 		}
 	}
@@ -240,7 +295,7 @@ impl GasMixture {
 	/// Multiplies every gas molage with this value.
 	pub fn multiply(&mut self, multiplier: f32) {
 		if !self.immutable {
-			for (_, amt) in self.moles.iter_mut() {
+			for amt in self.moles.iter_mut() {
 				*amt *= multiplier;
 			}
 		}
@@ -263,8 +318,8 @@ impl GasMixture {
 	}
 	/// Returns true if there's a visible gas in this mix.
 	pub fn is_visible(&self) -> bool {
-		self.moles.iter().any(|(&i, gas)| {
-			if let Some(amt) = gas_visibility(i) {
+		self.enumerate().any(|(&i, gas)| {
+			if let Some(amt) = gas_visibility(i as usize) {
 				gas >= &amt
 			} else {
 				false
@@ -275,11 +330,11 @@ impl GasMixture {
 	pub fn visibility_hash(&self) -> u64 {
 		use std::hash::Hasher;
 		let mut hasher = std::collections::hash_map::DefaultHasher::new();
-		for (&i, gas) in self.moles.iter() {
-			if let Some(amt) = gas_visibility(i) {
+		for (&i, gas) in self.enumerate() {
+			if let Some(amt) = gas_visibility(i as usize) {
 				if gas >= &amt {
 					hasher.write(&[
-						i as u8,
+						i,
 						FACTOR_GAS_VISIBLE_MAX.min((gas / MOLES_GAS_VISIBLE_STEP).ceil()) as u8,
 					]);
 				}
@@ -288,20 +343,23 @@ impl GasMixture {
 		hasher.finish()
 	}
 	fn garbage_collect(&mut self) {
-		//self.moles.drain_filter(|_,g| !g.is_normal() || *g < GAS_MIN_MOLES);
-		let keys_to_remove: Vec<usize> = self
-			.moles
-			.iter()
-			.filter_map(|(i, g)| {
-				if g.is_normal() && *g > GAS_MIN_MOLES {
-					None
-				} else {
-					Some(*i)
+		// this is absolutely just a copy job of the source for the rust standard library's retain
+		let mut del = 0;
+		let len = self.moles.len();
+		{
+			for idx in 0..len {
+				let amt = unsafe { *self.moles.get_unchecked(idx) };
+				if !amt.is_normal() || amt < GAS_MIN_MOLES {
+					del += 1;
+				} else if del > 0 {
+					self.moles.swap(idx - del, idx);
+					self.mole_ids.swap(idx - del, idx);
 				}
-			})
-			.collect();
-		for i in keys_to_remove {
-			self.moles.remove(&i);
+			}
+		}
+		if del > 0 {
+			self.moles.truncate(len - del);
+			self.mole_ids.truncate(len - del);
 		}
 	}
 }

@@ -348,11 +348,11 @@ struct AdjacentTileIDs {
 	i: TurfID,
 	max_x: i32,
 	max_y: i32,
-	count: u8
+	count: u8,
 }
 
 impl Iterator for AdjacentTileIDs {
-	type Item = (u8,TurfID);
+	type Item = (u8, TurfID);
 
 	fn next(&mut self) -> Option<Self::Item> {
 		loop {
@@ -362,7 +362,10 @@ impl Iterator for AdjacentTileIDs {
 				self.count += 1;
 				let bit = 1 << (self.count - 1);
 				if self.adj & bit == bit {
-					return Some((self.count - 1, adjacent_tile_id(self.count - 1, self.i, self.max_x, self.max_y)));
+					return Some((
+						self.count - 1,
+						adjacent_tile_id(self.count - 1, self.i, self.max_x, self.max_y),
+					));
 				}
 			}
 		}
@@ -378,5 +381,11 @@ use std::iter::FusedIterator;
 impl FusedIterator for AdjacentTileIDs {}
 
 fn adjacent_tile_ids(adj: u8, i: TurfID, max_x: i32, max_y: i32) -> AdjacentTileIDs {
-	AdjacentTileIDs { adj, i, max_x, max_y, count: 0 }
+	AdjacentTileIDs {
+		adj,
+		i,
+		max_x,
+		max_y,
+		count: 0,
+	}
 }

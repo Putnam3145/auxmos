@@ -47,7 +47,10 @@ fn _process_turf_hook() {
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 0"))?
 		.as_number()?
 		== 1.0;
-	if !resumed && PROCESSING_TURF_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
+	if !resumed
+		&& PROCESSING_TURF_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED
+		&& !PROCESSING_HEAT.load(Ordering::SeqCst)
+	{
 		let fda_max_steps = src.get_number("share_max_steps").unwrap_or_else(|_| 1.0) as i32;
 		let fda_pressure_goal = src
 			.get_number("share_pressure_diff_to_stop")
@@ -103,13 +106,14 @@ fn _process_turf_hook() {
 												!= SIMULATION_LEVEL_DISABLED) && adj > 0
 										{
 											let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
-											if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read()
+											if let Some(gas) =
+												all_mixtures.get(m.mix).unwrap().try_read()
 											{
-											/*
-												Getting write locks is potential danger zone,
-												so we make sure we don't do that unless we
-												absolutely need to. Saving is fast enough.
-											*/
+												/*
+													Getting write locks is potential danger zone,
+													so we make sure we don't do that unless we
+													absolutely need to. Saving is fast enough.
+												*/
 												let mut end_gas = GasMixture::from_vol(2500.0);
 												let mut pressure_diffs: [(TurfID, f32); 6] =
 													Default::default();
@@ -203,13 +207,14 @@ fn _process_turf_hook() {
 					In short: the above actually needs to finish before the below starts
 					for consistency, so collect() is desired. This has been tested, by the way.
 				*/
-				let should_break = !turfs_to_save
-					.par_iter_mut()
-					.map(|(i, m, end_gas, pressure_diffs)| {
-						let adj_amount = (m.adjacency.count_ones()
-							+ (m.planetary_atmos.is_some() as u32)) as f32;
-						let mut this_high_pressure = false;
-						GasMixtures::with_all_mixtures(|all_mixtures| {
+				let mut should_break = false;
+				GasMixtures::with_all_mixtures(|all_mixtures| {
+					should_break = !turfs_to_save
+						.par_iter_mut()
+						.map(|(i, m, end_gas, pressure_diffs)| {
+							let adj_amount = (m.adjacency.count_ones()
+								+ (m.planetary_atmos.is_some() as u32)) as f32;
+							let mut this_high_pressure = false;
 							if let Some(entry) = all_mixtures.get(m.mix) {
 								let gas: &mut GasMixture = &mut entry.write();
 								let moved_pressure = gas.return_pressure() * GAS_DIFFUSION_CONSTANT;
@@ -280,12 +285,12 @@ fn _process_turf_hook() {
 										.unwrap();
 								}
 							}
-						});
-						this_high_pressure
-					})
-					.collect::<Vec<bool>>()
-					.iter()
-					.any(|i| *i);
+							this_high_pressure
+						})
+						.collect::<Vec<bool>>()
+						.iter()
+						.any(|i| *i);
+				});
 				drop(turfs_to_save);
 				if should_break || SUBSYSTEM_FIRE_COUNT.load(Ordering::SeqCst) != initial_fire_count
 				{
@@ -301,15 +306,20 @@ fn _process_turf_hook() {
 			TURF_PROCESS_TIME.store((old_bench * 3 + (bench * 7) as u64) / 10, Ordering::SeqCst);
 		});
 	}
+	Ok(Value::from(false))
+}
+
+#[hook("/datum/controller/subsystem/air/proc/finish_turf_processing")]
+fn _finish_process_turfs() {
 	let arg_limit = args
-		.get(1)
+		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 1"))?
 		.as_number()?;
 	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
 	Ok(Value::from(
 		PROCESSING_TURF_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)
-			!= PROCESS_DONE,
+			== PROCESS_PROCESSING,
 	))
 }
 
@@ -377,10 +387,10 @@ fn _process_heat_hook() {
 							let t = *t_v.get();
 							let adj = t.adjacency;
 							/*
-								If it has no thermal conductivity or no thermal capacity,
+								If it has no thermal conductivity or low thermal capacity,
 								then it's not gonna interact, or at least shouldn't.
 							*/
-							if t.thermal_conductivity > 0.0 && t.heat_capacity > 0.0 && adj > 0 {
+							if t.thermal_conductivity > 0.0 && t.heat_capacity > 300.0 && adj > 0 {
 								let mut heat_delta = 0.0;
 								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 								let mut is_temp_delta_with_air = false;
@@ -417,7 +427,6 @@ fn _process_heat_hook() {
 										*/
 									}
 								}
-								let cur_heat = t.temperature * t.heat_capacity;
 								if t.adjacent_to_space {
 									/*
 										Straight up the standard blackbody radiation
@@ -431,8 +440,9 @@ fn _process_heat_hook() {
 										- radiation_from_space_tick;
 									heat_delta -= blackbody_radiation as f32;
 								}
-								if is_temp_delta_with_air || heat_delta.abs() > 0.1 {
-									Some((i, (cur_heat + heat_delta) / t.heat_capacity))
+								let temp_delta = heat_delta / t.heat_capacity;
+								if is_temp_delta_with_air || temp_delta.abs() > 0.1 {
+									Some((i, t.temperature + temp_delta))
 								} else {
 									None
 								}
@@ -472,7 +482,9 @@ fn _process_heat_hook() {
 					} else {
 						t.temperature = new_temp;
 					}
-					if t.heat_capacity > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION && t.temperature > t.heat_capacity {
+					if t.heat_capacity > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
+						&& t.temperature > t.heat_capacity
+					{
 						// not what heat capacity means but whatever
 						let _ = sender.try_send(Box::new(move |_| {
 							let turf = unsafe { Value::turf_by_id_unchecked(i) };
@@ -634,6 +646,6 @@ fn process_excited_groups() {
 	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
 	Ok(Value::from(
 		EXCITED_GROUP_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)
-			!= PROCESS_DONE,
+			== PROCESS_PROCESSING,
 	))
 }

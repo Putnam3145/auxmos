@@ -15,7 +15,7 @@ pub struct Reaction {
 	min_temp_req: Option<f32>,
 	max_temp_req: Option<f32>,
 	min_ener_req: Option<f32>,
-	min_gas_reqs: Vec<(usize, f32)>,
+	min_gas_reqs: Vec<(u8, f32)>,
 }
 
 impl Ord for Reaction {
@@ -49,7 +49,7 @@ impl Reaction {
 	///  anything but a /datum/reaction.
 	pub fn from_byond_reaction(reaction: &Value) -> Self {
 		let min_reqs = reaction.get_list("min_requirements").unwrap();
-		let mut min_gas_reqs: Vec<(usize, f32)> = Vec::new();
+		let mut min_gas_reqs: Vec<(u8, f32)> = Vec::new();
 		for i in 0..total_num_gases() {
 			if let Ok(gas_req) = min_reqs.get(&gas_id_to_type(i).unwrap()) {
 				if let Ok(req_amount) = gas_req.as_number() {

@@ -139,7 +139,7 @@ fn _get_gases_hook() {
 	with_mix(src, |mix| {
 		let gases_list: List = List::new();
 		for gas in mix.get_gases() {
-			gases_list.append(&gas_id_to_type(gas as usize)?);
+			gases_list.append(&gas_id_to_type(*gas)?);
 		}
 		Ok(Value::from(gases_list))
 	})

@@ -267,6 +267,9 @@ fn _process_turf_hook() {
 									let diffs_copy = pressure_diffs;
 									sender
 										.try_send(Box::new(move |_| {
+											if turf_id == 0 {
+												return Ok(Value::null());
+											}
 											let turf =
 												unsafe { Value::turf_by_id_unchecked(turf_id) };
 											for &(id, diff) in diffs_copy.iter() {

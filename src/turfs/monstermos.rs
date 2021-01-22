@@ -870,7 +870,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 
 // Expected function call: process_turf_equalize_extools((Master.current_ticklimit - TICK_USAGE) * world.tick_lag)
 // Returns: TRUE if not done, FALSE if done
-#[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_extools")]
+#[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
 fn _hook_equalize() {
 	actual_equalize(src, args, ctx)
 }

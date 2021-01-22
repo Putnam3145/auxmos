@@ -31,7 +31,7 @@ lazy_static! {
 }
 
 // Returns: TRUE if not done, FALSE if done
-#[hook("/datum/controller/subsystem/air/proc/process_turfs_extools")]
+#[hook("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
 fn _process_turf_hook() {
 	/*
 		This is the replacement system for LINDA. LINDA requires a lot of bookkeeping,
@@ -65,29 +65,28 @@ fn _process_turf_hook() {
 			let low_pressure_sender = LOW_PRESSURE_TURFS.0.clone();
 			let initial_fire_count = SUBSYSTEM_FIRE_COUNT.load(Ordering::SeqCst);
 			let mut cur_count = 1;
-			loop {
-				if cur_count > fda_max_steps {
-					break;
-				}
-				let mut turfs_to_save: Vec<(TurfID, TurfMixture, GasMixture, [(TurfID, f32); 6])> =
-					TURF_GASES
-						/*
-							This uses the DashMap raw API to access the shards directly.
-							This allows for it to be parallelized much more efficiently
-							with rayon; the speedup gained from this is actually linear
-							with the amount of cores the CPU has, which, to be frank,
-							is way better than I was expecting, even though this operation
-							is technically embarassingly parallel. It'll probably reach
-							some maximum due to the global turf mixture lock access,
-							but it's already blazingly fast on my i7, so it should be fine.
-						*/
-						.shards()
-						.iter()
-						.par_bridge()
-						.map(|shard| {
-							let mut ret: Vec<_> = Vec::new();
-							GasMixtures::with_all_mixtures(|all_mixtures| {
-								ret = shard
+			GasMixtures::with_all_mixtures(|all_mixtures| {
+				loop {
+					if cur_count > fda_max_steps {
+						break;
+					}
+					let turfs_to_save =
+						TURF_GASES
+							/*
+								This uses the DashMap raw API to access the shards directly.
+								This allows for it to be parallelized much more efficiently
+								with rayon; the speedup gained from this is actually linear
+								with the amount of cores the CPU has, which, to be frank,
+								is way better than I was expecting, even though this operation
+								is technically embarassingly parallel. It'll probably reach
+								some maximum due to the global turf mixture lock access,
+								but it's already blazingly fast on my i7, so it should be fine.
+							*/
+							.shards()
+							.iter()
+							.par_bridge()
+							.map(|shard| {
+								shard
 									.read()
 									.iter()
 									.filter_map(|(&i, m_v)| {
@@ -102,8 +101,9 @@ fn _process_turf_hook() {
 											for this particular step.
 										*/
 										if m.simulation_level > SIMULATION_LEVEL_NONE
-											&& (m.simulation_level & SIMULATION_LEVEL_DISABLED
-												!= SIMULATION_LEVEL_DISABLED) && adj > 0
+											&& adj > 0 && (m.simulation_level
+											& SIMULATION_LEVEL_DISABLED
+											!= SIMULATION_LEVEL_DISABLED)
 										{
 											let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 											if let Some(gas) =
@@ -156,13 +156,20 @@ fn _process_turf_hook() {
 													}
 												}
 												// Obviously planetary atmos needs love too.
-												if let Some(planet_atmos) = m.planetary_atmos {
-													end_gas.merge(
-														PLANETARY_ATMOS
-															.get(planet_atmos)
-															.unwrap()
-															.value(),
-													);
+												if let Some(planet_atmos_id) = m.planetary_atmos {
+													if let Some(planet_atmos_entry) = PLANETARY_ATMOS.get(planet_atmos_id) {
+														let planet_atmos = planet_atmos_entry.value();
+														if should_share {
+															end_gas.merge(
+																planet_atmos
+															);
+														} else {
+															if gas.compare(&planet_atmos,MINIMUM_MOLES_DELTA_TO_MOVE) {
+																end_gas.merge(planet_atmos);
+																should_share = true;
+															}
+														}
+													}
 												}
 												/*
 													This method of simulating diffusion
@@ -193,31 +200,44 @@ fn _process_turf_hook() {
 											None
 										}
 									})
-									.collect::<Vec<_>>();
-							});
-							ret
-						})
-						.flatten()
-						.collect();
-				/*
-					For the optimization-heads reading this: this is not an unnecessary collect().
-					Saving all this to the turfs_to_save vector is, in fact, the reason
-					that gases don't need an archive anymore--this *is* the archival step,
-					simultaneously saving how the gases will change after the fact.
-					In short: the above actually needs to finish before the below starts
-					for consistency, so collect() is desired. This has been tested, by the way.
-				*/
-				let mut should_break = false;
-				GasMixtures::with_all_mixtures(|all_mixtures| {
-					should_break = !turfs_to_save
-						.par_iter_mut()
-						.map(|(i, m, end_gas, pressure_diffs)| {
+									.collect::<Vec<_>>()
+							})
+							.flatten();
+					/*
+						For the optimization-heads reading this: this is not an unnecessary collect().
+						Saving all this to the turfs_to_save vector is, in fact, the reason
+						that gases don't need an archive anymore--this *is* the archival step,
+						simultaneously saving how the gases will change after the fact.
+						In short: the above actually needs to finish before the below starts
+						for consistency, so collect() is desired. This has been tested, by the way.
+					*/
+					let should_break = turfs_to_save
+						.map(|(i, m, end_gas, mut pressure_diffs)| {
 							let adj_amount = (m.adjacency.count_ones()
 								+ (m.planetary_atmos.is_some() as u32)) as f32;
 							let mut this_high_pressure = false;
 							if let Some(entry) = all_mixtures.get(m.mix) {
-								let gas: &mut GasMixture = &mut entry.write();
-								let moved_pressure = gas.return_pressure() * GAS_DIFFUSION_CONSTANT;
+								let mut pressure_diff_exists = false;
+								let mut max_diff = 0.0f32;
+								let moved_pressure = {
+									let gas = entry.read();
+									gas.return_pressure() * GAS_DIFFUSION_CONSTANT
+								};
+								for pressure_diff in pressure_diffs.iter_mut() {
+									// pressure_diff.1 here was set to a negative above, so we just add.
+									pressure_diff.1 += moved_pressure;
+									max_diff = max_diff.max(pressure_diff.1);
+									// See the explanation below.
+									pressure_diff_exists =
+										pressure_diff_exists || pressure_diff.1.abs() > 0.5;
+									this_high_pressure = this_high_pressure
+										|| pressure_diff.1.abs() > fda_pressure_goal;
+								}
+								if max_diff.abs() > 0.25 {
+									let _ = high_pressure_sender.try_send(i);
+								} else {
+									let _ = low_pressure_sender.try_send(i);
+								}
 								/*
 									1.0 - GAS_DIFFUSION_CONSTANT * adj_amount is going to be
 									precisely equal to the amount the surrounding tiles'
@@ -230,25 +250,11 @@ fn _process_turf_hook() {
 									this gas. So, 1.0 - (0.125 * adj_amount) = 0.625--
 									exactly the amount those gases "took" from this.
 								*/
-								gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount));
-								let mut pressure_diff_exists = false;
-								let mut max_diff = 0.0f32;
-								for pressure_diff in pressure_diffs.iter_mut() {
-									// pressure_diff.1 here was set to a negative above, so we just add.
-									pressure_diff.1 += moved_pressure;
-									max_diff = max_diff.max(pressure_diff.1);
-									// See the explanation below.
-									pressure_diff_exists =
-										pressure_diff_exists || pressure_diff.1.abs() > 0.5;
-									this_high_pressure = this_high_pressure
-										|| pressure_diff.1.abs() > fda_pressure_goal;
+								{
+									let gas: &mut GasMixture = &mut entry.write();
+									gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount));
+									gas.merge(&end_gas);
 								}
-								if max_diff.abs() > 0.25 {
-									let _ = high_pressure_sender.try_send(*i);
-								} else {
-									let _ = low_pressure_sender.try_send(*i);
-								}
-								gas.merge(&end_gas);
 								/*
 									If there is neither a major pressure difference
 									nor are there any visible gases nor does it need
@@ -257,8 +263,8 @@ fn _process_turf_hook() {
 									value to byond, so we don't. However, if we do...
 								*/
 								if pressure_diff_exists {
-									let turf_id = *i;
-									let diffs_copy = *pressure_diffs;
+									let turf_id = i;
+									let diffs_copy = pressure_diffs;
 									sender
 										.try_send(Box::new(move |_| {
 											let turf =
@@ -287,17 +293,15 @@ fn _process_turf_hook() {
 							}
 							this_high_pressure
 						})
-						.collect::<Vec<bool>>()
-						.iter()
-						.any(|i| *i);
-				});
-				drop(turfs_to_save);
-				if should_break || SUBSYSTEM_FIRE_COUNT.load(Ordering::SeqCst) != initial_fire_count
-				{
-					break;
+						.reduce(|| false, |a, b| a || b);
+					if should_break
+						|| SUBSYSTEM_FIRE_COUNT.load(Ordering::SeqCst) != initial_fire_count
+					{
+						return;
+					}
+					cur_count += 1;
 				}
-				cur_count += 1;
-			}
+			});
 			//Alright, now how much time did that take?
 			let bench = start_time.elapsed().as_nanos();
 			PROCESSING_TURF_STEP.store(PROCESS_DONE, Ordering::SeqCst);
@@ -309,11 +313,11 @@ fn _process_turf_hook() {
 	Ok(Value::from(false))
 }
 
-#[hook("/datum/controller/subsystem/air/proc/finish_turf_processing")]
+#[hook("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
 fn _finish_process_turfs() {
 	let arg_limit = args
 		.get(0)
-		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 1"))?
+		.ok_or_else(|| runtime!("Wrong number of arguments to turf finishing: 0"))?
 		.as_number()?;
 	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
@@ -512,9 +516,7 @@ fn _process_heat_hook() {
 	)))
 }
 
-static POST_PROCESSING: AtomicBool = AtomicBool::new(false);
-
-#[hook("/datum/controller/subsystem/air/proc/post_process_turfs")]
+#[hook("/datum/controller/subsystem/air/proc/post_process_turfs_auxtools")]
 fn _post_process_turfs() {
 	let resumed = args
 		.get(0)
@@ -560,10 +562,11 @@ fn _post_process_turfs() {
 		});
 		arg_limit -= time.elapsed().as_millis() as f32
 	}
-	Ok(Value::from(
-		process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64)
-			|| POST_PROCESSING.load(Ordering::SeqCst),
-	))
+	Ok(Value::from(process_callbacks_for_millis(
+		ctx,
+		SSAIR_NAME.to_string(),
+		arg_limit as u64,
+	)))
 }
 
 static EXCITED_GROUP_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
@@ -573,7 +576,7 @@ static EXCITED_GROUP_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
 	the entire region if it doesn't find a pressure delta of
 	more than 1 kilopascal.
 */
-#[hook("/datum/controller/subsystem/air/proc/process_excited_groups_extools")]
+#[hook("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
 fn process_excited_groups() {
 	let resumed = args
 		.get(0)

@@ -134,7 +134,7 @@ fn _hook_register_turf() {
 		let mut to_insert: TurfMixture = Default::default();
 		to_insert.mix = src
 			.get("air")?
-			.get_number("_extools_pointer_gasmixture")?
+			.get_number(byond_string!("_extools_pointer_gasmixture"))?
 			.to_bits() as usize;
 		to_insert.simulation_level = args[0].as_number()? as u8;
 		if let Ok(is_planet) = src.get_number("planetary_atmos") {
@@ -155,8 +155,8 @@ fn _hook_register_turf() {
 
 #[hook("/turf/proc/__auxtools_update_turf_temp_info")]
 fn _hook_turf_update_temp() {
-	if src.get_number("thermal_conductivity").unwrap_or(0.0) > 0.0
-		&& src.get_number("heat_capacity").unwrap_or(0.0) > 0.0
+	if src.get_number("thermal_conductivity").unwrap_or_default() > 0.0
+		&& src.get_number("heat_capacity").unwrap_or_default() > 0.0
 	{
 		let mut entry = TURF_TEMPERATURES
 			.entry(unsafe { src.value.data.id })
@@ -172,6 +172,8 @@ fn _hook_turf_update_temp() {
 		entry.adjacency = NORTH | SOUTH | WEST | EAST;
 		entry.adjacent_to_space = args[0].as_number()? != 0.0;
 		entry.temperature = src.get_number("initial_temperature")?;
+	} else {
+		TURF_TEMPERATURES.remove(&unsafe { src.value.data.id });
 	}
 	Ok(Value::null())
 }

@@ -16,11 +16,10 @@ putnamos_decompression = ["putnamos"]
 crate-type = ["cdylib"]
 
 [dependencies]
-auxtools = { git = "https://github.com/willox/auxtools" }
-auxcallback = { git = "https://github.com/Putnam3145/auxcallback" }
+auxtools = { git = "https://github.com/willox/auxtools", branch = "string_interning"}
+auxcallback = { path = "D:/Projects/auxcallback" }
 lazy_static = "1.4.0"
 itertools = "0.9.0"
-smallvec = "1.4.2"
 rayon = "1.5.0"
 float-ord = "0.2.0"
 crossbeam = "0.8.0"
@@ -31,6 +30,10 @@ parking_lot = "0.11.1"
 [dependencies.dashmap]
 version = "3.11.10"
 features = ["raw-api"]
+
+[dependencies.tinyvec]
+version = "1.1.0"
+features = ["rustc_1_40", "alloc"]
 
 [profile.release]
 opt-level = 3

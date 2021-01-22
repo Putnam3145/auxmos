@@ -2,9 +2,11 @@ use itertools::Itertools;
 
 use itertools::EitherOrBoth::{Both, Left, Right};
 
+use tinyvec::TinyVec;
+
 use super::constants::*;
 
-use super::{gas_specific_heats, gas_visibility, reactions};
+use super::{gas_specific_heats, gas_visibility, reactions, total_num_gases};
 
 use super::reaction::Reaction;
 
@@ -18,12 +20,12 @@ use super::reaction::Reaction;
 /// sleeping turfs.
 #[derive(Clone)]
 pub struct GasMixture {
-	mole_ids: Vec<u8>,
-	moles: Vec<f32>,
 	temperature: f32,
 	pub volume: f32,
 	min_heat_capacity: f32,
 	immutable: bool,
+	mole_ids: TinyVec<[u8;8]>,
+	moles: TinyVec<[f32;8]>,
 }
 
 impl Default for GasMixture {
@@ -36,8 +38,8 @@ impl GasMixture {
 	/// Makes an empty gas mixture.
 	pub fn new() -> Self {
 		GasMixture {
-			mole_ids: Vec::with_capacity(8),
-			moles: Vec::with_capacity(2),
+			mole_ids: TinyVec::new(),
+			moles: TinyVec::new(),
 			temperature: 2.7,
 			volume: 2500.0,
 			min_heat_capacity: 0.0,
@@ -60,9 +62,11 @@ impl GasMixture {
 			self.temperature = temp;
 		}
 	}
+	/// Sets the minimum heat capacity of this mix.
 	pub fn set_min_heat_capacity(&mut self, amt: f32) {
 		self.min_heat_capacity = amt;
 	}
+	// Returns an iterator over the gas keys and mole amounts thereof.
 	fn enumerate(&self) -> impl Iterator<Item = (&u8, &f32)> {
 		self.mole_ids.iter().zip_eq(self.moles.iter())
 	}
@@ -95,24 +99,31 @@ impl GasMixture {
 	}
 	/// If mix is not immutable, sets the gas at the given `idx` to the given `amt`.
 	pub fn set_moles(&mut self, idx: u8, amt: f32) {
-		if !self.immutable && amt.is_normal() {
-			match self.mole_ids.binary_search(&idx) {
-				Ok(i) => unsafe { *self.moles.get_unchecked_mut(i) = amt },
-				Err(i) => {
-					self.mole_ids.insert(i, idx);
-					self.moles.insert(i, amt);
+		if !self.immutable && idx < total_num_gases() {
+			if amt.is_normal() && amt > GAS_MIN_MOLES {
+				match self.mole_ids.binary_search(&idx) {
+					Ok(i) => unsafe { *self.moles.get_unchecked_mut(i) = amt },
+					Err(i) => {
+						self.mole_ids.insert(i, idx);
+						self.moles.insert(i, amt);
+					}
+				}
+			} else {
+				if let Ok(i) = self.mole_ids.binary_search(&idx) {
+					self.moles.remove(i);
+					self.mole_ids.remove(i);
 				}
 			}
 		}
 	}
 	/// The heat capacity of the material. [joules?]/mole-kelvin.
+	#[inline]
 	pub fn heat_capacity(&self) -> f32 {
 		let heats = gas_specific_heats();
-		self.mole_ids
-			.iter()
-			.enumerate()
-			.map(|(idx, &id)| self.moles[idx] * heats[id as usize])
-			.sum::<f32>()
+		self.enumerate()
+			.fold(0.0, |acc, (&id, amt)| {
+				acc + amt * unsafe { heats.get_unchecked(id as usize) }
+			})
 			.max(self.min_heat_capacity)
 	}
 	/// The total mole count of the mixture. Moles.
@@ -132,23 +143,22 @@ impl GasMixture {
 		if self.immutable {
 			return;
 		}
-		let tot_energy = self.thermal_energy() + giver.thermal_energy();
-		for (giver_idx, id) in giver.mole_ids.iter().enumerate() {
+		let our_heat_capacity = self.heat_capacity();
+		let other_heat_capacity = giver.heat_capacity();
+		for (id, amt) in giver.enumerate() {
 			match self.mole_ids.binary_search(id) {
-				Ok(idx) => unsafe {
-					*self.moles.get_unchecked_mut(idx) += giver.moles.get_unchecked(giver_idx)
-				},
+				Ok(idx) => unsafe { *self.moles.get_unchecked_mut(idx) += amt },
 				Err(idx) => {
-					self.moles
-						.insert(idx, unsafe { *giver.moles.get_unchecked(giver_idx) });
+					self.moles.insert(idx, *amt);
 					self.mole_ids.insert(idx, *id);
 				}
 			}
 		}
-		self.garbage_collect();
-		let cap = self.heat_capacity();
-		if cap > MINIMUM_HEAT_CAPACITY {
-			self.set_temperature(tot_energy / cap);
+		if our_heat_capacity + other_heat_capacity > MINIMUM_HEAT_CAPACITY {
+			self.set_temperature(
+				(our_heat_capacity * self.temperature + other_heat_capacity * giver.temperature)
+					/ (our_heat_capacity + other_heat_capacity),
+			);
 		}
 	}
 	/// Returns a gas mixture that contains a given percentage of this mixture's moles; if this mix is mutable, also removes those moles from the original.
@@ -242,35 +252,38 @@ impl GasMixture {
 	pub fn compare(&self, sample: &GasMixture, min_delta: f32) -> bool {
 		let mut our_idx = 0;
 		let mut sample_idx = 0;
+		// https://docs.rs/itertools/0.10.0/itertools/trait.Itertools.html#method.merge_join_by
+		// Walks linearly through each gas mixture, using the above method.
+		// We keep track of the indices of each as we go.
+		// The Left(_) and Right(_) paths have an implicit subtract-by-0 in them.
 		for e in self
 			.mole_ids
 			.iter()
 			.merge_join_by(sample.mole_ids.iter(), |a, b| a.cmp(b))
 		{
-			unsafe {
-				match e {
-					Both(_, _) => {
-						if (self.moles.get_unchecked(our_idx)
-							- sample.moles.get_unchecked(sample_idx))
-						.abs() > min_delta
-						{
-							return true;
-						}
-						our_idx += 1;
-						sample_idx += 1;
+			match e {
+				Both(_, _) => {
+					if (unsafe {
+						self.moles.get_unchecked(our_idx) - sample.moles.get_unchecked(sample_idx)
+					})
+					.abs() > min_delta
+					{
+						return true;
 					}
-					Left(_) => {
-						if *self.moles.get_unchecked(our_idx) > min_delta {
-							return true;
-						}
-						our_idx += 1;
+					our_idx += 1;
+					sample_idx += 1;
+				}
+				Left(_) => {
+					if unsafe { *self.moles.get_unchecked(our_idx) } > min_delta {
+						return true;
 					}
-					Right(_) => {
-						if *sample.moles.get_unchecked(sample_idx) > min_delta {
-							return true;
-						}
-						sample_idx += 1;
+					our_idx += 1;
+				}
+				Right(_) => {
+					if unsafe { *sample.moles.get_unchecked(sample_idx) } > min_delta {
+						return true;
 					}
+					sample_idx += 1;
 				}
 			}
 		}
@@ -286,7 +299,7 @@ impl GasMixture {
 	}
 	/// Resets the gas mixture to an initialized-with-volume state.
 	pub fn clear_with_vol(&mut self, vol: f32) {
-		self.temperature = 0.0;
+		self.temperature = 2.7;
 		self.volume = vol;
 		self.min_heat_capacity = 0.0;
 		self.immutable = false;
@@ -342,6 +355,7 @@ impl GasMixture {
 		}
 		hasher.finish()
 	}
+	// Removes all zeroes from the gas mixture.
 	fn garbage_collect(&mut self) {
 		// this is absolutely just a copy job of the source for the rust standard library's retain
 		let mut del = 0;

@@ -34,7 +34,7 @@ fn _min_heat_cap_hook() {
 		))
 	} else {
 		with_mix_mut(src, |mix| {
-			mix.set_min_heat_capacity(args[0].as_number().unwrap_or(0.0));
+			mix.set_min_heat_capacity(args[0].as_number().unwrap_or_default());
 			Ok(Value::null())
 		})
 	}
@@ -83,7 +83,7 @@ fn _remove_ratio_hook() {
 		Err(runtime!("remove_ratio called with fewer than 2 arguments"))
 	} else {
 		with_mixes_mut(src, &args[0], |src_mix, into_mix| {
-			into_mix.copy_from_mutable(&src_mix.remove_ratio(args[1].as_number().unwrap_or(0.0)));
+			into_mix.copy_from_mutable(&src_mix.remove_ratio(args[1].as_number().unwrap_or_default()));
 			Ok(Value::null())
 		})
 	}
@@ -95,7 +95,7 @@ fn _remove_hook() {
 		Err(runtime!("remove called with fewer than 2 arguments"))
 	} else {
 		with_mixes_mut(src, &args[0], |src_mix, into_mix| {
-			into_mix.copy_from_mutable(&src_mix.remove(args[1].as_number().unwrap_or(0.0)));
+			into_mix.copy_from_mutable(&src_mix.remove(args[1].as_number().unwrap_or_default()));
 			Ok(Value::null())
 		})
 	}
@@ -120,14 +120,14 @@ fn _temperature_share_hook() {
 		2 => with_mixes_mut(src, &args[0], |src_mix, share_mix| {
 			Ok(Value::from(src_mix.temperature_share(
 				share_mix,
-				args[1].as_number().unwrap_or(0.0),
+				args[1].as_number().unwrap_or_default(),
 			)))
 		}),
 		4 => with_mix_mut(src, |mix| {
 			Ok(Value::from(mix.temperature_share_non_gas(
-				args[0].as_number().unwrap_or(0.0),
-				args[1].as_number().unwrap_or(0.0),
-				args[2].as_number().unwrap_or(0.0),
+				args[0].as_number().unwrap_or_default(),
+				args[1].as_number().unwrap_or_default(),
+				args[2].as_number().unwrap_or_default(),
 			)))
 		}),
 		_ => Err(runtime!("Invalid args for temperature_share")),
@@ -149,7 +149,7 @@ fn _get_gases_hook() {
 fn _set_temperature_hook() {
 	let v = args
 		.get(0)
-		.ok_or(runtime!(
+		.ok_or_else(|| runtime!(
 			"Wrong amount of arguments for set_temperature: 0!"
 		))?
 		.as_number()?;
@@ -193,7 +193,7 @@ fn _set_moles_hook() {
 	if args.len() < 2 {
 		return Err(runtime!("Incorrect arg len for set_moles (less than 2)."));
 	}
-	let vf = args[1].as_number().unwrap_or(0.0);
+	let vf = args[1].as_number().unwrap_or_default();
 	if !vf.is_finite() {
 		return Err(runtime!("Attempted to set moles to NaN or infinity."));
 	}
@@ -287,6 +287,53 @@ fn _react_hook() {
 		}
 	}
 	Ok(Value::from(ret as f32))
+}
+
+#[hook("/datum/gas_mixture/proc/adjust_heat")]
+fn _adjust_heat_hook() {
+	with_mix_mut(src, |mix| {
+		mix.adjust_heat(args.get(0).ok_or_else(|| runtime!("Wrong number of args for adjust heat: 0"))?.as_number()?);
+		Ok(Value::null())
+	})
+}
+
+#[hook("/datum/gas_mixture/proc/equalize_with")]
+fn _equalize_with_hook() {
+	with_mixes_custom(src,args.get(0).ok_or_else(|| runtime!("Wrong number of args for equalize_with: 0"))?, |src_lock, total_lock| {
+		let src_gas = &mut src_lock.write();
+		let vol = src_gas.volume;
+		let total_gas = total_lock.read();
+		src_gas.copy_from_mutable(&total_gas);
+		src_gas.multiply(vol / total_gas.volume);
+		Ok(Value::null())
+	})
+}
+
+#[hook("/proc/equalize_all_gases_in_list")]
+fn _equalize_all_hook() {
+	let gas_list: Vec<usize> = args.get(0).ok_or_else(|| runtime!("Wrong number of args for equalize all: 0"))?.as_list()?.to_vec().iter().map(|v| {
+		v.get_number(byond_string!("_extools_pointer_gasmixture")).unwrap().to_bits() as usize
+	}).collect(); // collect because get_number is way slower than the one-time allocation
+	let mut tot = gas::gas_mixture::GasMixture::new();
+	let mut tot_vol = 0.0;
+	GasMixtures::with_all_mixtures(move |all_mixtures| {
+		for &id in gas_list.iter() {
+			if let Some(src_gas_lock) = all_mixtures.get(id) {
+				let src_gas = src_gas_lock.read();
+				tot.merge(&src_gas);
+				tot_vol += src_gas.volume;
+			}
+		}
+		for &id in gas_list.iter() {
+			if let Some(dest_gas_lock) = all_mixtures.get(id) {
+				let dest_gas = &mut dest_gas_lock.write();
+				let vol = dest_gas.volume; // don't wanna borrow it in the below
+				dest_gas.copy_from_mutable(&tot);
+				dest_gas.multiply(vol / tot_vol);
+			}
+		}
+	});
+	Ok(Value::null())
 }
 
 #[hook("/datum/controller/subsystem/air/proc/get_amt_gas_mixes")]

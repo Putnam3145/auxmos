@@ -48,20 +48,17 @@ fn explosively_depressurize(
 			if cur_queue_idx > equalize_hard_turf_limit {
 				continue;
 			}
-			for j in 0..6 {
+			for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
+				actual_turf.call(
+					"consider_firelocks",
+					&[&unsafe { Value::turf_by_id_unchecked(loc) }],
+				)?;
+				let new_m = TURF_GASES.get(&i).unwrap();
 				let bit = 1 << j;
-				if m.adjacency & bit == bit {
-					let loc = adjacent_tile_id(j as u8, i, max_x, max_y);
-					actual_turf.call(
-						"consider_firelocks",
-						&[&unsafe { Value::turf_by_id_unchecked(loc) }],
-					)?;
-					let new_m = TURF_GASES.get(&i).unwrap();
-					if new_m.adjacency & bit == bit {
-						if let Some(adj) = TURF_GASES.get(&loc) {
-							let (&adj_i, &adj_m) = (adj.key(), adj.value());
-							turfs.push((adj_i, adj_m));
-						}
+				if new_m.adjacency & bit == bit {
+					if let Some(adj) = TURF_GASES.get(&loc) {
+						let (&adj_i, &adj_m) = (adj.key(), adj.value());
+						turfs.push((adj_i, adj_m));
 					}
 				}
 			}
@@ -186,21 +183,19 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 								if let Some(adj_turf) = TURF_GASES.get(&loc) {
 									if let Some(entry) = all_mixtures.get(adj_turf.mix) {
 										let gas: &GasMixture = &entry.read();
-										if gas.is_immutable() {
-											if cfg!(putnamos_decompression) {
-												let _ = sender.try_send(Box::new(move |new_ctx| {
-													explosively_depressurize(
-														new_ctx,
-														cur_idx,
-														cur_turf,
-														equalize_hard_turf_limit,
-														max_x,
-														max_y,
-													)
-												}));
-												was_space = true;
-												return;
-											}
+										if cfg!(putnamos_decompression) && gas.is_immutable() {
+											let _ = sender.try_send(Box::new(move |new_ctx| {
+												explosively_depressurize(
+													new_ctx,
+													cur_idx,
+													cur_turf,
+													equalize_hard_turf_limit,
+													max_x,
+													max_y,
+												)
+											}));
+											was_space = true;
+											return;
 										} else {
 											let delta =
 												gas.return_pressure() - final_mix.return_pressure();
@@ -268,7 +263,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 
 // Expected function call: process_turf_equalize_extools((Master.current_ticklimit - TICK_USAGE) * world.tick_lag)
 // Returns: TRUE if not done, FALSE if done
-#[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_extools")]
+#[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
 fn _hook_equalize() {
 	actual_equalize(src, args, ctx)
 }

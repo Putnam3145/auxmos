@@ -4,11 +4,55 @@ use itertools::EitherOrBoth::{Both, Left, Right};
 
 use tinyvec::TinyVec;
 
+use std::cmp::Ordering;
+
 use super::constants::*;
 
 use super::{gas_specific_heats, gas_visibility, reactions, total_num_gases};
 
 use super::reaction::Reaction;
+
+trait LinearSearch<T> {
+	fn linear_search(&self, x: &T) -> Result<usize, usize>
+	where
+		T: Ord;
+	fn linear_search_by<F>(&self, f: F) -> Result<usize, usize>
+	where
+		F: FnMut(&T) -> Ordering;
+	fn linear_search_by_key<B, F>(&self, b: &B, f: F) -> Result<usize, usize>
+	where
+		B: Ord,
+		F: FnMut(&T) -> B;
+}
+
+impl<T> LinearSearch<T> for [T] {
+	fn linear_search(&self, x: &T) -> Result<usize, usize>
+	where
+		T: Ord,
+	{
+		self.linear_search_by(|p| p.cmp(x))
+	}
+	fn linear_search_by<F>(&self, mut f: F) -> Result<usize, usize>
+	where
+		F: FnMut(&T) -> Ordering,
+	{
+		for (idx, i) in self.iter().enumerate() {
+			match f(i) {
+				Ordering::Equal => return Ok(idx),
+				Ordering::Greater => return Err(idx),
+				_ => (),
+			}
+		}
+		Err(self.len())
+	}
+	fn linear_search_by_key<B, F>(&self, b: &B, mut f: F) -> Result<usize, usize>
+	where
+		B: Ord,
+		F: FnMut(&T) -> B,
+	{
+		self.linear_search_by(|k| f(k).cmp(b))
+	}
+}
 
 /// The data structure representing a Space Station 13 gas mixture.
 /// Unlike Monstermos, this doesn't have the archive built-in; instead,
@@ -83,7 +127,7 @@ impl GasMixture {
 	}
 	/// Returns (by value) the amount of moles of a given index the mix has. M
 	pub fn get_moles(&self, idx: u8) -> f32 {
-		if let Ok(i) = self.mole_ids.binary_search(&idx) {
+		if let Ok(i) = self.mole_ids.linear_search(&idx) {
 			*unsafe { self.moles.get_unchecked(i) } // mole_ids and moles have same size, so `i` is always in bounds
 		} else {
 			0.0
@@ -101,7 +145,7 @@ impl GasMixture {
 	pub fn set_moles(&mut self, idx: u8, amt: f32) {
 		if !self.immutable && idx < total_num_gases() {
 			if amt.is_normal() && amt > GAS_MIN_MOLES {
-				match self.mole_ids.binary_search(&idx) {
+				match self.mole_ids.linear_search(&idx) {
 					Ok(i) => unsafe { *self.moles.get_unchecked_mut(i) = amt },
 					Err(i) => {
 						self.mole_ids.insert(i, idx);
@@ -109,7 +153,7 @@ impl GasMixture {
 					}
 				}
 			} else {
-				if let Ok(i) = self.mole_ids.binary_search(&idx) {
+				if let Ok(i) = self.mole_ids.linear_search(&idx) {
 					self.moles.remove(i);
 					self.mole_ids.remove(i);
 				}
@@ -146,7 +190,7 @@ impl GasMixture {
 		let our_heat_capacity = self.heat_capacity();
 		let other_heat_capacity = giver.heat_capacity();
 		for (id, amt) in giver.enumerate() {
-			match self.mole_ids.binary_search(id) {
+			match self.mole_ids.linear_search(id) {
 				Ok(idx) => unsafe { *self.moles.get_unchecked_mut(idx) += amt },
 				Err(idx) => {
 					self.moles.insert(idx, *amt);

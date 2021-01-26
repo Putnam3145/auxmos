@@ -157,14 +157,18 @@ fn _process_turf_hook() {
 												}
 												// Obviously planetary atmos needs love too.
 												if let Some(planet_atmos_id) = m.planetary_atmos {
-													if let Some(planet_atmos_entry) = PLANETARY_ATMOS.get(planet_atmos_id) {
-														let planet_atmos = planet_atmos_entry.value();
+													if let Some(planet_atmos_entry) =
+														PLANETARY_ATMOS.get(planet_atmos_id)
+													{
+														let planet_atmos =
+															planet_atmos_entry.value();
 														if should_share {
-															end_gas.merge(
-																planet_atmos
-															);
+															end_gas.merge(planet_atmos);
 														} else {
-															if gas.compare(&planet_atmos,MINIMUM_MOLES_DELTA_TO_MOVE) {
+															if gas.compare(
+																&planet_atmos,
+																MINIMUM_MOLES_DELTA_TO_MOVE,
+															) {
 																end_gas.merge(planet_atmos);
 																should_share = true;
 															}
@@ -550,7 +554,7 @@ fn _post_process_turfs() {
 								let _ = sender.try_send(Box::new(move |_| {
 									let turf = unsafe { Value::turf_by_id_unchecked(i) };
 									if reactable {
-										turf.get("air")?.call("react", &[&turf])?;
+										turf.get(byond_string!("air"))?.call("react", &[&turf])?;
 									}
 									if should_update_visuals {
 										turf.call("update_visuals", &[&Value::null()])?;

@@ -310,10 +310,7 @@ impl GasMixtures {
 					.unwrap()
 					.write()
 					.clear_with_vol(mix.get_number(byond_string!("initial_volume"))?);
-				mix.set(
-					byond_string!("_extools_pointer_gasmixture"),
-					f32::from_bits(idx as u32),
-				);
+				mix.set(byond_string!("_extools_pointer_gasmixture"), f32::from_bits(idx as u32));
 			}
 			Ok(Value::null())
 		})
@@ -334,10 +331,7 @@ pub fn with_mix<F>(mix: &Value, f: F) -> DMResult
 where
 	F: FnMut(&GasMixture) -> DMResult,
 {
-	GasMixtures::with_gas_mixture(
-		mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
-		f,
-	)
+	GasMixtures::with_gas_mixture(mix.get_number(byond_string!("_extools_pointer_gasmixture"))?, f)
 }
 
 /// As with_mix, but mutable.
@@ -345,10 +339,7 @@ pub fn with_mix_mut<F>(mix: &Value, f: F) -> DMResult
 where
 	F: FnMut(&mut GasMixture) -> DMResult,
 {
-	GasMixtures::with_gas_mixture_mut(
-		mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
-		f,
-	)
+	GasMixtures::with_gas_mixture_mut(mix.get_number(byond_string!("_extools_pointer_gasmixture"))?, f)
 }
 
 /// As with_mix, but with two mixes.

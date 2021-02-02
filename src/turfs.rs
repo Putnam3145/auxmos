@@ -8,6 +8,14 @@ pub mod putnamos;
 
 use super::gas::gas_mixture::GasMixture;
 
+use parking_lot::RwLock;
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use tinyvec::ArrayVec;
+
+use std::sync::atomic::{Ordering,AtomicI8};
+
 use auxtools::*;
 
 use crate::constants::*;
@@ -37,8 +45,6 @@ struct TurfMixture {
 	pub mix: usize,
 	pub adjacency: u8,
 	pub simulation_level: u8,
-	pub vis_hash: u64,
-	pub cooldown: u8,
 	pub planetary_atmos: Option<&'static str>,
 }
 
@@ -110,9 +116,141 @@ struct ThermalInfo {
 	pub adjacent_to_space: bool,
 }
 
+#[derive(Default)]
+struct TurfZone {
+	pub turfs: BTreeMap<TurfID, TurfMixture>,
+	pub cooldown: AtomicI8,
+	pub next_cooldown: AtomicI8,
+}
+
+impl TurfZone {
+	pub fn check_cooldown(&self) -> bool {
+		if self.cooldown.fetch_sub(1,Ordering::Relaxed) > 1 {
+			false
+		} else {
+			self.cooldown.store(self.next_cooldown.load(Ordering::Relaxed),Ordering::Relaxed);
+			self.next_cooldown.store(self.next_cooldown.load(Ordering::Relaxed)+1,Ordering::Relaxed);
+			true
+		}
+	}
+	pub fn reset_cooldown(&self) {
+		self.next_cooldown.store(1,Ordering::Relaxed);
+		self.cooldown.store(0,Ordering::Relaxed);
+	}
+}
+
+#[derive(Default)]
+struct TurfZones {
+	pub zones: Vec<RwLock<TurfZone>>,
+}
+
+impl TurfZones {
+	pub fn get_zone(&self, turf: &TurfID) -> Option<usize> {
+		for (i, z) in self.zones.iter().enumerate() {
+			if z.read().turfs.contains_key(turf) {
+				return Some(i);
+			}
+		}
+		return None;
+	}
+	fn update_adjacency(&self, i: &TurfID, adj: u8) {
+		for z in self.zones.iter() {
+			if let Some(t) = z.write().turfs.get_mut(i) {
+				t.adjacency = adj;
+			}
+		}
+	}
+	pub fn add_zone_from_set(&mut self, new_zone_set: &BTreeSet<TurfID>) {
+		self.zones.push(RwLock::new(TurfZone {
+			turfs: new_zone_set
+				.iter()
+				.filter_map(|i| {
+					if let Some(t) = TURF_GASES.get(i) {
+						Some((*i, *t))
+					} else {
+						None
+					}
+				})
+				.collect(),
+			cooldown: AtomicI8::new(0),
+			next_cooldown: AtomicI8::new(1),
+		}));
+	}
+	pub fn set_zones(&mut self, new_zones: &Vec<BTreeSet<TurfID>>) {
+		self.zones.clear();
+		self.zones.reserve(new_zones.len());
+		for set in new_zones {
+			self.add_zone_from_set(set);
+		}
+	}
+	pub fn garbage_collect(&mut self) {
+		self.zones.retain(|v| !v.read().turfs.is_empty());
+	}
+	pub fn update_zones(
+		&mut self,
+		turf: &TurfID,
+		orig_adj: u8,
+		new_adj: u8,
+		max_x: i32,
+		max_y: i32,
+	) {
+		if self.get_zone(turf).is_none() {
+			return;
+		}
+		// first we check if we need to merge any
+		if new_adj != 0 {
+			let mut networks: BTreeSet<usize> = BTreeSet::new();
+			for (_, adj) in adjacent_tile_ids(new_adj, *turf, max_x, max_y) {
+				if let Some(zone_id) = self.get_zone(&adj) {
+					networks.insert(zone_id);
+				}
+			}
+			if !networks.is_empty() {
+				let mut iter = networks.iter();
+				let main_zone_id = iter.next().unwrap();
+				let mut main_zone = self.zones.get(*main_zone_id).unwrap().write();
+				for other_zone_id in iter {
+					main_zone
+						.turfs
+						.append(&mut self.zones.get(*other_zone_id).unwrap().write().turfs);
+				}
+				main_zone.reset_cooldown();
+			}
+		} else {
+			let mut sets: ArrayVec<[BTreeSet<u32>; 6]> = ArrayVec::new();
+			for (_, adj) in adjacent_tile_ids(orig_adj, *turf, max_x, max_y) {
+				let mut already_in_set = false;
+				for set in sets.iter() {
+					already_in_set |= set.contains(&adj);
+					if already_in_set {
+						break;
+					}
+				}
+				if !already_in_set {
+					sets.push(flood_fill_turfs(&adj, max_x, max_y));
+				}
+			}
+			if sets.len() > 1 {
+				for set in sets.iter() {
+					if let Some(sample) = set.iter().next() {
+						self.zones.retain(|v| !v.read().turfs.contains_key(sample));
+						self.add_zone_from_set(set);
+					}
+				}
+			}
+		}
+		self.update_adjacency(&turf,new_adj);
+		self.garbage_collect();
+	}
+}
+
 lazy_static! {
 	// All the turfs that have gas mixtures.
 	static ref TURF_GASES: DashMap<TurfID, TurfMixture> = DashMap::new();
+	// Turfs organized by zone, for faster processing.
+	static ref TURF_ZONES: RwLock<TurfZones> = RwLock::new(Default::default());
+	// Turf visibility hashes.
+	static ref TURF_VIS: DashMap<TurfID, u64> = DashMap::new();
 	// Turfs with temperatures/heat capacities. This is distinct from the above.
 	static ref TURF_TEMPERATURES: DashMap<TurfID, ThermalInfo> = DashMap::new();
 	// We store planetary atmos by hash of the initial atmos string here for speed.
@@ -122,6 +260,46 @@ lazy_static! {
 		flume::Sender<TurfID>,
 		flume::Receiver<TurfID>
 	) = flume::unbounded();
+}
+
+fn flood_fill_turfs(starter: &TurfID, max_x: i32, max_y: i32) -> BTreeSet<TurfID> {
+	let mut queue: Vec<(TurfID, u8)> = Vec::with_capacity(1024);
+	let mut flood: BTreeSet<TurfID> = BTreeSet::new();
+	if let Some(start_turf) = TURF_GASES.get(starter) {
+		queue.push((*starter, start_turf.adjacency));
+	}
+	while !queue.is_empty() {
+		let (i, adjacency) = queue.pop().unwrap();
+		flood.insert(i);
+		for (_, adj) in adjacent_tile_ids(adjacency, i, max_x, max_y) {
+			if !flood.contains(&adj) {
+				if let Some(new_t) = TURF_GASES.get(&adj) {
+					queue.push((adj, new_t.adjacency));
+				}
+			}
+		}
+	}
+	return flood;
+}
+
+#[hook("/datum/controller/subsystem/adjacent_air/proc/build_zones")]
+fn _hook_build_zones() {
+	let max_x = ctx.get_world().get_number("maxx")? as i32;
+	let max_y = ctx.get_world().get_number("maxy")? as i32;
+	rayon::spawn(move || {
+		let mut all_seen: BTreeSet<TurfID> = BTreeSet::new();
+		let mut new_zones: Vec<BTreeSet<TurfID>> = Vec::with_capacity(64);
+		for r in TURF_GASES.iter() {
+			if r.value().simulation_level == SIMULATION_LEVEL_NONE || all_seen.contains(r.key()) {
+				continue;
+			}
+			let mut flood_fill = flood_fill_turfs(r.key(), max_x, max_y);
+			new_zones.push(flood_fill.clone());
+			all_seen.append(&mut flood_fill);
+		}
+		TURF_ZONES.write().set_zones(&new_zones);
+	});
+	Ok(Value::null())
 }
 
 #[hook("/turf/proc/update_air_ref")]
@@ -204,22 +382,31 @@ fn _hook_sleep() {
 
 #[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn _hook_adjacent_turfs() {
+	let max_x = ctx.get_world().get_number("maxx")? as i32;
+	let max_y = ctx.get_world().get_number("maxy")? as i32;
+	let id = unsafe { src.value.data.id };
 	if let Ok(adjacent_list) = src.get_list("atmos_adjacent_turfs") {
 		let mut adjacency = 0;
 		for i in 1..adjacent_list.len() + 1 {
 			adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
 		}
-		TURF_GASES
-			.entry(unsafe { src.value.data.id })
-			.and_modify(|turf| {
-				turf.adjacency = adjacency as u8;
+		TURF_GASES.entry(id).and_modify(|turf| {
+			let orig = turf.adjacency;
+			turf.adjacency = adjacency as u8;
+			rayon::spawn(move || {
+				TURF_ZONES
+					.write()
+					.update_zones(&id, orig, adjacency as u8, max_x, max_y);
 			});
+		});
 	} else {
-		TURF_GASES
-			.entry(unsafe { src.value.data.id })
-			.and_modify(|turf| {
-				turf.adjacency = 0;
+		TURF_GASES.entry(id).and_modify(|turf| {
+			let orig = turf.adjacency;
+			turf.adjacency = 0;
+			rayon::spawn(move || {
+				TURF_ZONES.write().update_zones(&id, orig, 0, max_x, max_y);
 			});
+		});
 	}
 	if let Ok(atmos_blocked_directions) = src.get_number("conductivity_blocked_directions") {
 		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);

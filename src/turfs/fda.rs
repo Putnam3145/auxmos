@@ -67,33 +67,19 @@ fn _process_turf_hook() {
 			let mut cur_count = 1;
 			GasMixtures::with_all_mixtures(|all_mixtures| {
 				loop {
-					if cur_count > fda_max_steps {
-						break;
-					}
-					let turfs_to_save =
-						TURF_GASES
-							/*
-								This uses the DashMap raw API to access the shards directly.
-								This allows for it to be parallelized much more efficiently
-								with rayon; the speedup gained from this is actually linear
-								with the amount of cores the CPU has, which, to be frank,
-								is way better than I was expecting, even though this operation
-								is technically embarassingly parallel. It'll probably reach
-								some maximum due to the global turf mixture lock access,
-								but it's already blazingly fast on my i7, so it should be fine.
-							*/
-							.shards()
-							.iter()
-							.par_bridge()
-							.map(|shard| {
-								shard
-									.read()
+					let shouldnt_break = TURF_ZONES
+						.read()
+						.zones
+						.par_iter()
+						.map(|zone_guard| {
+							let zone = zone_guard.read();
+							if !zone.check_cooldown() {
+								return false;
+							}
+							let turfs_to_save =
+								zone.turfs
 									.iter()
-									.filter_map(|(&i, m_v)| {
-										// m_v is a SharedValue<TurfMixture>. Need to use get() on it to get the original.
-										// It's dereferenced to copy it. m_v is Copy, so this is reasonably fast.
-										// This is necessary because otherwise we're escaping a reference to the closure below.
-										let m = *m_v.get();
+									.filter_map(|(&i, &m)| {
 										let adj = m.adjacency;
 										/*
 											We don't want to simulate space turfs or other unsimulated turfs. They're
@@ -129,7 +115,7 @@ fn _process_turf_hook() {
 												*/
 												let mut should_share = false;
 												for (j, loc) in adj_tiles {
-													if let Some(turf) = TURF_GASES.get(&loc) {
+													if let Some(turf) = zone.turfs.get(&loc) {
 														if turf.simulation_level
 															& SIMULATION_LEVEL_DISABLED
 															!= SIMULATION_LEVEL_DISABLED
@@ -141,13 +127,13 @@ fn _process_turf_hook() {
 																{
 																	end_gas.merge(&mix);
 																	pressure_diffs[j as usize] = (
-																	loc,
-																	-mix.return_pressure()
-																		* GAS_DIFFUSION_CONSTANT,
-																	);
+														loc,
+														-mix.return_pressure()
+															* GAS_DIFFUSION_CONSTANT,
+														);
 																	if !should_share && gas.compare(&mix,MINIMUM_MOLES_DELTA_TO_MOVE) {
-																		should_share = true;
-																	}
+															should_share = true;
+														}
 																} else {
 																	return None;
 																}
@@ -204,110 +190,149 @@ fn _process_turf_hook() {
 											None
 										}
 									})
-									.collect::<Vec<_>>()
-							})
-							.flatten();
-					/*
-						For the optimization-heads reading this: this is not an unnecessary collect().
-						Saving all this to the turfs_to_save vector is, in fact, the reason
-						that gases don't need an archive anymore--this *is* the archival step,
-						simultaneously saving how the gases will change after the fact.
-						In short: the above actually needs to finish before the below starts
-						for consistency, so collect() is desired. This has been tested, by the way.
-					*/
-					let should_break = turfs_to_save
-						.map(|(i, m, end_gas, mut pressure_diffs)| {
-							let adj_amount = (m.adjacency.count_ones()
-								+ (m.planetary_atmos.is_some() as u32)) as f32;
+									.collect::<Vec<_>>();
 							let mut this_high_pressure = false;
-							if let Some(entry) = all_mixtures.get(m.mix) {
-								let mut pressure_diff_exists = false;
-								let mut max_diff = 0.0f32;
-								let moved_pressure = {
-									let gas = entry.read();
-									gas.return_pressure() * GAS_DIFFUSION_CONSTANT
-								};
-								for pressure_diff in pressure_diffs.iter_mut() {
-									// pressure_diff.1 here was set to a negative above, so we just add.
-									pressure_diff.1 += moved_pressure;
-									max_diff = max_diff.max(pressure_diff.1);
-									// See the explanation below.
-									pressure_diff_exists =
-										pressure_diff_exists || pressure_diff.1.abs() > 0.5;
-									this_high_pressure = this_high_pressure
-										|| pressure_diff.1.abs() > fda_pressure_goal;
-								}
-								if max_diff.abs() > 0.25 {
-									let _ = high_pressure_sender.try_send(i);
-								} else {
-									let _ = low_pressure_sender.try_send(i);
-								}
-								/*
-									1.0 - GAS_DIFFUSION_CONSTANT * adj_amount is going to be
-									precisely equal to the amount the surrounding tiles'
-									end_gas have "taken" from this tile--
-									they didn't actually take anything, just calculated
-									how much would be. This is the "taking" step.
-									Just to illustrate: say you have a turf with 3 neighbors.
-									Each of those neighbors will have their end_gas added to by
-									GAS_DIFFUSION_CONSTANT (at this writing, 0.125) times
-									this gas. So, 1.0 - (0.125 * adj_amount) = 0.625--
-									exactly the amount those gases "took" from this.
-								*/
-								{
-									let gas: &mut GasMixture = &mut entry.write();
-									gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount));
-									gas.merge(&end_gas);
-								}
-								/*
-									If there is neither a major pressure difference
-									nor are there any visible gases nor does it need
-									to react, we're done outright. We don't need
-									to do any more and we don't need to send the
-									value to byond, so we don't. However, if we do...
-								*/
-								if pressure_diff_exists {
-									let turf_id = i;
-									let diffs_copy = pressure_diffs;
-									sender
-										.try_send(Box::new(move |_| {
-											if turf_id == 0 {
-												return Ok(Value::null());
-											}
-											let turf =
-												unsafe { Value::turf_by_id_unchecked(turf_id) };
-											for &(id, diff) in diffs_copy.iter() {
-												if id != 0 {
-													let enemy_tile =
-														unsafe { Value::turf_by_id_unchecked(id) };
-													if diff > 5.0 {
-														turf.call(
-															"consider_pressure_difference",
-															&[&enemy_tile, &Value::from(diff)],
-														)?;
-													} else if diff < -5.0 {
-														enemy_tile.call(
-															"consider_pressure_difference",
-															&[&turf.clone(), &Value::from(-diff)],
-														)?;
+							if !turfs_to_save.is_empty() {
+								zone.reset_cooldown();
+							}
+							for (i, m, end_gas, mut pressure_diffs) in turfs_to_save {
+								let adj_amount = (m.adjacency.count_ones()
+									+ (m.planetary_atmos.is_some() as u32)) as f32;
+								if let Some(entry) = all_mixtures.get(m.mix) {
+									let mut pressure_diff_exists = false;
+									let mut max_diff = 0.0f32;
+									let moved_pressure = {
+										let gas = entry.read();
+										gas.return_pressure() * GAS_DIFFUSION_CONSTANT
+									};
+									for pressure_diff in pressure_diffs.iter_mut() {
+										// pressure_diff.1 here was set to a negative above, so we just add.
+										pressure_diff.1 += moved_pressure;
+										max_diff = max_diff.max(pressure_diff.1);
+										// See the explanation below.
+										pressure_diff_exists =
+											pressure_diff_exists || pressure_diff.1.abs() > 0.5;
+										this_high_pressure = this_high_pressure
+											|| pressure_diff.1.abs() > fda_pressure_goal;
+									}
+									if max_diff.abs() > 0.25 {
+										let _ = high_pressure_sender.try_send(i);
+									} else {
+										let _ = low_pressure_sender.try_send(i);
+									}
+									/*
+										1.0 - GAS_DIFFUSION_CONSTANT * adj_amount is going to be
+										precisely equal to the amount the surrounding tiles'
+										end_gas have "taken" from this tile--
+										they didn't actually take anything, just calculated
+										how much would be. This is the "taking" step.
+										Just to illustrate: say you have a turf with 3 neighbors.
+										Each of those neighbors will have their end_gas added to by
+										GAS_DIFFUSION_CONSTANT (at this writing, 0.125) times
+										this gas. So, 1.0 - (0.125 * adj_amount) = 0.625--
+										exactly the amount those gases "took" from this.
+									*/
+									{
+										let gas: &mut GasMixture = &mut entry.write();
+										gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount));
+										gas.merge(&end_gas);
+									}
+									/*
+										If there is neither a major pressure difference
+										nor are there any visible gases nor does it need
+										to react, we're done outright. We don't need
+										to do any more and we don't need to send the
+										value to byond, so we don't. However, if we do...
+									*/
+									if pressure_diff_exists {
+										let turf_id = i;
+										let diffs_copy = pressure_diffs;
+										sender
+											.try_send(Box::new(move |_| {
+												if turf_id == 0 {
+													return Ok(Value::null());
+												}
+												let turf =
+													unsafe { Value::turf_by_id_unchecked(turf_id) };
+												for &(id, diff) in diffs_copy.iter() {
+													if id != 0 {
+														let enemy_tile = unsafe {
+															Value::turf_by_id_unchecked(id)
+														};
+														if diff > 5.0 {
+															turf.call(
+																"consider_pressure_difference",
+																&[&enemy_tile, &Value::from(diff)],
+															)?;
+														} else if diff < -5.0 {
+															enemy_tile.call(
+																"consider_pressure_difference",
+																&[
+																	&turf.clone(),
+																	&Value::from(-diff),
+																],
+															)?;
+														}
 													}
 												}
-											}
-											Ok(Value::null())
-										}))
-										.unwrap();
+												Ok(Value::null())
+											}))
+											.unwrap();
+									}
 								}
 							}
 							this_high_pressure
 						})
 						.reduce(|| false, |a, b| a || b);
-					if should_break
+					cur_count += 1;
+					if !shouldnt_break
+						|| cur_count > fda_max_steps
 						|| SUBSYSTEM_FIRE_COUNT.load(Ordering::SeqCst) != initial_fire_count
 					{
+						break;
+					}
+				}
+			});
+			// excited group processing, wowee!
+			GasMixtures::with_all_mixtures(|all_mixtures| {
+				TURF_ZONES
+				.read()
+				.zones
+				.par_iter()
+				.for_each(|zone_guard| {
+					let mut min_pressure = -1000000.0;
+					let mut max_pressure = -1000000.0;
+					let zone = zone_guard.read();
+					for (_,&m) in zone.turfs.iter() {
+						if let Some(gas) = all_mixtures.get(m.mix) {
+							let pressure = gas.read().return_pressure();
+							if min_pressure < 0.0 {
+								min_pressure = pressure;
+							}
+							min_pressure = pressure.min(min_pressure);
+							max_pressure = pressure.max(max_pressure);
+							if max_pressure - min_pressure > 1.0 {
+								zone.reset_cooldown();
+								return;
+							}
+						}
+					}
+					if max_pressure - min_pressure < 0.01 { // not even worth equalizing
 						return;
 					}
-					cur_count += 1;
-				}
+					let mut avg_gas = GasMixture::new();
+					for (_,m) in zone.turfs.iter() {
+						if let Some(gas) = all_mixtures.get(m.mix) {
+							avg_gas.merge(&gas.read());
+						}
+					}
+					avg_gas.multiply((zone.turfs.len() as f32).recip());
+					for (_,m) in zone.turfs.iter() {
+						if let Some(gas) = all_mixtures.get(m.mix) {
+							gas.write().copy_from_mutable(&avg_gas);
+						}
+					}
+			})
 			});
 			//Alright, now how much time did that take?
 			let bench = start_time.elapsed().as_nanos();
@@ -539,16 +564,23 @@ fn _post_process_turfs() {
 		TURF_GASES.shards().iter().par_bridge().for_each(|shard| {
 			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 			GasMixtures::with_all_mixtures(|all_mixtures| {
-				shard.write().iter_mut().for_each(|(&i, m_v)| {
-					let m = m_v.get_mut();
+				shard.read().iter().for_each(|(&i, m_v)| {
+					let m = m_v.get();
 					if m.simulation_level > SIMULATION_LEVEL_NONE
 						&& (m.simulation_level & SIMULATION_LEVEL_DISABLED
 							!= SIMULATION_LEVEL_DISABLED)
 					{
 						if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
 							let visibility = gas.visibility_hash();
-							let should_update_visuals = m.vis_hash != visibility;
-							m.vis_hash = visibility;
+							let should_update_visuals = {
+								let mut turf_vis_hash = TURF_VIS.entry(i).or_default();
+								if *turf_vis_hash != visibility {
+									*turf_vis_hash = visibility;
+									true
+								} else {
+									false
+								}
+							};
 							let reactable = gas.can_react();
 							if should_update_visuals || reactable {
 								let _ = sender.try_send(Box::new(move |_| {
@@ -585,7 +617,7 @@ static EXCITED_GROUP_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
 */
 #[hook("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
 fn process_excited_groups() {
-	let resumed = args
+/*	let resumed = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to excited group processing: 0"))?
 		.as_number()?
@@ -657,5 +689,6 @@ fn process_excited_groups() {
 	Ok(Value::from(
 		EXCITED_GROUP_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)
 			== PROCESS_PROCESSING,
-	))
+	))*/
+	Ok(Value::null())
 }

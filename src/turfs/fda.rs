@@ -66,6 +66,43 @@ fn _process_turf_hook() {
 			let initial_fire_count = SUBSYSTEM_FIRE_COUNT.load(Ordering::SeqCst);
 			let mut cur_count = 1;
 			GasMixtures::with_all_mixtures(|all_mixtures| {
+				// excited group processing, wowee!
+				TURF_ZONES.read().zones.par_iter().for_each(|zone_guard| {
+					let mut min_pressure = -1000000.0;
+					let mut max_pressure = -1000000.0;
+					let zone = zone_guard.read();
+					let pressure_coeff = ((zone.turfs.len() as f64).sqrt() * 0.25) as f32;
+					for (_, &m) in zone.turfs.iter() {
+						if let Some(gas) = all_mixtures.get(m.mix) {
+							let pressure = gas.read().return_pressure();
+							if min_pressure < 0.0 {
+								min_pressure = pressure;
+							}
+							min_pressure = pressure.min(min_pressure);
+							max_pressure = pressure.max(max_pressure);
+							if max_pressure - min_pressure > pressure_coeff {
+								zone.reset_cooldown();
+								return;
+							}
+						}
+					}
+					if max_pressure - min_pressure < 0.01 {
+						// not even worth equalizing
+						return;
+					}
+					let mut avg_gas = GasMixture::new();
+					for (_, m) in zone.turfs.iter() {
+						if let Some(gas) = all_mixtures.get(m.mix) {
+							avg_gas.merge(&gas.read());
+						}
+					}
+					avg_gas.multiply((zone.turfs.len() as f32).recip());
+					for (_, m) in zone.turfs.iter() {
+						if let Some(gas) = all_mixtures.get(m.mix) {
+							gas.write().copy_from_mutable(&avg_gas);
+						}
+					}
+				});
 				loop {
 					let shouldnt_break = TURF_ZONES
 						.read()
@@ -292,47 +329,6 @@ fn _process_turf_hook() {
 						break;
 					}
 				}
-			});
-			// excited group processing, wowee!
-			GasMixtures::with_all_mixtures(|all_mixtures| {
-				TURF_ZONES
-				.read()
-				.zones
-				.par_iter()
-				.for_each(|zone_guard| {
-					let mut min_pressure = -1000000.0;
-					let mut max_pressure = -1000000.0;
-					let zone = zone_guard.read();
-					for (_,&m) in zone.turfs.iter() {
-						if let Some(gas) = all_mixtures.get(m.mix) {
-							let pressure = gas.read().return_pressure();
-							if min_pressure < 0.0 {
-								min_pressure = pressure;
-							}
-							min_pressure = pressure.min(min_pressure);
-							max_pressure = pressure.max(max_pressure);
-							if max_pressure - min_pressure > 1.0 {
-								zone.reset_cooldown();
-								return;
-							}
-						}
-					}
-					if max_pressure - min_pressure < 0.01 { // not even worth equalizing
-						return;
-					}
-					let mut avg_gas = GasMixture::new();
-					for (_,m) in zone.turfs.iter() {
-						if let Some(gas) = all_mixtures.get(m.mix) {
-							avg_gas.merge(&gas.read());
-						}
-					}
-					avg_gas.multiply((zone.turfs.len() as f32).recip());
-					for (_,m) in zone.turfs.iter() {
-						if let Some(gas) = all_mixtures.get(m.mix) {
-							gas.write().copy_from_mutable(&avg_gas);
-						}
-					}
-			})
 			});
 			//Alright, now how much time did that take?
 			let bench = start_time.elapsed().as_nanos();
@@ -606,89 +602,4 @@ fn _post_process_turfs() {
 		SSAIR_NAME.to_string(),
 		arg_limit as u64,
 	)))
-}
-
-static EXCITED_GROUP_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
-
-/*
-	Flood fills every contiguous region it can find, equalizing
-	the entire region if it doesn't find a pressure delta of
-	more than 1 kilopascal.
-*/
-#[hook("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
-fn process_excited_groups() {
-/*	let resumed = args
-		.get(0)
-		.ok_or_else(|| runtime!("Wrong number of arguments to excited group processing: 0"))?
-		.as_number()?
-		== 1.0;
-	if !resumed && EXCITED_GROUP_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
-		let max_x = ctx.get_world().get_number("maxx")? as i32;
-		let max_y = ctx.get_world().get_number("maxy")? as i32;
-		rayon::spawn(move || {
-			use std::collections::{BTreeSet, VecDeque};
-			EXCITED_GROUP_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
-			let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
-			let low_pressure_receiver = LOW_PRESSURE_TURFS.1.clone();
-			for initial_turf in low_pressure_receiver.try_iter() {
-				if found_turfs.contains(&initial_turf) {
-					continue;
-				}
-				if let Some(initial_mix_ref) = TURF_GASES.get(&initial_turf) {
-					let mut border_turfs: VecDeque<(TurfID, TurfMixture)> =
-						VecDeque::with_capacity(40);
-					let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
-					let mut min_pressure = initial_mix_ref.return_pressure();
-					let mut max_pressure = min_pressure;
-					let mut fully_mixed = GasMixture::from_vol(2500.0);
-					border_turfs.push_back((initial_turf, *initial_mix_ref.value()));
-					found_turfs.insert(initial_turf);
-					GasMixtures::with_all_mixtures(|all_mixtures| {
-						while !border_turfs.is_empty() && turfs.len() < 400 {
-							let (i, turf) = border_turfs.pop_front().unwrap();
-							turfs.push(turf);
-							let adj_tiles = adjacent_tile_ids(turf.adjacency, i, max_x, max_y);
-							let mix = all_mixtures.get(turf.mix).unwrap().read();
-							let pressure = mix.return_pressure();
-							min_pressure = min_pressure.min(pressure);
-							max_pressure = max_pressure.max(pressure);
-							if (max_pressure - min_pressure).abs() >= 1.0 || min_pressure <= 1.0 {
-								return;
-							}
-							fully_mixed.merge(&mix);
-							for (_, loc) in adj_tiles {
-								if found_turfs.contains(&loc) {
-									continue;
-								}
-								found_turfs.insert(loc);
-								if let Some(border_mix) = TURF_GASES.get(&loc) {
-									if border_mix.simulation_level == SIMULATION_LEVEL_ALL {
-										border_turfs.push_back((loc, *border_mix));
-									}
-								}
-							}
-						}
-						if max_pressure - min_pressure < 1.0 {
-							fully_mixed.multiply((turfs.len() as f64).recip() as f32);
-							for turf in turfs.iter() {
-								let mut mix = all_mixtures.get(turf.mix).unwrap().write();
-								mix.copy_from_mutable(&fully_mixed);
-							}
-						}
-					});
-				}
-			}
-			EXCITED_GROUP_STEP.store(PROCESS_DONE, Ordering::SeqCst);
-		});
-	}
-	let arg_limit = args
-		.get(1)
-		.ok_or_else(|| runtime!("Wrong number of arguments to excited group processing: 1"))?
-		.as_number()?;
-	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
-	Ok(Value::from(
-		EXCITED_GROUP_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)
-			== PROCESS_PROCESSING,
-	))*/
-	Ok(Value::null())
 }

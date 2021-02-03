@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tinyvec::ArrayVec;
 
-use std::sync::atomic::{Ordering,AtomicI8};
+use std::sync::atomic::{AtomicI8, AtomicU8, Ordering};
 
 use auxtools::*;
 
@@ -125,17 +125,23 @@ struct TurfZone {
 
 impl TurfZone {
 	pub fn check_cooldown(&self) -> bool {
-		if self.cooldown.fetch_sub(1,Ordering::Relaxed) > 1 {
+		if self.cooldown.fetch_sub(1, Ordering::Relaxed) > 1 {
 			false
 		} else {
-			self.cooldown.store(self.next_cooldown.load(Ordering::Relaxed),Ordering::Relaxed);
-			self.next_cooldown.store(self.next_cooldown.load(Ordering::Relaxed)+1,Ordering::Relaxed);
+			self.cooldown.store(
+				self.next_cooldown.load(Ordering::Relaxed),
+				Ordering::Relaxed,
+			);
+			self.next_cooldown.store(
+				self.next_cooldown.load(Ordering::Relaxed) + 1,
+				Ordering::Relaxed,
+			);
 			true
 		}
 	}
 	pub fn reset_cooldown(&self) {
-		self.next_cooldown.store(1,Ordering::Relaxed);
-		self.cooldown.store(0,Ordering::Relaxed);
+		self.next_cooldown.store(1, Ordering::Relaxed);
+		self.cooldown.store(0, Ordering::Relaxed);
 	}
 }
 
@@ -194,9 +200,6 @@ impl TurfZones {
 		max_x: i32,
 		max_y: i32,
 	) {
-		if self.get_zone(turf).is_none() {
-			return;
-		}
 		// first we check if we need to merge any
 		if new_adj != 0 {
 			let mut networks: BTreeSet<usize> = BTreeSet::new();
@@ -213,6 +216,9 @@ impl TurfZones {
 					main_zone
 						.turfs
 						.append(&mut self.zones.get(*other_zone_id).unwrap().write().turfs);
+				}
+				if let Some(t) = TURF_GASES.get(turf) {
+					main_zone.turfs.insert(*turf, *t);
 				}
 				main_zone.reset_cooldown();
 			}
@@ -239,7 +245,7 @@ impl TurfZones {
 				}
 			}
 		}
-		self.update_adjacency(&turf,new_adj);
+		self.update_adjacency(&turf, new_adj);
 		self.garbage_collect();
 	}
 }
@@ -247,6 +253,8 @@ impl TurfZones {
 lazy_static! {
 	// All the turfs that have gas mixtures.
 	static ref TURF_GASES: DashMap<TurfID, TurfMixture> = DashMap::new();
+	// Turf adjacencies, which are needed more often.
+	static ref TURF_ADJACENCIES: RwLock<BTreeMap<TurfID,AtomicU8>> = RwLock::new(BTreeMap::new());
 	// Turfs organized by zone, for faster processing.
 	static ref TURF_ZONES: RwLock<TurfZones> = RwLock::new(Default::default());
 	// Turf visibility hashes.
@@ -265,16 +273,19 @@ lazy_static! {
 fn flood_fill_turfs(starter: &TurfID, max_x: i32, max_y: i32) -> BTreeSet<TurfID> {
 	let mut queue: Vec<(TurfID, u8)> = Vec::with_capacity(1024);
 	let mut flood: BTreeSet<TurfID> = BTreeSet::new();
-	if let Some(start_turf) = TURF_GASES.get(starter) {
-		queue.push((*starter, start_turf.adjacency));
-	}
-	while !queue.is_empty() {
-		let (i, adjacency) = queue.pop().unwrap();
-		flood.insert(i);
-		for (_, adj) in adjacent_tile_ids(adjacency, i, max_x, max_y) {
-			if !flood.contains(&adj) {
-				if let Some(new_t) = TURF_GASES.get(&adj) {
-					queue.push((adj, new_t.adjacency));
+	{
+		let adjacencies = TURF_ADJACENCIES.read();
+		if let Some(start_adj) = adjacencies.get(starter) {
+			queue.push((*starter, start_adj.load(Ordering::Relaxed)));
+		}
+		while !queue.is_empty() {
+			let (i, adjacency) = queue.pop().unwrap();
+			flood.insert(i);
+			for (_, adj) in adjacent_tile_ids(adjacency, i, max_x, max_y) {
+				if !flood.contains(&adj) {
+					if let Some(new_adj) = adjacencies.get(&adj) {
+						queue.push((adj, new_adj.load(Ordering::Relaxed)));
+					}
 				}
 			}
 		}
@@ -326,7 +337,9 @@ fn _hook_register_turf() {
 				}
 			}
 		}
-		TURF_GASES.insert(unsafe { src.value.data.id }, to_insert);
+		let id = unsafe { src.value.data.id };
+		TURF_GASES.insert(id, to_insert);
+		TURF_ADJACENCIES.write().insert(id, AtomicU8::new(0));
 		Ok(Value::null())
 	}
 }
@@ -391,22 +404,36 @@ fn _hook_adjacent_turfs() {
 			adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
 		}
 		TURF_GASES.entry(id).and_modify(|turf| {
-			let orig = turf.adjacency;
 			turf.adjacency = adjacency as u8;
-			rayon::spawn(move || {
-				TURF_ZONES
-					.write()
-					.update_zones(&id, orig, adjacency as u8, max_x, max_y);
-			});
 		});
+		let orig = {
+			let lock = TURF_ADJACENCIES.upgradable_read();
+			if let Some(e) = lock.get(&id) {
+				e.swap(adjacency as u8, Ordering::Relaxed)
+			} else {
+				let mut upgraded = parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(lock);
+				upgraded.insert(id, AtomicU8::new(adjacency as u8));
+				0
+			}
+		};
+		TURF_ZONES
+			.write()
+			.update_zones(&id, orig, adjacency as u8, max_x, max_y);
 	} else {
 		TURF_GASES.entry(id).and_modify(|turf| {
-			let orig = turf.adjacency;
 			turf.adjacency = 0;
-			rayon::spawn(move || {
-				TURF_ZONES.write().update_zones(&id, orig, 0, max_x, max_y);
-			});
 		});
+		let orig = {
+			let lock = TURF_ADJACENCIES.upgradable_read();
+			if let Some(e) = lock.get(&id) {
+				e.swap(0, Ordering::Relaxed)
+			} else {
+				let mut upgraded = parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(lock);
+				upgraded.insert(id, AtomicU8::new(0));
+				0
+			}
+		};
+		TURF_ZONES.write().update_zones(&id, orig, 0, max_x, max_y);
 	}
 	if let Ok(atmos_blocked_directions) = src.get_number("conductivity_blocked_directions") {
 		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);

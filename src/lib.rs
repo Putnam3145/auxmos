@@ -341,12 +341,13 @@ fn _equalize_all_hook() {
 				tot_vol += src_gas.volume;
 			}
 		}
+		let vol_coeff = (tot_vol as f64).recip();
 		for &id in gas_list.iter() {
 			if let Some(dest_gas_lock) = all_mixtures.get(id) {
 				let dest_gas = &mut dest_gas_lock.write();
 				let vol = dest_gas.volume; // don't wanna borrow it in the below
 				dest_gas.copy_from_mutable(&tot);
-				dest_gas.multiply(vol / tot_vol);
+				dest_gas.multiply((vol as f64 * vol_coeff) as f32);
 			}
 		}
 	});

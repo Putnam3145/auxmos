@@ -332,16 +332,16 @@ fn _equalize_all_hook() {
 		})
 		.collect(); // collect because get_number is way slower than the one-time allocation
 	let mut tot = gas::gas_mixture::GasMixture::new();
-	let mut tot_vol = 0.0;
+	let mut tot_vol: f64 = 0.0;
 	GasMixtures::with_all_mixtures(move |all_mixtures| {
 		for &id in gas_list.iter() {
 			if let Some(src_gas_lock) = all_mixtures.get(id) {
 				let src_gas = src_gas_lock.read();
 				tot.merge(&src_gas);
-				tot_vol += src_gas.volume;
+				tot_vol += src_gas.volume as f64;
 			}
 		}
-		let vol_coeff = (tot_vol as f64).recip();
+		let vol_coeff = tot_vol.recip();
 		for &id in gas_list.iter() {
 			if let Some(dest_gas_lock) = all_mixtures.get(id) {
 				let dest_gas = &mut dest_gas_lock.write();

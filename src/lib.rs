@@ -319,7 +319,7 @@ fn _equalize_with_hook() {
 
 #[hook("/proc/equalize_all_gases_in_list")]
 fn _equalize_all_hook() {
-	let gas_list: Vec<usize> = args
+	let mut gas_list: Vec<usize> = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of args for equalize all: 0"))?
 		.as_list()?
@@ -331,6 +331,8 @@ fn _equalize_all_hook() {
 				.to_bits() as usize
 		})
 		.collect(); // collect because get_number is way slower than the one-time allocation
+	gas_list.sort_unstable();
+	gas_list.dedup();
 	let mut tot = gas::gas_mixture::GasMixture::new();
 	let mut tot_vol: f64 = 0.0;
 	GasMixtures::with_all_mixtures(move |all_mixtures| {

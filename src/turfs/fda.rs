@@ -342,6 +342,11 @@ fn _process_turf_time() {
 	))
 }
 
+#[hook("/datum/controller/subsystem/air/proc/thread_running")]
+fn _thread_running_hook() {
+	Ok(Value::from(PROCESSING_TURF_STEP.load(Ordering::Relaxed) == PROCESS_PROCESSING))
+}
+
 #[hook("/datum/controller/subsystem/air/proc/heat_process_time")]
 fn _process_heat_time() {
 	let tot = HEAT_PROCESS_TIME.load(Ordering::SeqCst);

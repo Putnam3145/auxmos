@@ -174,38 +174,46 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 								final_mix.volume += gas.volume;
 							}
 							turfs.push((cur_idx, cur_turf, parent_turf, pressure_delta));
-							for (_, loc) in
-								adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y)
-							{
-								if found_turfs.contains(&loc) {
-									continue;
-								}
-								if let Some(adj_turf) = TURF_GASES.get(&loc) {
-									if let Some(entry) = all_mixtures.get(adj_turf.mix) {
-										let gas: &GasMixture = &entry.read();
-										if cfg!(putnamos_decompression) && gas.is_immutable() {
-											let _ = sender.try_send(Box::new(move |new_ctx| {
-												explosively_depressurize(
-													new_ctx,
-													cur_idx,
-													cur_turf,
-													equalize_hard_turf_limit,
-													max_x,
-													max_y,
-												)
-											}));
-											was_space = true;
-											return;
-										} else {
-											let delta =
-												gas.return_pressure() - final_mix.return_pressure();
-											if delta < 0.0 {
-												border_turfs.push_back((
-													loc,
-													*adj_turf.value(),
-													cur_idx,
-													-delta,
-												));
+							if let Some(our_gas_entry) = all_mixtures.get(cur_turf.mix) {
+								let should_get_adjacents = { !our_gas_entry.read().is_immutable() };
+								if should_get_adjacents {
+									for (_, loc) in
+										adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y)
+									{
+										if found_turfs.contains(&loc) {
+											continue;
+										}
+										if let Some(adj_turf) = TURF_GASES.get(&loc) {
+											if let Some(entry) = all_mixtures.get(adj_turf.mix) {
+												let gas: &GasMixture = &entry.read();
+												if cfg!(putnamos_decompression)
+													&& gas.is_immutable()
+												{
+													let _ =
+														sender.try_send(Box::new(move |new_ctx| {
+															explosively_depressurize(
+																new_ctx,
+																cur_idx,
+																cur_turf,
+																equalize_hard_turf_limit,
+																max_x,
+																max_y,
+															)
+														}));
+													was_space = true;
+													return;
+												} else {
+													let delta = gas.return_pressure()
+														- final_mix.return_pressure();
+													if delta < 0.0 {
+														border_turfs.push_back((
+															loc,
+															*adj_turf.value(),
+															cur_idx,
+															-delta,
+														));
+													}
+												}
 											}
 										}
 									}

@@ -242,7 +242,11 @@ fn _hook_adjacent_turfs() {
 #[hook("/turf/proc/return_temperature")]
 fn _hook_turf_temperature() {
 	if let Some(temp_info) = TURF_TEMPERATURES.get(&unsafe { src.value.data.id }) {
-		Ok(Value::from(temp_info.temperature))
+		if temp_info.temperature.is_normal() {
+			Ok(Value::from(temp_info.temperature))
+		} else {
+			src.get("initial_temperature")
+		}
 	} else {
 		src.get("initial_temperature")
 	}

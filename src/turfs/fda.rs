@@ -344,7 +344,9 @@ fn _process_turf_time() {
 
 #[hook("/datum/controller/subsystem/air/proc/thread_running")]
 fn _thread_running_hook() {
-	Ok(Value::from(PROCESSING_TURF_STEP.load(Ordering::Relaxed) == PROCESS_PROCESSING))
+	Ok(Value::from(
+		PROCESSING_TURF_STEP.load(Ordering::Relaxed) == PROCESS_PROCESSING,
+	))
 }
 
 #[hook("/datum/controller/subsystem/air/proc/heat_process_time")]
@@ -497,6 +499,9 @@ fn _process_heat_hook() {
 						}
 					} else {
 						t.temperature = new_temp;
+					}
+					if !t.temperature.is_normal() {
+						t.temperature = 2.7
 					}
 					if t.heat_capacity > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
 						&& t.temperature > t.heat_capacity

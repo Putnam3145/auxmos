@@ -68,8 +68,8 @@ pub struct GasMixture {
 	pub volume: f32,
 	min_heat_capacity: f32,
 	immutable: bool,
-	mole_ids: TinyVec<[u8;8]>,
-	moles: TinyVec<[f32;8]>,
+	mole_ids: TinyVec<[u8; 8]>,
+	moles: TinyVec<[f32; 8]>,
 }
 
 impl Default for GasMixture {

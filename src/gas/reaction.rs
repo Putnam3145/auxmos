@@ -82,10 +82,17 @@ impl Reaction {
 			min_ener_req,
 			min_gas_reqs,
 		};
-		REACTION_VALUES.with(|r| {
-			r.borrow_mut()
-				.insert(our_reaction.clone(), reaction.clone())
-		});
+		{
+			use std::fs::File;
+			use std::io::Write;
+			let mut f = File::create("bad_reaction_logs.txt").unwrap();
+			writeln!(f,"{} before clone: {}",our_reaction.id, unsafe{reaction.value.data.id});
+			REACTION_VALUES.with(|r| {
+				r.borrow_mut()
+					.insert(our_reaction.clone(), reaction.clone());
+				writeln!(f,"{} after clone: {}",our_reaction.id, unsafe{ r.borrow().get(&our_reaction).unwrap().value.data.id});
+			});
+		}
 		our_reaction
 	}
 	/// Checks if the given gas mixture can react with this reaction.

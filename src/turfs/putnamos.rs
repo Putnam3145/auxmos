@@ -136,11 +136,12 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 		== 1.0;
 	if !resumed
 		&& !turf_receiver.is_empty()
-		&& EQUALIZATION_STEP.compare_and_swap(
+		&& EQUALIZATION_STEP.compare_exchange(
 			EQUALIZATION_NONE,
 			EQUALIZATION_PROCESSING,
 			Ordering::SeqCst,
-		) == EQUALIZATION_NONE
+			Ordering::Relaxed,
+		) == Ok(EQUALIZATION_NONE)
 	{
 		rayon::spawn(move || {
 			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
@@ -262,11 +263,18 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 		return Ok(Value::from(true));
 	}
 	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
-	let prev_value =
-		EQUALIZATION_STEP.compare_and_swap(EQUALIZATION_DONE, EQUALIZATION_NONE, Ordering::SeqCst);
-	Ok(Value::from(
-		prev_value != EQUALIZATION_DONE && prev_value != EQUALIZATION_NONE,
-	))
+	if let Err(prev_value) = EQUALIZATION_STEP.compare_exchange(
+		EQUALIZATION_DONE,
+		EQUALIZATION_NONE,
+		Ordering::SeqCst,
+		Ordering::Relaxed,
+	) {
+		Ok(Value::from(
+			prev_value != EQUALIZATION_DONE && prev_value != EQUALIZATION_NONE,
+		))
+	} else {
+		Ok(Value::from(false))
+	}
 }
 
 // Expected function call: process_turf_equalize_extools((Master.current_ticklimit - TICK_USAGE) * world.tick_lag)

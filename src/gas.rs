@@ -3,7 +3,7 @@ pub mod gas_mixture;
 pub mod reaction;
 use auxtools::*;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use gas_mixture::GasMixture;
 
@@ -14,7 +14,6 @@ use std::cell::RefCell;
 use reaction::Reaction;
 
 struct Gases {
-	pub gas_ids: HashMap<u32, u8>,
 	pub gas_specific_heat: Vec<f32>,
 	pub total_num_gases: u8,
 	pub gas_vis_threshold: Vec<Option<f32>>,
@@ -22,6 +21,7 @@ struct Gases {
 
 thread_local! {
 	static GAS_ID_TO_TYPE: RefCell<Vec<Value>> = RefCell::new(Vec::new());
+	static GAS_ID_FROM_TYPE: RefCell<BTreeMap<u32,u8>> = RefCell::new(BTreeMap::new());
 }
 
 #[hook("/proc/auxtools_atmos_init")]
@@ -30,17 +30,25 @@ fn _hook_init() {
 		.ok_or_else(|| runtime!("Could not find gas_types!"))?
 		.call(&[])?
 		.as_list()?;
-	GAS_ID_TO_TYPE.with(|g| {
-		let mut gas_id_to_type = g.borrow_mut();
-		gas_id_to_type.clear();
-		for i in 1..gas_types_list.len() + 1 {
-			if let Ok(gas_type) = gas_types_list.get(i) {
-				gas_id_to_type.push(gas_type);
-			} else {
-				panic!("Gas type not valid! Check list: {:?}", gas_id_to_type);
+	GAS_ID_TO_TYPE.with(|gt| {
+		GAS_ID_FROM_TYPE.with(|gf| {
+			let mut gas_id_to_type = gt.borrow_mut();
+			let mut gas_id_from_type = gf.borrow_mut();
+			gas_id_to_type.clear();
+			gas_id_from_type.clear();
+			for i in 1..gas_types_list.len() + 1 {
+				if let Ok(gas_type) = gas_types_list.get(i) {
+					gas_id_from_type.insert(unsafe { gas_type.value.data.id }, (i - 1) as u8);
+					gas_id_to_type.push(gas_type);
+				} else {
+					panic!(
+						"Gas type not valid! Check lists: {:?}, {:?}",
+						gas_id_to_type, gas_id_from_type
+					);
+				}
 			}
-		}
-		Ok(Value::from(1.0))
+			Ok(Value::from(1.0))
+		})
 	})
 }
 
@@ -51,7 +59,6 @@ fn get_gas_info() -> Gases {
 		.expect("gas_types didn't return correctly!")
 		.as_list()
 		.expect("gas_types' return wasn't a list!");
-	let mut gas_ids: HashMap<u32, u8> = HashMap::new();
 	let total_num_gases: u8 = gas_types_list.len() as u8;
 	let mut gas_specific_heat: Vec<f32> = Vec::with_capacity(total_num_gases as usize);
 	let mut gas_vis_threshold: Vec<Option<f32>> = Vec::with_capacity(total_num_gases as usize);
@@ -65,9 +72,6 @@ fn get_gas_info() -> Gases {
 		let v = gas_types_list
 			.get((i + 1) as u32)
 			.expect("An incorrect index was given to the gas_types list!");
-		unsafe {
-			gas_ids.insert(v.value.data.id, i as u8);
-		}
 		gas_specific_heat.push(
 			gas_types_list
 				.get(&v)
@@ -84,38 +88,41 @@ fn get_gas_info() -> Gases {
 		);
 	}
 	Gases {
-		gas_ids,
 		gas_specific_heat,
 		total_num_gases,
 		gas_vis_threshold,
 	}
 }
 
+fn get_reaction_info() -> Vec<Reaction> {
+	let gas_reactions = Value::globals()
+		.get("SSair")
+		.unwrap()
+		.get_list("gas_reactions")
+		.unwrap();
+	let mut reaction_cache: Vec<Reaction> = Vec::with_capacity(gas_reactions.len() as usize);
+	for i in 1..gas_reactions.len() + 1 {
+		let reaction = &gas_reactions.get(i).unwrap();
+		reaction_cache.push(Reaction::from_byond_reaction(&reaction));
+	}
+	reaction_cache
+}
+
+#[hook("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
+fn _update_reactions() {
+	get_reaction_info(); // just updates the refs, but this is sufficient
+	Ok(Value::from(true))
+}
+
 #[cfg(not(test))]
 lazy_static! {
 	static ref GAS_INFO: Gases = get_gas_info();
-	static ref REACTION_INFO: Vec<Reaction> = {
-		let gas_reactions = Value::globals()
-			.get("SSair")
-			.unwrap()
-			.get_list("gas_reactions")
-			.unwrap();
-		let mut reaction_cache: Vec<Reaction> = Vec::with_capacity(gas_reactions.len() as usize);
-		for i in 1..gas_reactions.len() + 1 {
-			let reaction = &gas_reactions.get(i).unwrap();
-			reaction_cache.push(Reaction::from_byond_reaction(&reaction));
-		}
-		reaction_cache
-	};
+	static ref REACTION_INFO: Vec<Reaction> = get_reaction_info();
 }
 
 #[cfg(test)]
 lazy_static! {
 	static ref GAS_INFO: Gases = {
-		let mut gas_ids: HashMap<u32, usize> = HashMap::new();
-		for i in 0..5 {
-			gas_ids.insert(i, i as usize);
-		}
 		let mut gas_specific_heat: Vec<f32> = vec![20.0, 20.0, 30.0, 200.0, 5.0];
 		let mut gas_id_to_type: Vec<Value> = vec![
 			Value::null(),
@@ -124,7 +131,7 @@ lazy_static! {
 			Value::null(),
 			Value::null(),
 		];
-		let total_num_gases: usize = 5;
+		let total_num_gases: u8 = 5;
 		let gas_vis_threshold = vec![None, None, None, None, None];
 		Gases {
 			gas_ids,
@@ -157,13 +164,12 @@ pub fn gas_visibility(idx: usize) -> Option<f32> {
 
 /// Returns the appropriate index to be used by the game for a given gas datum.
 pub fn gas_id_from_type(path: &Value) -> Result<u8, Runtime> {
-	let id: u32;
-	unsafe {
-		id = path.value.data.id;
-	}
-	Ok(*(GAS_INFO.gas_ids.get(&id).ok_or(runtime!(
-		"Invalid type! This should be a gas datum typepath!"
-	))?))
+	GAS_ID_FROM_TYPE.with(|g| {
+		Ok(*g
+			.borrow()
+			.get(&unsafe { path.value.data.id })
+			.ok_or_else(|| runtime!("Invalid type! This should be a gas datum typepath!"))?)
+	})
 }
 
 /// Takes an index and returns a Value representing the datum typepath of gas datum stored in that index.

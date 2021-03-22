@@ -350,11 +350,12 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 		.as_number()?
 		== 1.0;
 	if !turf_receiver.is_empty()
-		&& EQUALIZATION_STEP.compare_and_swap(
+		&& EQUALIZATION_STEP.compare_exchange(
 			EQUALIZATION_NONE,
 			EQUALIZATION_PROCESSING,
 			Ordering::SeqCst,
-		) == EQUALIZATION_NONE
+			Ordering::Relaxed,
+		) == Ok(EQUALIZATION_NONE)
 	{
 		rayon::spawn(move || {
 			let mut info: BTreeMap<TurfID, Cell<MonstermosInfo>> = BTreeMap::new();
@@ -861,11 +862,18 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 		return Ok(Value::from(1.0));
 	}
 	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
-	let prev_value =
-		EQUALIZATION_STEP.compare_and_swap(EQUALIZATION_DONE, EQUALIZATION_NONE, Ordering::SeqCst);
-	Ok(Value::from(
-		prev_value != EQUALIZATION_DONE && prev_value != EQUALIZATION_NONE,
-	))
+	if let Err(prev_value) = EQUALIZATION_STEP.compare_exchange(
+		EQUALIZATION_DONE,
+		EQUALIZATION_NONE,
+		Ordering::SeqCst,
+		Ordering::Relaxed,
+	) {
+		Ok(Value::from(
+			prev_value != EQUALIZATION_DONE && prev_value != EQUALIZATION_NONE,
+		))
+	} else {
+		Ok(Value::from(false))
+	}
 }
 
 // Expected function call: process_turf_equalize_extools((Master.current_ticklimit - TICK_USAGE) * world.tick_lag)

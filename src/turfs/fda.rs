@@ -329,8 +329,12 @@ fn _finish_process_turfs() {
 	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
 	Ok(Value::from(
-		PROCESSING_TURF_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)
-			== PROCESS_PROCESSING,
+		PROCESSING_TURF_STEP.compare_exchange(
+			PROCESS_DONE,
+			PROCESS_NOT_STARTED,
+			Ordering::SeqCst,
+			Ordering::Relaxed,
+		) == Err(PROCESS_PROCESSING),
 	))
 }
 
@@ -371,7 +375,9 @@ fn _process_heat_hook() {
 		it's done after the previous step. This one doesn't care about
 		consistency like the processing step does--this can run in full parallel.
 	*/
-	if PROCESSING_HEAT.compare_and_swap(false, true, Ordering::SeqCst) == false {
+	if PROCESSING_HEAT.compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
+		== Ok(false)
+	{
 		/*
 			Can't get a number from src in the thread, so we get it here.
 			Have to get the time delta because the radiation
@@ -533,6 +539,8 @@ fn _process_heat_hook() {
 	)))
 }
 
+static POST_PROCESS_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
+
 #[hook("/datum/controller/subsystem/air/proc/post_process_turfs_auxtools")]
 fn _post_process_turfs() {
 	let resumed = args
@@ -540,50 +548,57 @@ fn _post_process_turfs() {
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf post processing: 0"))?
 		.as_number()?
 		== 1.0;
-	let mut arg_limit = args
+	let arg_limit = args
 		.get(1)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf post processing: 1"))?
 		.as_number()?;
-	if !resumed {
-		let time = std::time::Instant::now();
-		TURF_GASES.shards().iter().par_bridge().for_each(|shard| {
-			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
-			GasMixtures::with_all_mixtures(|all_mixtures| {
-				shard.write().iter_mut().for_each(|(&i, m_v)| {
-					let m = m_v.get_mut();
-					if m.simulation_level > SIMULATION_LEVEL_NONE
-						&& (m.simulation_level & SIMULATION_LEVEL_DISABLED
-							!= SIMULATION_LEVEL_DISABLED)
-					{
-						if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
-							let visibility = gas.visibility_hash();
-							let should_update_visuals = m.vis_hash != visibility;
-							m.vis_hash = visibility;
-							let reactable = gas.can_react();
-							if should_update_visuals || reactable {
-								let _ = sender.try_send(Box::new(move |_| {
-									let turf = unsafe { Value::turf_by_id_unchecked(i) };
-									if reactable {
-										turf.get(byond_string!("air"))?.call("react", &[&turf])?;
-									}
-									if should_update_visuals {
-										turf.call("update_visuals", &[&Value::null()])?;
-									}
-									Ok(Value::null())
-								}));
+	if !resumed && POST_PROCESS_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
+		rayon::spawn(move || {
+			POST_PROCESS_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
+			TURF_GASES.shards().iter().par_bridge().for_each(|shard| {
+				let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
+				GasMixtures::with_all_mixtures(|all_mixtures| {
+					shard.write().iter_mut().for_each(|(&i, m_v)| {
+						let m = m_v.get_mut();
+						if m.simulation_level > SIMULATION_LEVEL_NONE
+							&& (m.simulation_level & SIMULATION_LEVEL_DISABLED
+								!= SIMULATION_LEVEL_DISABLED)
+						{
+							if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
+								let visibility = gas.visibility_hash();
+								let should_update_visuals = m.vis_hash != visibility;
+								m.vis_hash = visibility;
+								let reactable = gas.can_react();
+								if should_update_visuals || reactable {
+									let _ = sender.try_send(Box::new(move |_| {
+										let turf = unsafe { Value::turf_by_id_unchecked(i) };
+										if reactable {
+											turf.get(byond_string!("air"))?
+												.call("react", &[&turf])?;
+										}
+										if should_update_visuals {
+											turf.call("update_visuals", &[&Value::null()])?;
+										}
+										Ok(Value::null())
+									}));
+								}
 							}
 						}
-					}
+					});
 				});
 			});
+			POST_PROCESS_STEP.store(PROCESS_DONE, Ordering::SeqCst);
 		});
-		arg_limit -= time.elapsed().as_millis() as f32
 	}
-	Ok(Value::from(process_callbacks_for_millis(
-		ctx,
-		SSAIR_NAME.to_string(),
-		arg_limit as u64,
-	)))
+	Ok(Value::from(
+		process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64)
+			|| POST_PROCESS_STEP.compare_exchange(
+				PROCESS_DONE,
+				PROCESS_NOT_STARTED,
+				Ordering::SeqCst,
+				Ordering::Relaxed,
+			) == Err(PROCESS_PROCESSING),
+	))
 }
 
 static EXCITED_GROUP_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
@@ -665,7 +680,11 @@ fn process_excited_groups() {
 		.as_number()?;
 	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
 	Ok(Value::from(
-		EXCITED_GROUP_STEP.compare_and_swap(PROCESS_DONE, PROCESS_NOT_STARTED, Ordering::SeqCst)
-			== PROCESS_PROCESSING,
+		EXCITED_GROUP_STEP.compare_exchange(
+			PROCESS_DONE,
+			PROCESS_NOT_STARTED,
+			Ordering::SeqCst,
+			Ordering::Relaxed,
+		) == Err(PROCESS_PROCESSING),
 	))
 }

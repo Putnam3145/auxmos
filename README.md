@@ -5,4 +5,4 @@ Still quite early. Monstermos seems to have an issue where it doesn't move enoug
 This code relies on some byond code on [this fork of Citadel](https://github.com/Putnam3145/Citadel-Station-13/tree/auxtools-atmos). These will be documented in time (probably on the order of days).
 
 TODO:
-Shuttle walls have air and that air is at 2.7 kelvins. Why do the walls have air. God I hate this game.
+Scrubbers are duplicating gases. Scrubbers and *only* scrubbers, e.g. passive vents aren't doing it.

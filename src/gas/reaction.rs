@@ -48,7 +48,7 @@ impl Reaction {
 	///  Yes, *panic*, not runtime. This is intentional. Please do not give it
 	///  anything but a /datum/reaction.
 	pub fn from_byond_reaction(reaction: &Value) -> Self {
-		let min_reqs = reaction.get_list("min_requirements").unwrap();
+		let min_reqs = reaction.get_list(byond_string!("min_requirements")).unwrap();
 		let mut min_gas_reqs: Vec<(u8, f32)> = Vec::new();
 		for i in 0..total_num_gases() {
 			if let Ok(gas_req) = min_reqs.get(&gas_id_to_type(i).unwrap()) {
@@ -58,22 +58,22 @@ impl Reaction {
 			}
 		}
 		let min_temp_req = min_reqs
-			.get(&Value::from_string("TEMP"))
+			.get(byond_string!("TEMP"))
 			.unwrap_or(Value::null())
 			.as_number()
 			.ok();
 		let max_temp_req = min_reqs
-			.get(&Value::from_string("MAX_TEMP"))
+			.get(byond_string!("MAX_TEMP"))
 			.unwrap_or(Value::null())
 			.as_number()
 			.ok();
 		let min_ener_req = min_reqs
-			.get(&Value::from_string("ENER"))
+			.get(byond_string!("ENER"))
 			.unwrap_or(Value::null())
 			.as_number()
 			.ok();
-		let priority = reaction.get_number("priority").unwrap();
-		let id = reaction.get_string("id").unwrap();
+		let priority = reaction.get_number(byond_string!("priority")).unwrap();
+		let id = reaction.get_string(byond_string!("id")).unwrap();
 		let our_reaction = Reaction {
 			id,
 			priority,

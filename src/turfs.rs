@@ -128,18 +128,18 @@ lazy_static! {
 fn _hook_register_turf() {
 	let simulation_level = args[0].as_number()?;
 	if simulation_level < 0.0 {
-		TURF_GASES.remove(&unsafe { src.value.data.id });
+		TURF_GASES.remove(&unsafe { src.raw.data.id });
 		Ok(Value::null())
 	} else {
 		let mut to_insert: TurfMixture = Default::default();
 		to_insert.mix = src
-			.get("air")?
+			.get(byond_string!("air"))?
 			.get_number(byond_string!("_extools_pointer_gasmixture"))?
 			.to_bits() as usize;
 		to_insert.simulation_level = args[0].as_number()? as u8;
-		if let Ok(is_planet) = src.get_number("planetary_atmos") {
+		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
 			if is_planet != 0.0 {
-				if let Ok(at_str) = src.get_string("initial_gas_mix") {
+				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
 					to_insert.planetary_atmos = Some(Box::leak(at_str.into_boxed_str()));
 					let mut entry = PLANETARY_ATMOS
 						.entry(to_insert.planetary_atmos.unwrap())
@@ -148,18 +148,18 @@ fn _hook_register_turf() {
 				}
 			}
 		}
-		TURF_GASES.insert(unsafe { src.value.data.id }, to_insert);
+		TURF_GASES.insert(unsafe { src.raw.data.id }, to_insert);
 		Ok(Value::null())
 	}
 }
 
 #[hook("/turf/proc/__auxtools_update_turf_temp_info")]
 fn _hook_turf_update_temp() {
-	if src.get_number("thermal_conductivity").unwrap_or_default() > 0.0
-		&& src.get_number("heat_capacity").unwrap_or_default() > 0.0
+	if src.get_number(byond_string!("thermal_conductivity")).unwrap_or_default() > 0.0
+		&& src.get_number(byond_string!("heat_capacity")).unwrap_or_default() > 0.0
 	{
 		let mut entry = TURF_TEMPERATURES
-			.entry(unsafe { src.value.data.id })
+			.entry(unsafe { src.raw.data.id })
 			.or_insert_with(|| ThermalInfo {
 				temperature: 293.15,
 				thermal_conductivity: 0.0,
@@ -167,13 +167,13 @@ fn _hook_turf_update_temp() {
 				adjacency: NORTH | SOUTH | WEST | EAST,
 				adjacent_to_space: false,
 			});
-		entry.thermal_conductivity = src.get_number("thermal_conductivity")?;
-		entry.heat_capacity = src.get_number("heat_capacity")?;
+		entry.thermal_conductivity = src.get_number(byond_string!("thermal_conductivity"))?;
+		entry.heat_capacity = src.get_number(byond_string!("heat_capacity"))?;
 		entry.adjacency = NORTH | SOUTH | WEST | EAST;
 		entry.adjacent_to_space = args[0].as_number()? != 0.0;
-		entry.temperature = src.get_number("initial_temperature")?;
+		entry.temperature = src.get_number(byond_string!("initial_temperature"))?;
 	} else {
-		TURF_TEMPERATURES.remove(&unsafe { src.value.data.id });
+		TURF_TEMPERATURES.remove(&unsafe { src.raw.data.id });
 	}
 	Ok(Value::null())
 }
@@ -188,13 +188,13 @@ fn _hook_sleep() {
 	};
 	if arg == 0.0 {
 		TURF_GASES
-			.entry(unsafe { src.value.data.id })
+			.entry(unsafe { src.raw.data.id })
 			.and_modify(|turf| {
 				turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
 			});
 	} else {
 		TURF_GASES
-			.entry(unsafe { src.value.data.id })
+			.entry(unsafe { src.raw.data.id })
 			.and_modify(|turf| {
 				turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
 			});
@@ -204,34 +204,34 @@ fn _hook_sleep() {
 
 #[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn _hook_adjacent_turfs() {
-	if let Ok(adjacent_list) = src.get_list("atmos_adjacent_turfs") {
+	if let Ok(adjacent_list) = src.get_list(byond_string!("atmos_adjacent_turfs")) {
 		let mut adjacency = 0;
 		for i in 1..adjacent_list.len() + 1 {
 			adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
 		}
 		TURF_GASES
-			.entry(unsafe { src.value.data.id })
+			.entry(unsafe { src.raw.data.id })
 			.and_modify(|turf| {
 				turf.adjacency = adjacency as u8;
 			});
 	} else {
 		TURF_GASES
-			.entry(unsafe { src.value.data.id })
+			.entry(unsafe { src.raw.data.id })
 			.and_modify(|turf| {
 				turf.adjacency = 0;
 			});
 	}
-	if let Ok(atmos_blocked_directions) = src.get_number("conductivity_blocked_directions") {
+	if let Ok(atmos_blocked_directions) = src.get_number(byond_string!("conductivity_blocked_directions")) {
 		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);
 		TURF_TEMPERATURES
-			.entry(unsafe { src.value.data.id })
+			.entry(unsafe { src.raw.data.id })
 			.and_modify(|entry| {
 				entry.adjacency = adjacency;
 			})
 			.or_insert_with(|| ThermalInfo {
-				temperature: src.get_number("initial_temperature").unwrap(),
-				thermal_conductivity: src.get_number("thermal_conductivity").unwrap(),
-				heat_capacity: src.get_number("heat_capacity").unwrap(),
+				temperature: src.get_number(byond_string!("initial_temperature")).unwrap(),
+				thermal_conductivity: src.get_number(byond_string!("thermal_conductivity")).unwrap(),
+				heat_capacity: src.get_number(byond_string!("heat_capacity")).unwrap(),
 				adjacency: adjacency,
 				adjacent_to_space: args[0].as_number().unwrap() != 0.0,
 			});
@@ -241,14 +241,14 @@ fn _hook_adjacent_turfs() {
 
 #[hook("/turf/proc/return_temperature")]
 fn _hook_turf_temperature() {
-	if let Some(temp_info) = TURF_TEMPERATURES.get(&unsafe { src.value.data.id }) {
+	if let Some(temp_info) = TURF_TEMPERATURES.get(&unsafe { src.raw.data.id }) {
 		if temp_info.temperature.is_normal() {
 			Ok(Value::from(temp_info.temperature))
 		} else {
-			src.get("initial_temperature")
+			src.get(byond_string!("initial_temperature"))
 		}
 	} else {
-		src.get("initial_temperature")
+		src.get(byond_string!("initial_temperature"))
 	}
 }
 
@@ -259,14 +259,14 @@ fn _hook_set_temperature() {
 		.ok_or_else(|| runtime!("Invalid argument count to turf temperature set: 0"))?
 		.as_number()?;
 	TURF_TEMPERATURES
-		.entry(unsafe { src.value.data.id })
+		.entry(unsafe { src.raw.data.id })
 		.and_modify(|turf| {
 			turf.temperature = argument;
 		})
 		.or_insert_with(|| ThermalInfo {
 			temperature: argument,
-			thermal_conductivity: src.get_number("thermal_conductivity").unwrap(),
-			heat_capacity: src.get_number("heat_capacity").unwrap(),
+			thermal_conductivity: src.get_number(byond_string!("thermal_conductivity")).unwrap(),
+			heat_capacity: src.get_number(byond_string!("heat_capacity")).unwrap(),
 			adjacency: 0,
 			adjacent_to_space: false,
 		});

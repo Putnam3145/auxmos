@@ -41,7 +41,7 @@ fn _process_turf_hook() {
 		echo FEA, the original SS13 atmos system.
 	*/
 	// Don't want to start it while there's already a thread running, so we only start it if it hasn't been started.
-	SUBSYSTEM_FIRE_COUNT.store(src.get_number("times_fired")? as u32, Ordering::SeqCst);
+	SUBSYSTEM_FIRE_COUNT.store(src.get_number(byond_string!("times_fired"))? as u32, Ordering::SeqCst);
 	let resumed = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 0"))?
@@ -51,12 +51,12 @@ fn _process_turf_hook() {
 		&& PROCESSING_TURF_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED
 		&& !PROCESSING_HEAT.load(Ordering::SeqCst)
 	{
-		let fda_max_steps = src.get_number("share_max_steps").unwrap_or_else(|_| 1.0) as i32;
+		let fda_max_steps = src.get_number(byond_string!("share_max_steps")).unwrap_or_else(|_| 1.0) as i32;
 		let fda_pressure_goal = src
-			.get_number("share_pressure_diff_to_stop")
+			.get_number(byond_string!("share_pressure_diff_to_stop"))
 			.unwrap_or_else(|_| 101.325);
-		let max_x = ctx.get_world().get_number("maxx")? as i32;
-		let max_y = ctx.get_world().get_number("maxy")? as i32;
+		let max_x = Value::world().get_number(byond_string!("maxx"))? as i32;
+		let max_y = Value::world().get_number(byond_string!("maxy"))? as i32;
 		rayon::spawn(move || {
 			PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
 			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
@@ -270,7 +270,7 @@ fn _process_turf_hook() {
 									let turf_id = i;
 									let diffs_copy = pressure_diffs;
 									sender
-										.try_send(Box::new(move |_| {
+										.try_send(Box::new(move || {
 											if turf_id == 0 {
 												return Ok(Value::null());
 											}
@@ -326,7 +326,7 @@ fn _finish_process_turfs() {
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf finishing: 0"))?
 		.as_number()?;
-	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
+	process_callbacks_for_millis(SSAIR_NAME.to_string(), arg_limit as u64)?;
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
 	Ok(Value::from(
 		PROCESSING_TURF_STEP.compare_exchange(
@@ -388,9 +388,9 @@ fn _process_heat_hook() {
 			turf tiles are 1 meter^2 anyway--the atmos subsystem
 			does this in general, thus turf gas mixtures being 2.5 m^3.
 		*/
-		let time_delta = (src.get_number("wait")? / 10.0) as f64;
-		let max_x = ctx.get_world().get_number("maxx")? as i32;
-		let max_y = ctx.get_world().get_number("maxy")? as i32;
+		let time_delta = (src.get_number(byond_string!("wait"))? / 10.0) as f64;
+		let max_x = Value::world().get_number(byond_string!("maxx"))? as i32;
+		let max_y = Value::world().get_number(byond_string!("maxy"))? as i32;
 		rayon::spawn(move || {
 			let start_time = Instant::now();
 			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
@@ -513,9 +513,9 @@ fn _process_heat_hook() {
 						&& t.temperature > t.heat_capacity
 					{
 						// not what heat capacity means but whatever
-						let _ = sender.try_send(Box::new(move |_| {
+						let _ = sender.try_send(Box::new(move || {
 							let turf = unsafe { Value::turf_by_id_unchecked(i) };
-							turf.set("to_be_destroyed", 1.0);
+							turf.set(byond_string!("to_be_destroyed"), 1.0)?;
 							Ok(Value::null())
 						}));
 					}
@@ -533,10 +533,9 @@ fn _process_heat_hook() {
 		.ok_or_else(|| runtime!("Wrong number of arguments to heat processing: 0"))?
 		.as_number()?;
 	Ok(Value::from(process_callbacks_for_millis(
-		ctx,
 		SSAIR_NAME.to_string(),
 		arg_limit as u64,
-	)))
+	)?))
 }
 
 static POST_PROCESS_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
@@ -570,7 +569,7 @@ fn _post_process_turfs() {
 								m.vis_hash = visibility;
 								let reactable = gas.can_react();
 								if should_update_visuals || reactable {
-									let _ = sender.try_send(Box::new(move |_| {
+									let _ = sender.try_send(Box::new(move || {
 										let turf = unsafe { Value::turf_by_id_unchecked(i) };
 										if reactable {
 											turf.get(byond_string!("air"))?
@@ -591,7 +590,7 @@ fn _post_process_turfs() {
 		});
 	}
 	Ok(Value::from(
-		process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64)
+		process_callbacks_for_millis(SSAIR_NAME.to_string(), arg_limit as u64)?
 			|| POST_PROCESS_STEP.compare_exchange(
 				PROCESS_DONE,
 				PROCESS_NOT_STARTED,
@@ -616,8 +615,8 @@ fn process_excited_groups() {
 		.as_number()?
 		== 1.0;
 	if !resumed && EXCITED_GROUP_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
-		let max_x = ctx.get_world().get_number("maxx")? as i32;
-		let max_y = ctx.get_world().get_number("maxy")? as i32;
+		let max_x = Value::world().get_number(byond_string!("maxx"))? as i32;
+		let max_y = Value::world().get_number(byond_string!("maxy"))? as i32;
 		rayon::spawn(move || {
 			use std::collections::{BTreeSet, VecDeque};
 			EXCITED_GROUP_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
@@ -678,7 +677,7 @@ fn process_excited_groups() {
 		.get(1)
 		.ok_or_else(|| runtime!("Wrong number of arguments to excited group processing: 1"))?
 		.as_number()?;
-	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
+	process_callbacks_for_millis(SSAIR_NAME.to_string(), arg_limit as u64)?;
 	Ok(Value::from(
 		EXCITED_GROUP_STEP.compare_exchange(
 			PROCESS_DONE,

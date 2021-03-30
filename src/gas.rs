@@ -38,7 +38,7 @@ fn _hook_init() {
 			gas_id_from_type.clear();
 			for i in 1..gas_types_list.len() + 1 {
 				if let Ok(gas_type) = gas_types_list.get(i) {
-					gas_id_from_type.insert(unsafe { gas_type.value.data.id }, (i - 1) as u8);
+					gas_id_from_type.insert(unsafe { gas_type.raw.data.id }, (i - 1) as u8);
 					gas_id_to_type.push(gas_type);
 				} else {
 					panic!(
@@ -96,9 +96,9 @@ fn get_gas_info() -> Gases {
 
 fn get_reaction_info() -> Vec<Reaction> {
 	let gas_reactions = Value::globals()
-		.get("SSair")
+		.get(byond_string!("SSair"))
 		.unwrap()
-		.get_list("gas_reactions")
+		.get_list(byond_string!("gas_reactions"))
 		.unwrap();
 	let mut reaction_cache: Vec<Reaction> = Vec::with_capacity(gas_reactions.len() as usize);
 	for i in 1..gas_reactions.len() + 1 {
@@ -134,7 +134,6 @@ lazy_static! {
 		let total_num_gases: u8 = 5;
 		let gas_vis_threshold = vec![None, None, None, None, None];
 		Gases {
-			gas_ids,
 			gas_specific_heat,
 			total_num_gases,
 			gas_vis_threshold,
@@ -167,7 +166,7 @@ pub fn gas_id_from_type(path: &Value) -> Result<u8, Runtime> {
 	GAS_ID_FROM_TYPE.with(|g| {
 		Ok(*g
 			.borrow()
-			.get(&unsafe { path.value.data.id })
+			.get(&unsafe { path.raw.data.id })
 			.ok_or_else(|| runtime!("Invalid type! This should be a gas datum typepath!"))?)
 	})
 }
@@ -303,11 +302,11 @@ impl GasMixtures {
 				let next_idx = gas_mixtures.len();
 				gas_mixtures.push(RwLock::new(GasMixture::from_vol(
 					mix.get_number(byond_string!("initial_volume"))?,
-				)));
+				))) ;
 				mix.set(
 					byond_string!("_extools_pointer_gasmixture"),
 					f32::from_bits(next_idx as u32),
-				);
+				)?;
 			} else {
 				let idx = gas_ids.borrow_mut().pop().unwrap();
 				GAS_MIXTURES
@@ -319,7 +318,7 @@ impl GasMixtures {
 				mix.set(
 					byond_string!("_extools_pointer_gasmixture"),
 					f32::from_bits(idx as u32),
-				);
+				)?;
 			}
 			Ok(Value::null())
 		})
@@ -329,7 +328,7 @@ impl GasMixtures {
 		if let Ok(float_bits) = mix.get_number(byond_string!("_extools_pointer_gasmixture")) {
 			let idx = float_bits.to_bits();
 			NEXT_GAS_IDS.with(|gas_ids| gas_ids.borrow_mut().push(idx as usize));
-			mix.set(byond_string!("_extools_pointer_gasmixture"), &Value::null());
+			mix.set(byond_string!("_extools_pointer_gasmixture"), &Value::null())?;
 		}
 		Ok(Value::null())
 	}

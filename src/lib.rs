@@ -320,18 +320,19 @@ fn _equalize_with_hook() {
 #[hook("/proc/equalize_all_gases_in_list")]
 fn _equalize_all_hook() {
 	use std::collections::BTreeSet;
-	let gas_list: BTreeSet<usize> = args
+	let gas_list = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of args for equalize all: 0"))?
-		.as_list()?
-		.to_vec()
-		.iter()
-		.map(|v| {
-			v.get_number(byond_string!("_extools_pointer_gasmixture"))
+		.as_list()?;
+
+	let gas_list: BTreeSet<usize> =
+		(1..=gas_list.len()).map(|idx| {
+			gas_list.get(idx).unwrap().get_number(byond_string!("_extools_pointer_gasmixture"))
 				.unwrap()
 				.to_bits() as usize
 		})
-		.collect(); // collect because get_number is way slower than the one-time allocation
+		.collect();
+
 	let mut tot = gas::gas_mixture::GasMixture::new();
 	let mut tot_vol: f64 = 0.0;
 	GasMixtures::with_all_mixtures(move |all_mixtures| {

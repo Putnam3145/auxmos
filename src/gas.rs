@@ -302,7 +302,7 @@ impl GasMixtures {
 				let next_idx = gas_mixtures.len();
 				gas_mixtures.push(RwLock::new(GasMixture::from_vol(
 					mix.get_number(byond_string!("initial_volume"))?,
-				))) ;
+				)));
 				mix.set(
 					byond_string!("_extools_pointer_gasmixture"),
 					f32::from_bits(next_idx as u32),

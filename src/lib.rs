@@ -109,6 +109,11 @@ fn _copy_from_hook() {
 	} else {
 		with_mixes_mut(src, &args[0], |src_mix, giver_mix| {
 			src_mix.copy_from_mutable(giver_mix);
+
+			if let Some(partial) = args.get(1) {
+				src_mix.multiply(partial.as_number()?);
+			}
+
 			Ok(Value::null())
 		})
 	}

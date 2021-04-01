@@ -109,6 +109,8 @@ pub const FACTOR_GAS_VISIBLE_MAX: f32 = 20.0;
 /// Mole step for alpha updates. This means alpha can update at 0.25, 0.5, 0.75 and so on
 pub const MOLES_GAS_VISIBLE_STEP: f32 = 0.25;
 
+pub const TOTAL_VISIBLE_STATES: f32 = FACTOR_GAS_VISIBLE_MAX * (1.0 / MOLES_GAS_VISIBLE_STEP);
+
 /// REACTIONS
 
 /// return values for reactions (bitflags)

@@ -392,7 +392,7 @@ impl GasMixture {
 				if gas >= &amt {
 					hasher.write(&[
 						i,
-						FACTOR_GAS_VISIBLE_MAX.min((gas / MOLES_GAS_VISIBLE_STEP).ceil()) as u8,
+						TOTAL_VISIBLE_STATES.min((gas / MOLES_GAS_VISIBLE_STEP).ceil()) as u8,
 					]);
 				}
 			}

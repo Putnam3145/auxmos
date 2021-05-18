@@ -128,7 +128,7 @@ impl GasMixture {
 	/// Returns (by value) the amount of moles of a given index the mix has. M
 	pub fn get_moles(&self, idx: u8) -> f32 {
 		if let Ok(i) = self.mole_ids.linear_search(&idx) {
-			*unsafe { self.moles.get_unchecked(i) } // mole_ids and moles have same size, so `i` is always in bounds
+			*(self.moles.get(i).expect("Null Reference")) // mole_ids and moles have same size, so `i` is always in bounds
 		} else {
 			0.0
 		}
@@ -146,7 +146,7 @@ impl GasMixture {
 		if !self.immutable && idx < total_num_gases() {
 			if amt.is_normal() && amt > GAS_MIN_MOLES {
 				match self.mole_ids.linear_search(&idx) {
-					Ok(i) => unsafe { *self.moles.get_unchecked_mut(i) = amt },
+					Ok(i) => *(self.moles.get_mut(i).expect("Null reference")) = amt ,
 					Err(i) => {
 						self.mole_ids.insert(i, idx);
 						self.moles.insert(i, amt);
@@ -166,7 +166,7 @@ impl GasMixture {
 		let heats = gas_specific_heats();
 		self.enumerate()
 			.fold(0.0, |acc, (&id, amt)| {
-				acc + amt * unsafe { heats.get_unchecked(id as usize) }
+				acc + amt * heats.get(id as usize).expect("Null Reference")
 			})
 			.max(self.min_heat_capacity)
 	}
@@ -191,7 +191,7 @@ impl GasMixture {
 		let other_heat_capacity = giver.heat_capacity();
 		for (id, amt) in giver.enumerate() {
 			match self.mole_ids.linear_search(id) {
-				Ok(idx) => unsafe { *self.moles.get_unchecked_mut(idx) += amt },
+				Ok(idx) => *(self.moles.get_mut(idx).expect("Null Reference")) += amt ,
 				Err(idx) => {
 					self.moles.insert(idx, *amt);
 					self.mole_ids.insert(idx, *id);
@@ -307,9 +307,9 @@ impl GasMixture {
 		{
 			match e {
 				Both(_, _) => {
-					if (unsafe {
-						self.moles.get_unchecked(our_idx) - sample.moles.get_unchecked(sample_idx)
-					})
+					if (
+						self.moles.get(our_idx).expect("Null reference") - sample.moles.get(sample_idx).expect("Null reference")
+					)
 					.abs() > min_delta
 					{
 						return true;
@@ -318,13 +318,13 @@ impl GasMixture {
 					sample_idx += 1;
 				}
 				Left(_) => {
-					if unsafe { *self.moles.get_unchecked(our_idx) } > min_delta {
+					if *(self.moles.get(our_idx).expect("Null reference")) > min_delta {
 						return true;
 					}
 					our_idx += 1;
 				}
 				Right(_) => {
-					if unsafe { *sample.moles.get_unchecked(sample_idx) } > min_delta {
+					if *(sample.moles.get(sample_idx).expect("Null reference")) > min_delta {
 						return true;
 					}
 					sample_idx += 1;
@@ -406,7 +406,7 @@ impl GasMixture {
 		let len = self.moles.len();
 		{
 			for idx in 0..len {
-				let amt = unsafe { *self.moles.get_unchecked(idx) };
+				let amt = *(self.moles.get(idx).expect("Null reference"));
 				if !amt.is_normal() || amt < GAS_MIN_MOLES {
 					del += 1;
 				} else if del > 0 {

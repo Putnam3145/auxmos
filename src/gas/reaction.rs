@@ -10,7 +10,7 @@ use core::cmp::Ordering;
 
 #[derive(Clone)]
 pub struct Reaction {
-	id: std::string::String,
+	pub id: std::string::String,
 	priority: f32,
 	min_temp_req: Option<f32>,
 	max_temp_req: Option<f32>,
@@ -39,7 +39,17 @@ impl PartialOrd for Reaction {
 }
 
 thread_local! {
-	static REACTION_VALUES: RefCell<std::collections::BTreeMap<Reaction,Value>> = RefCell::new(std::collections::BTreeMap::new())
+	static REACTION_VALUES: RefCell<std::collections::BTreeMap<std::string::String,Value>> = RefCell::new(std::collections::BTreeMap::new())
+}
+
+pub fn react_by_id(id: &std::string::String, src: &Value, holder: &Value) -> DMResult {
+	REACTION_VALUES.with(|r| {
+		if let Some(reaction) = r.borrow().get(id) {
+			reaction.call("react", &[src, holder])
+		} else {
+			Err(runtime!("Reaction with invalid id: {}", id))
+		}
+	})
 }
 
 impl Reaction {
@@ -84,7 +94,7 @@ impl Reaction {
 		};
 		REACTION_VALUES.with(|r| {
 			r.borrow_mut()
-				.insert(our_reaction.clone(), reaction.clone())
+				.insert(our_reaction.id.clone(), reaction.clone())
 		});
 		our_reaction
 	}
@@ -118,12 +128,6 @@ impl Reaction {
 	}
 	/// Calls the reaction with the given arguments.
 	pub fn react(&self, src: &Value, holder: &Value) -> DMResult {
-		REACTION_VALUES.with(|r| {
-			if let Some(reaction) = r.borrow().get(self) {
-				reaction.call("react", &[src, holder])
-			} else {
-				Err(runtime!("Reaction with invalid id: {}", self.id))
-			}
-		})
+		react_by_id(&self.id, src, holder)
 	}
 }

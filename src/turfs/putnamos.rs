@@ -16,6 +16,11 @@ const EQUALIZATION_DONE: u8 = 2;
 
 static EQUALIZATION_STEP: AtomicU8 = AtomicU8::new(0);
 
+#[shutdown]
+fn putnamos_cleanup() {
+	EQUALIZATION_STEP.store(EQUALIZATION_NONE, Ordering::SeqCst);
+}
+
 const OPP_DIR_INDEX: [u8; 7] = [1, 0, 3, 2, 5, 4, 6];
 
 // If you can't tell, this is mostly a massively simplified copy of monstermos.

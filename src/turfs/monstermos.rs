@@ -62,6 +62,11 @@ const EQUALIZATION_DONE: u8 = 3;
 
 static EQUALIZATION_STEP: AtomicU8 = AtomicU8::new(0);
 
+#[shutdown]
+fn monstermos_cleanup() {
+	EQUALIZATION_STEP.store(EQUALIZATION_NONE, Ordering::SeqCst);
+}
+
 fn finalize_eq(
 	i: TurfID,
 	turf: &TurfMixture,

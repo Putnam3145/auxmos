@@ -10,6 +10,8 @@ use super::gas::gas_mixture::GasMixture;
 
 use auxtools::*;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::constants::*;
 
 use crate::GasMixtures;
@@ -37,8 +39,6 @@ struct TurfMixture {
 	pub mix: usize,
 	pub adjacency: u8,
 	pub simulation_level: u8,
-	pub vis_hash: u64,
-	pub cooldown: u8,
 	pub planetary_atmos: Option<&'static str>,
 }
 
@@ -117,11 +117,30 @@ lazy_static! {
 	static ref TURF_TEMPERATURES: DashMap<TurfID, ThermalInfo> = DashMap::new();
 	// We store planetary atmos by hash of the initial atmos string here for speed.
 	static ref PLANETARY_ATMOS: DashMap<&'static str, GasMixture> = DashMap::new();
+	// In a separate dashmap because if it isn't most of the post-process time is spent acquiring write locks
+	static ref TURF_VIS_HASH: DashMap<TurfID, AtomicU64> = DashMap::new();
 	// For monstermos or other hypothetical fast-process systems.
 	static ref HIGH_PRESSURE_TURFS: (
 		flume::Sender<TurfID>,
 		flume::Receiver<TurfID>
 	) = flume::unbounded();
+}
+
+fn check_and_update_vis_hash(id: TurfID, hash: u64) -> bool {
+	if let Some(existing_hash) = TURF_VIS_HASH.get(&id) {
+		existing_hash.swap(hash, Ordering::Relaxed) != hash
+	} else {
+		TURF_VIS_HASH.insert(id, AtomicU64::new(hash));
+		true
+	}
+}
+
+#[shutdown]
+fn _shutdown_turfs() {
+	TURF_GASES.clear();
+	TURF_TEMPERATURES.clear();
+	PLANETARY_ATMOS.clear();
+	TURF_VIS_HASH.clear();
 }
 
 #[hook("/turf/proc/update_air_ref")]
@@ -348,7 +367,7 @@ fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {
 		_ => i as TurfID,
 	}
 }
-
+#[derive(Clone, Copy)]
 struct AdjacentTileIDs {
 	adj: u8,
 	i: TurfID,

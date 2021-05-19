@@ -9,6 +9,8 @@ use auxtools::*;
 
 use gas::*;
 
+use gas::reaction::react_by_id;
+
 use gas::constants::*;
 
 #[hook("/datum/gas_mixture/proc/__gasmixture_register")]
@@ -248,7 +250,9 @@ fn _compare_hook() {
 		Err(runtime!("Tried comparing a gas mix to nothing"))
 	} else {
 		with_mixes(src, &args[0], |gas_one, gas_two| {
-			if gas_one.compare(gas_two, MINIMUM_MOLES_DELTA_TO_MOVE) {
+			if gas_one.temperature_compare(gas_two)
+				|| gas_one.compare(gas_two) > MINIMUM_MOLES_DELTA_TO_MOVE
+			{
 				Ok(Value::from(1.0))
 			} else {
 				Ok(Value::from(0.0))
@@ -274,13 +278,9 @@ fn _react_hook() {
 	let mut ret: i32 = 0;
 	let n = Value::null();
 	let holder = args.first().unwrap_or(&n);
-	let mut reactions: Vec<&gas::reaction::Reaction> = Vec::new();
-	with_mix(src, |mix| {
-		reactions = mix.all_reactable();
-		Ok(Value::null())
-	})?;
-	for reaction in reactions.iter() {
-		ret |= reaction.react(src, holder)?.as_number()? as i32;
+	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
+	for reaction in reactions {
+		ret |= react_by_id(&reaction, src, holder)?.as_number()? as i32;
 		if ret & STOP_REACTIONS == STOP_REACTIONS {
 			return Ok(Value::from(ret as f32));
 		}

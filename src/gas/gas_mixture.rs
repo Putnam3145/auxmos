@@ -6,11 +6,11 @@ use tinyvec::TinyVec;
 
 use std::cmp::Ordering;
 
+use std::cell::Cell;
+
 use super::constants::*;
 
-use super::{gas_specific_heats, gas_visibility, reactions, total_num_gases};
-
-use super::reaction::Reaction;
+use super::{gas_specific_heat, gas_visibility, total_num_gases, with_reactions};
 
 trait LinearSearch<T> {
 	fn linear_search(&self, x: &T) -> Result<usize, usize>
@@ -70,7 +70,22 @@ pub struct GasMixture {
 	immutable: bool,
 	mole_ids: TinyVec<[u8; 8]>,
 	moles: TinyVec<[f32; 8]>,
+	heat_capacities: TinyVec<[f32; 8]>,
+	cached_heat_capacity: Cell<Option<f32>>,
 }
+
+/*
+	Cell is not safe. However, we use it only for caching heat capacity. The worst case race condition
+	is thus thread A and B try to access heat capacity at the same time; both find that it's currently
+	uncached, so both go to calculate it; both calculate it, and both calculate it to the same value,
+	then one sets the cache to that value, then the other does.
+
+	Technically, a worse one would be thread A mutates the gas mixture, changing a gas amount,
+	while thread B tries to get its heat capacity; thread B finds a well-defined heat capacity,
+	which is not correct, and uses it for a calculation, but this cannot happen: thread A would
+	have a write lock, precluding thread B from accessing it.
+*/
+unsafe impl Sync for GasMixture {}
 
 impl Default for GasMixture {
 	fn default() -> Self {
@@ -84,10 +99,12 @@ impl GasMixture {
 		GasMixture {
 			mole_ids: TinyVec::new(),
 			moles: TinyVec::new(),
+			heat_capacities: TinyVec::new(),
 			temperature: 2.7,
 			volume: 2500.0,
 			min_heat_capacity: 0.0,
 			immutable: false,
+			cached_heat_capacity: Cell::new(None),
 		}
 	}
 	/// Makes an empty gas mixture with the given volume.
@@ -112,7 +129,12 @@ impl GasMixture {
 	}
 	// Returns an iterator over the gas keys and mole amounts thereof.
 	fn enumerate(&self) -> impl Iterator<Item = (&u8, &f32)> {
-		self.mole_ids.iter().zip_eq(self.moles.iter())
+		self.mole_ids.iter().zip(self.moles.iter())
+	}
+	fn enumerate_with_heat(&self) -> impl Iterator<Item = (&u8, &f32, &f32)> {
+		self.enumerate()
+			.zip(self.heat_capacities.iter())
+			.map(|((a, b), c)| (a, b, c))
 	}
 	/// Allows closures to iterate over each gas.
 	pub fn for_each_gas<F>(&self, f: F)
@@ -146,29 +168,42 @@ impl GasMixture {
 		if !self.immutable && idx < total_num_gases() {
 			if amt.is_normal() && amt > GAS_MIN_MOLES {
 				match self.mole_ids.linear_search(&idx) {
-					Ok(i) => unsafe { *self.moles.get_unchecked_mut(i) = amt },
+					Ok(i) => {
+						unsafe { *self.moles.get_unchecked_mut(i) = amt };
+					}
 					Err(i) => {
 						self.mole_ids.insert(i, idx);
 						self.moles.insert(i, amt);
+						self.heat_capacities.insert(i, gas_specific_heat(idx));
 					}
 				}
 			} else {
 				if let Ok(i) = self.mole_ids.linear_search(&idx) {
 					self.moles.remove(i);
 					self.mole_ids.remove(i);
+					self.heat_capacities.remove(i);
 				}
 			}
 		}
+		self.recalculate_heat_capacity();
 	}
 	/// The heat capacity of the material. [joules?]/mole-kelvin.
 	#[inline]
 	pub fn heat_capacity(&self) -> f32 {
-		let heats = gas_specific_heats();
-		self.enumerate()
-			.fold(0.0, |acc, (&id, amt)| {
-				acc + amt * unsafe { heats.get_unchecked(id as usize) }
-			})
-			.max(self.min_heat_capacity)
+		if let Some(heat_cap) = self.cached_heat_capacity.get() {
+			heat_cap
+		} else {
+			let heat_cap = self
+				.enumerate_with_heat()
+				.fold(0.0, |acc, (_, amt, cap)| acc + amt * cap)
+				.max(self.min_heat_capacity);
+			self.cached_heat_capacity.set(Some(heat_cap));
+			heat_cap
+		}
+	}
+	#[inline]
+	fn recalculate_heat_capacity(&mut self) {
+		self.cached_heat_capacity.set(None);
 	}
 	/// The total mole count of the mixture. Moles.
 	pub fn total_moles(&self) -> f32 {
@@ -189,12 +224,13 @@ impl GasMixture {
 		}
 		let our_heat_capacity = self.heat_capacity();
 		let other_heat_capacity = giver.heat_capacity();
-		for (id, amt) in giver.enumerate() {
+		for (id, amt, cap) in giver.enumerate_with_heat() {
 			match self.mole_ids.linear_search(id) {
 				Ok(idx) => unsafe { *self.moles.get_unchecked_mut(idx) += amt },
 				Err(idx) => {
 					self.moles.insert(idx, *amt);
 					self.mole_ids.insert(idx, *id);
+					self.heat_capacities.insert(idx, *cap)
 				}
 			}
 		}
@@ -204,6 +240,7 @@ impl GasMixture {
 					/ (our_heat_capacity + other_heat_capacity),
 			);
 		}
+		self.recalculate_heat_capacity();
 	}
 	/// Returns a gas mixture that contains a given percentage of this mixture's moles; if this mix is mutable, also removes those moles from the original.
 	pub fn remove_ratio(&mut self, mut ratio: f32) -> GasMixture {
@@ -233,6 +270,9 @@ impl GasMixture {
 		self.mole_ids = sample.mole_ids.clone();
 		self.moles = sample.moles.clone();
 		self.temperature = sample.temperature;
+		self.heat_capacities = sample.heat_capacities.clone();
+		self.cached_heat_capacity
+			.set(sample.cached_heat_capacity.get());
 	}
 	/// A very simple finite difference solution to the heat transfer equation.
 	/// Works well enough for our purposes, though perhaps called less often
@@ -292,14 +332,17 @@ impl GasMixture {
 		}
 		sharer_temperature
 	}
-	/// Returns true if the gases are sufficiently different, false otherwise.
-	pub fn compare(&self, sample: &GasMixture, min_delta: f32) -> bool {
+	/// The second part of old compare(). Compares temperature, but only if this gas has sufficiently high moles.
+	pub fn temperature_compare(&self, sample: &GasMixture) -> bool {
+		(self.get_temperature() - sample.get_temperature()).abs()
+			> MINIMUM_TEMPERATURE_DELTA_TO_SUSPEND
+			&& (self.total_moles() > MINIMUM_MOLES_DELTA_TO_MOVE)
+	}
+	/// Returns the maximum mole delta for an individual gas.
+	pub fn compare(&self, sample: &GasMixture) -> f32 {
 		let mut our_idx = 0;
 		let mut sample_idx = 0;
-		// https://docs.rs/itertools/0.10.0/itertools/trait.Itertools.html#method.merge_join_by
-		// Walks linearly through each gas mixture, using the above method.
-		// We keep track of the indices of each as we go.
-		// The Left(_) and Right(_) paths have an implicit subtract-by-0 in them.
+		let mut ret: f32 = 0.0;
 		for e in self
 			.mole_ids
 			.iter()
@@ -307,38 +350,35 @@ impl GasMixture {
 		{
 			match e {
 				Both(_, _) => {
-					if (unsafe {
-						self.moles.get_unchecked(our_idx) - sample.moles.get_unchecked(sample_idx)
-					})
-					.abs() > min_delta
-					{
-						return true;
-					}
+					ret = ret.max(
+						unsafe {
+							self.moles.get_unchecked(our_idx)
+								- sample.moles.get_unchecked(sample_idx)
+						}
+						.abs(),
+					);
 					our_idx += 1;
 					sample_idx += 1;
 				}
 				Left(_) => {
-					if unsafe { *self.moles.get_unchecked(our_idx) } > min_delta {
-						return true;
-					}
+					ret = ret.max(unsafe { *self.moles.get_unchecked(our_idx) });
 					our_idx += 1;
 				}
 				Right(_) => {
-					if unsafe { *sample.moles.get_unchecked(sample_idx) } > min_delta {
-						return true;
-					}
+					ret = ret.max(unsafe { *sample.moles.get_unchecked(sample_idx) });
 					sample_idx += 1;
 				}
 			}
 		}
-		self.total_moles() > min_delta
-			&& (self.temperature - sample.temperature).abs() > MINIMUM_TEMPERATURE_DELTA_TO_SUSPEND
+		ret
 	}
 	/// Clears the moles from the gas.
 	pub fn clear(&mut self) {
 		if !self.immutable {
 			self.mole_ids.clear();
 			self.moles.clear();
+			self.heat_capacities.clear();
+			self.cached_heat_capacity.set(None);
 		}
 	}
 	/// Resets the gas mixture to an initialized-with-volume state.
@@ -355,18 +395,27 @@ impl GasMixture {
 			for amt in self.moles.iter_mut() {
 				*amt *= multiplier;
 			}
+			*self.cached_heat_capacity.get_mut() = Some(self.heat_capacity() * multiplier); // hax
 		}
 	}
 	/// Checks if the proc can react with any reactions.
 	pub fn can_react(&self) -> bool {
-		reactions().iter().any(|r| r.check_conditions(self))
+		with_reactions(|reactions| reactions.iter().any(|r| r.check_conditions(self)))
 	}
 	/// Gets all of the reactions this mix should do.
-	pub fn all_reactable(&self) -> Vec<&'static Reaction> {
-		reactions()
-			.iter()
-			.filter(|r| r.check_conditions(self))
-			.collect()
+	pub fn all_reactable(&self) -> Vec<std::string::String> {
+		with_reactions(|reactions| {
+			reactions
+				.iter()
+				.filter_map(|r| {
+					if r.check_conditions(self) {
+						Some(r.id.clone())
+					} else {
+						None
+					}
+				})
+				.collect()
+		})
 	}
 	/// Adds heat directly to the gas mixture, in joules (probably).
 	pub fn adjust_heat(&mut self, heat: f32) {
@@ -412,13 +461,16 @@ impl GasMixture {
 				} else if del > 0 {
 					self.moles.swap(idx - del, idx);
 					self.mole_ids.swap(idx - del, idx);
+					self.heat_capacities.swap(idx - del, idx);
 				}
 			}
 		}
 		if del > 0 {
 			self.moles.truncate(len - del);
 			self.mole_ids.truncate(len - del);
+			self.heat_capacities.truncate(len - del);
 		}
+		// not recaching because the difference is, at literal most, on the order of 0.0001
 	}
 }
 
@@ -509,12 +561,15 @@ mod tests {
 		removed.set_moles(0, 22.0);
 		removed.set_moles(1, 82.0);
 		let new = removed.remove_ratio(0.5);
-		assert_eq!(removed.compare(&new, MINIMUM_MOLES_DELTA_TO_MOVE), false);
+		assert_eq!(removed.compare(&new) >= MINIMUM_MOLES_DELTA_TO_MOVE, false);
 		assert_eq!(removed.get_moles(0), 11.0);
 		assert_eq!(removed.get_moles(1), 41.0);
 		removed.mark_immutable();
 		let new_two = removed.remove_ratio(0.5);
-		assert_eq!(removed.compare(&new_two, MINIMUM_MOLES_DELTA_TO_MOVE), true);
+		assert_eq!(
+			removed.compare(&new_two) >= MINIMUM_MOLES_DELTA_TO_MOVE,
+			true
+		);
 		assert_eq!(removed.get_moles(0), 11.0);
 		assert_eq!(removed.get_moles(1), 41.0);
 		assert_eq!(new_two.get_moles(0), 5.5);

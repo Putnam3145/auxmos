@@ -7,17 +7,21 @@ use std::collections::BTreeMap;
 
 use gas_mixture::GasMixture;
 
-use parking_lot::RwLock;
+use parking_lot::{const_rwlock, RwLock};
+
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use std::cell::RefCell;
 
 use reaction::Reaction;
 
-struct Gases {
-	pub gas_specific_heat: Vec<f32>,
-	pub total_num_gases: u8,
-	pub gas_vis_threshold: Vec<Option<f32>>,
-}
+static TOTAL_NUM_GASES: AtomicU8 = AtomicU8::new(0);
+
+static GAS_SPECIFIC_HEAT: RwLock<Option<Vec<f32>>> = const_rwlock(None);
+
+static GAS_VIS_THRESHOLD: RwLock<Option<Vec<Option<f32>>>> = const_rwlock(None); // the things we do for globals
+
+static REACTION_INFO: RwLock<Option<Vec<Reaction>>> = const_rwlock(None);
 
 thread_local! {
 	static GAS_ID_TO_TYPE: RefCell<Vec<Value>> = RefCell::new(Vec::new());
@@ -26,6 +30,7 @@ thread_local! {
 
 #[hook("/proc/auxtools_atmos_init")]
 fn _hook_init() {
+	*REACTION_INFO.write() = Some(get_reaction_info());
 	let gas_types_list: auxtools::List = Proc::find("/proc/gas_types")
 		.ok_or_else(|| runtime!("Could not find gas_types!"))?
 		.call(&[])?
@@ -36,62 +41,34 @@ fn _hook_init() {
 			let mut gas_id_from_type = gf.borrow_mut();
 			gas_id_to_type.clear();
 			gas_id_from_type.clear();
+			let total_num_gases: u8 = gas_types_list.len() as u8;
+			let mut gas_specific_heat: Vec<f32> = Vec::with_capacity(total_num_gases as usize);
+			let mut gas_vis_threshold: Vec<Option<f32>> =
+				Vec::with_capacity(total_num_gases as usize);
+			let meta_gas_visibility_list: auxtools::List =
+				Proc::find("/proc/meta_gas_visibility_list")
+					.ok_or_else(|| runtime!("Invalid Could not find meta_gas_visibility_list!"))?
+					.call(&[])?
+					.as_list()?;
 			for i in 1..gas_types_list.len() + 1 {
-				if let Ok(gas_type) = gas_types_list.get(i) {
-					gas_id_from_type.insert(unsafe { gas_type.value.data.id }, (i - 1) as u8);
-					gas_id_to_type.push(gas_type);
-				} else {
-					panic!(
-						"Gas type not valid! Check lists: {:?}, {:?}",
-						gas_id_to_type, gas_id_from_type
-					);
-				}
+				let v = gas_types_list.get((i) as u32)?;
+				gas_specific_heat.push(gas_types_list.get(&v)?.as_number()?);
+				gas_vis_threshold.push(
+					meta_gas_visibility_list
+						.get(&v)
+						.unwrap_or_else(|_| Value::null())
+						.as_number()
+						.ok(),
+				);
+				gas_id_from_type.insert(unsafe { v.value.data.id }, (i - 1) as u8);
+				gas_id_to_type.push(v);
 			}
-			Ok(Value::from(1.0))
+			*GAS_SPECIFIC_HEAT.write() = Some(gas_specific_heat);
+			*GAS_VIS_THRESHOLD.write() = Some(gas_vis_threshold);
+			TOTAL_NUM_GASES.store(total_num_gases, Ordering::Release);
+			Ok(Value::from(true))
 		})
 	})
-}
-
-fn get_gas_info() -> Gases {
-	let gas_types_list: auxtools::List = Proc::find("/proc/gas_types")
-		.expect("Couldn't find proc gas_types!")
-		.call(&[])
-		.expect("gas_types didn't return correctly!")
-		.as_list()
-		.expect("gas_types' return wasn't a list!");
-	let total_num_gases: u8 = gas_types_list.len() as u8;
-	let mut gas_specific_heat: Vec<f32> = Vec::with_capacity(total_num_gases as usize);
-	let mut gas_vis_threshold: Vec<Option<f32>> = Vec::with_capacity(total_num_gases as usize);
-	let meta_gas_visibility_list: auxtools::List = Proc::find("/proc/meta_gas_visibility_list")
-		.expect("Couldn't find proc meta_gas_visibility_list!")
-		.call(&[])
-		.expect("meta_gas_visibility_list didn't return correctly!")
-		.as_list()
-		.expect("meta_gas_visibility_list's return wasn't a list!");
-	for i in 0..total_num_gases {
-		let v = gas_types_list
-			.get((i + 1) as u32)
-			.expect("An incorrect index was given to the gas_types list!");
-		gas_specific_heat.push(
-			gas_types_list
-				.get(&v)
-				.expect("Gas type wasn't actually a key!")
-				.as_number()
-				.expect("Couldn't get a heat capacity for a gas!"),
-		);
-		gas_vis_threshold.push(
-			meta_gas_visibility_list
-				.get(&v)
-				.unwrap_or_else(|_| Value::null())
-				.as_number()
-				.ok(),
-		);
-	}
-	Gases {
-		gas_specific_heat,
-		total_num_gases,
-		gas_vis_threshold,
-	}
 }
 
 fn get_reaction_info() -> Vec<Reaction> {
@@ -110,56 +87,45 @@ fn get_reaction_info() -> Vec<Reaction> {
 
 #[hook("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
 fn _update_reactions() {
-	get_reaction_info(); // just updates the refs, but this is sufficient
+	*REACTION_INFO.write() = Some(get_reaction_info());
 	Ok(Value::from(true))
 }
 
-#[cfg(not(test))]
-lazy_static! {
-	static ref GAS_INFO: Gases = get_gas_info();
-	static ref REACTION_INFO: Vec<Reaction> = get_reaction_info();
-}
-
-#[cfg(test)]
-lazy_static! {
-	static ref GAS_INFO: Gases = {
-		let mut gas_specific_heat: Vec<f32> = vec![20.0, 20.0, 30.0, 200.0, 5.0];
-		let mut gas_id_to_type: Vec<Value> = vec![
-			Value::null(),
-			Value::null(),
-			Value::null(),
-			Value::null(),
-			Value::null(),
-		];
-		let total_num_gases: u8 = 5;
-		let gas_vis_threshold = vec![None, None, None, None, None];
-		Gases {
-			gas_ids,
-			gas_specific_heat,
-			total_num_gases,
-			gas_vis_threshold,
-		}
-	};
-	static ref REACTION_INFO: Vec<Reaction> = Vec::new();
-}
-
-pub fn reactions() -> &'static Vec<Reaction> {
-	&REACTION_INFO
+pub fn with_reactions<T, F>(mut f: F) -> T
+where
+	F: FnMut(&Vec<Reaction>) -> T,
+{
+	f(&REACTION_INFO
+		.read()
+		.as_ref()
+		.unwrap_or_else(|| panic!("Reactions not loaded yet! Uh oh!")))
 }
 
 /// Returns a static reference to a vector of all the specific heats of the gases.
-pub fn gas_specific_heats() -> &'static Vec<f32> {
-	&GAS_INFO.gas_specific_heat
+pub fn gas_specific_heat(idx: u8) -> f32 {
+	GAS_SPECIFIC_HEAT
+		.read()
+		.as_ref()
+		.unwrap_or_else(|| panic!("Specific heats not loaded yet! Uh oh!"))
+		.get(idx as usize)
+		.unwrap()
+		.clone()
 }
 
 /// Returns the total number of gases in use. Only used by gas mixtures; should probably stay that way.
 pub fn total_num_gases() -> u8 {
-	GAS_INFO.total_num_gases
+	TOTAL_NUM_GASES.load(Ordering::Relaxed)
 }
 
 /// Gets the gas visibility threshold for the given gas ID.
 pub fn gas_visibility(idx: usize) -> Option<f32> {
-	*GAS_INFO.gas_vis_threshold.get(idx).unwrap()
+	GAS_VIS_THRESHOLD
+		.read()
+		.as_ref()
+		.unwrap_or_else(|| panic!("Gas visibility not loaded yet! Uh oh!"))
+		.get(idx)
+		.unwrap()
+		.clone()
 }
 
 /// Returns the appropriate index to be used by the game for a given gas datum.
@@ -207,9 +173,9 @@ impl GasMixtures {
 	{
 		f(&GAS_MIXTURES.read());
 	}
-	fn with_gas_mixture<F>(id: f32, mut f: F) -> DMResult
+	fn with_gas_mixture<T, F>(id: f32, mut f: F) -> Result<T, Runtime>
 	where
-		F: FnMut(&GasMixture) -> DMResult,
+		F: FnMut(&GasMixture) -> Result<T, Runtime>,
 	{
 		let mixtures = GAS_MIXTURES.read();
 		let mix = mixtures
@@ -335,10 +301,18 @@ impl GasMixtures {
 	}
 }
 
+#[shutdown]
+fn _shut_down_heats()
+// these are each called literally once per game so i can have as many as i want, neener neener
+{
+	let mut mixtures = GAS_MIXTURES.write();
+	mixtures.clear();
+}
+
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.
-pub fn with_mix<F>(mix: &Value, f: F) -> DMResult
+pub fn with_mix<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
 where
-	F: FnMut(&GasMixture) -> DMResult,
+	F: FnMut(&GasMixture) -> Result<T, Runtime>,
 {
 	GasMixtures::with_gas_mixture(
 		mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,

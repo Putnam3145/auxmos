@@ -106,6 +106,7 @@ fn _process_turf_hook() {
 											!= SIMULATION_LEVEL_DISABLED)
 										{
 											let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
+											let mut adj_amount = 0;
 											if let Some(gas) =
 												all_mixtures.get(m.mix).unwrap().try_read()
 											{
@@ -140,6 +141,7 @@ fn _process_turf_hook() {
 																if let Some(mix) = entry.try_read()
 																{
 																	end_gas.merge(&mix);
+																	adj_amount += 1;
 																	pressure_diffs[j as usize] = (
 																	loc,
 																	-mix.return_pressure()
@@ -164,12 +166,14 @@ fn _process_turf_hook() {
 															planet_atmos_entry.value();
 														if should_share {
 															end_gas.merge(planet_atmos);
+															adj_amount += 1;
 														} else {
 															if gas.compare(
 																&planet_atmos,
 																MINIMUM_MOLES_DELTA_TO_MOVE,
 															) {
 																end_gas.merge(planet_atmos);
+																adj_amount += 1;
 																should_share = true;
 															}
 														}
@@ -193,7 +197,7 @@ fn _process_turf_hook() {
 												*/
 												if should_share {
 													end_gas.multiply(GAS_DIFFUSION_CONSTANT);
-													Some((i, m, end_gas, pressure_diffs))
+													Some((i, m, end_gas, pressure_diffs, adj_amount))
 												} else {
 													None
 												}
@@ -206,7 +210,8 @@ fn _process_turf_hook() {
 									})
 									.collect::<Vec<_>>()
 							})
-							.flatten();
+							.flatten()
+							.collect::<Vec<_>>();
 					/*
 						For the optimization-heads reading this: this is not an unnecessary collect().
 						Saving all this to the turfs_to_save vector is, in fact, the reason
@@ -216,9 +221,8 @@ fn _process_turf_hook() {
 						for consistency, so collect() is desired. This has been tested, by the way.
 					*/
 					let should_break = turfs_to_save
-						.map(|(i, m, end_gas, mut pressure_diffs)| {
-							let adj_amount = (m.adjacency.count_ones()
-								+ (m.planetary_atmos.is_some() as u32)) as f32;
+						.par_iter()
+						.map(|(i, m, end_gas, mut pressure_diffs, adj_amount)| {
 							let mut this_high_pressure = false;
 							if let Some(entry) = all_mixtures.get(m.mix) {
 								let mut pressure_diff_exists = false;
@@ -238,9 +242,9 @@ fn _process_turf_hook() {
 										|| pressure_diff.1.abs() > fda_pressure_goal;
 								}
 								if max_diff.abs() > 0.25 {
-									let _ = high_pressure_sender.try_send(i);
+									let _ = high_pressure_sender.try_send(*i);
 								} else {
-									let _ = low_pressure_sender.try_send(i);
+									let _ = low_pressure_sender.try_send(*i);
 								}
 								/*
 									1.0 - GAS_DIFFUSION_CONSTANT * adj_amount is going to be
@@ -256,7 +260,7 @@ fn _process_turf_hook() {
 								*/
 								{
 									let gas: &mut GasMixture = &mut entry.write();
-									gas.multiply(1.0 - (GAS_DIFFUSION_CONSTANT * adj_amount));
+									gas.multiply(1.0 - (*adj_amount as f32 * GAS_DIFFUSION_CONSTANT));
 									gas.merge(&end_gas);
 								}
 								/*
@@ -267,7 +271,7 @@ fn _process_turf_hook() {
 									value to byond, so we don't. However, if we do...
 								*/
 								if pressure_diff_exists {
-									let turf_id = i;
+									let turf_id = *i;
 									let diffs_copy = pressure_diffs;
 									sender
 										.try_send(Box::new(move |_| {

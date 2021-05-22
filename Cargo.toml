@@ -9,7 +9,10 @@ edition = "2018"
 [features]
 monstermos = []
 putnamos = []
-reaction_hooks = []
+reaction_hooking = []
+plasma_fire_hook = ["reaction_hooking"]
+trit_fire_hook = ["reaction_hooking"]
+fusion_hook = ["reaction_hooking"]
 explosive_decompression = ["monstermos"]
 putnamos_decompression = ["putnamos"]
 

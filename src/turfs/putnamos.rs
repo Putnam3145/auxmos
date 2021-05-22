@@ -94,8 +94,7 @@ fn explosively_depressurize(
 		}
 		cur_queue_idx += 1;
 	}
-	let hpd = src
-		.get_global("SSAir")?
+	let hpd = auxmos::Value::get_global(byond_string!("SSAir"))?
 		.get_list(byond_string!("high_pressure_delta"))?;
 	for (i, m) in progression_order.iter().rev() {
 		let cur_orig = adjacency_info.get(i).unwrap();

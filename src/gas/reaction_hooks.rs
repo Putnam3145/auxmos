@@ -6,6 +6,7 @@ use auxtools::*;
 
 use crate::{gas_fusion_power, gas_id_from_type_name};
 
+#[feature("plasma_fire_hook")]
 #[hook("/datum/gas_reaction/plasmafire/react")]
 fn _plasma_fire(byond_air: &Value, holder: &Value) {
 	const PLASMA_UPPER_TEMPERATURE: f32 = 1390.0 + super::constants::T0C;
@@ -81,6 +82,7 @@ fn _plasma_fire(byond_air: &Value, holder: &Value) {
 	}
 }
 
+#[feature("trit_fire_hook")]
 #[hook("/datum/gas_reaction/tritfire/react")]
 fn tritfire(byond_air: &Value, holder: &Value) {
 	const TRITIUM_BURN_OXY_FACTOR: f32 = 100.0;
@@ -131,6 +133,7 @@ fn tritfire(byond_air: &Value, holder: &Value) {
 	Ok(Value::from(1.0))
 }
 
+#[feature("fusion_hook")]
 #[hook("/datum/gas_reaction/fusion/react")]
 fn fusion(byond_air: Value, holder: Value) {
 	use std::f32::consts::PI;

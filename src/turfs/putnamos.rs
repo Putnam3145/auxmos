@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use std::cell::Cell;
 
-use auxcallback::{callback_sender_by_id_insert, process_callbacks_for_millis};
+use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -26,7 +26,6 @@ const OPP_DIR_INDEX: [u8; 7] = [1, 0, 3, 2, 5, 4, 6];
 // If you can't tell, this is mostly a massively simplified copy of monstermos.
 
 fn explosively_depressurize(
-	ctx: &DMContext,
 	turf_idx: TurfID,
 	turf: TurfMixture,
 	equalize_hard_turf_limit: usize,
@@ -48,7 +47,7 @@ fn explosively_depressurize(
 		}
 		if m.is_immutable() {
 			space_turfs.push((i, m));
-			actual_turf.set("pressure_specific_target", &actual_turf);
+			actual_turf.set(byond_string!("pressure_specific_target"), &actual_turf);
 		} else {
 			if cur_queue_idx > equalize_hard_turf_limit {
 				continue;
@@ -88,14 +87,16 @@ fn explosively_depressurize(
 				if !adjacency_info.contains_key(&adj_i) && !adj_m.is_immutable() {
 					adjacency_info.insert(i, Cell::new((OPP_DIR_INDEX[j as usize], 0.0)));
 					unsafe { Value::turf_by_id_unchecked(adj_i) }
-						.set("pressure_specific_target", &actual_turf);
+						.set(byond_string!("pressure_specific_target"), &actual_turf);
 					progression_order.push((adj_i, *adj_m));
 				}
 			}
 		}
 		cur_queue_idx += 1;
 	}
-	let hpd = ctx.get_global("SSAir")?.get_list("high_pressure_delta")?;
+	let hpd = src
+		.get_global("SSAir")?
+		.get_list(byond_string!("high_pressure_delta"))?;
 	for (i, m) in progression_order.iter().rev() {
 		let cur_orig = adjacency_info.get(i).unwrap();
 		let mut cur_info = cur_orig.get();
@@ -114,12 +115,18 @@ fn explosively_depressurize(
 			adj_info.1 += cur_info.1;
 			if adj_info.0 != 6 {
 				let adj_turf = unsafe { Value::turf_by_id_unchecked(adj_i) };
-				adj_turf.set("pressure_difference", cur_info.1);
-				adj_turf.set("pressure_direction", (1 << cur_info.0) as f32);
+				adj_turf.set(byond_string!("pressure_difference"), cur_info.1);
+				adj_turf.set(
+					byond_string!("pressure_direction"),
+					(1 << cur_info.0) as f32,
+				);
 			}
 			m.clear_air();
-			actual_turf.set("pressure_difference", cur_info.1);
-			actual_turf.set("pressure_direction", (1 << cur_info.0) as f32);
+			actual_turf.set(byond_string!("pressure_difference"), cur_info.1);
+			actual_turf.set(
+				byond_string!("pressure_direction"),
+				(1 << cur_info.0) as f32,
+			);
 			actual_turf.call("handle decompression floor rip", &[&Value::from(sum)])?;
 			adj_orig.set(adj_info);
 			cur_orig.set(cur_info);
@@ -128,11 +135,12 @@ fn explosively_depressurize(
 	Ok(Value::null())
 }
 
-fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
-	let equalize_turf_limit = src.get_number("equalize_turf_limit")? as usize;
-	let equalize_hard_turf_limit = src.get_number("equalize_hard_turf_limit")? as usize;
-	let max_x = ctx.get_world().get_number("maxx")? as i32;
-	let max_y = ctx.get_world().get_number("maxy")? as i32;
+fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
+	let equalize_turf_limit = src.get_number(byond_string!("equalize_turf_limit"))? as usize;
+	let equalize_hard_turf_limit =
+		src.get_number(byond_string!("equalize_hard_turf_limit"))? as usize;
+	let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
+	let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
 	let turf_receiver = HIGH_PRESSURE_TURFS.1.clone();
 	let resumed = args
 		.get(0)
@@ -149,8 +157,8 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 		) == Ok(EQUALIZATION_NONE)
 	{
 		rayon::spawn(move || {
-			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
-			'turf_loop: for initial_idx in turf_receiver.try_iter() {
+			let sender = byond_callback_sender();
+			'turf_loop: for initial_idx in turf_receiver.try_iter().flatten() {
 				if let Some(initial_turf) = TURF_GASES.get(&initial_idx) {
 					if initial_turf.simulation_level == SIMULATION_LEVEL_ALL
 						&& initial_turf.adjacency > 0
@@ -195,17 +203,15 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 												if cfg!(putnamos_decompression)
 													&& gas.is_immutable()
 												{
-													let _ =
-														sender.try_send(Box::new(move |new_ctx| {
-															explosively_depressurize(
-																new_ctx,
-																cur_idx,
-																cur_turf,
-																equalize_hard_turf_limit,
-																max_x,
-																max_y,
-															)
-														}));
+													let _ = sender.try_send(Box::new(move || {
+														explosively_depressurize(
+															cur_idx,
+															cur_turf,
+															equalize_hard_turf_limit,
+															max_x,
+															max_y,
+														)
+													}));
 													was_space = true;
 													return;
 												} else {
@@ -241,7 +247,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 							let idx_copy = *cur_idx;
 							let parent_copy = *parent_turf;
 							let actual_delta = *pressure_delta;
-							let _ = sender.try_send(Box::new(move |_| {
+							let _ = sender.try_send(Box::new(move || {
 								if parent_copy != 0 {
 									let turf = unsafe { Value::turf_by_id_unchecked(idx_copy) };
 									let enemy_turf =
@@ -267,7 +273,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 	if arg_limit <= 0.0 {
 		return Ok(Value::from(true));
 	}
-	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
+	process_callbacks_for_millis(arg_limit as u64);
 	if let Err(prev_value) = EQUALIZATION_STEP.compare_exchange(
 		EQUALIZATION_DONE,
 		EQUALIZATION_NONE,
@@ -286,5 +292,5 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 // Returns: TRUE if not done, FALSE if done
 #[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
 fn _hook_equalize() {
-	actual_equalize(src, args, ctx)
+	actual_equalize(src, args)
 }

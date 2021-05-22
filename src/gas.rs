@@ -1,9 +1,13 @@
 pub mod constants;
 pub mod gas_mixture;
 pub mod reaction;
+
+#[cfg(feature = "reaction_hooks")]
+pub mod reaction_hooks;
+
 use auxtools::*;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use gas_mixture::GasMixture;
 
@@ -23,9 +27,17 @@ static GAS_VIS_THRESHOLD: RwLock<Option<Vec<Option<f32>>>> = const_rwlock(None);
 
 static REACTION_INFO: RwLock<Option<Vec<Reaction>>> = const_rwlock(None);
 
+#[derive(Default)]
+struct GasIDInfo {
+	id_to_type: Vec<Value>,
+	id_from_type: BTreeMap<u32, u8>,
+	id_from_string: HashMap<std::string::String, u8>,
+}
+
 thread_local! {
-	static GAS_ID_TO_TYPE: RefCell<Vec<Value>> = RefCell::new(Vec::new());
-	static GAS_ID_FROM_TYPE: RefCell<BTreeMap<u32,u8>> = RefCell::new(BTreeMap::new());
+	static GAS_ID_INFO: RefCell<GasIDInfo> = RefCell::new(Default::default());
+	#[cfg(feature = "reaction_hooks")]
+	static FUSION_POWER: RefCell<Vec<f32>> = RefCell::new(Vec::new())
 }
 
 #[hook("/proc/auxtools_atmos_init")]
@@ -35,47 +47,71 @@ fn _hook_init() {
 		.ok_or_else(|| runtime!("Could not find gas_types!"))?
 		.call(&[])?
 		.as_list()?;
-	GAS_ID_TO_TYPE.with(|gt| {
-		GAS_ID_FROM_TYPE.with(|gf| {
-			let mut gas_id_to_type = gt.borrow_mut();
-			let mut gas_id_from_type = gf.borrow_mut();
-			gas_id_to_type.clear();
-			gas_id_from_type.clear();
-			let total_num_gases: u8 = gas_types_list.len() as u8;
-			let mut gas_specific_heat: Vec<f32> = Vec::with_capacity(total_num_gases as usize);
-			let mut gas_vis_threshold: Vec<Option<f32>> =
-				Vec::with_capacity(total_num_gases as usize);
-			let meta_gas_visibility_list: auxtools::List =
-				Proc::find("/proc/meta_gas_visibility_list")
-					.ok_or_else(|| runtime!("Invalid Could not find meta_gas_visibility_list!"))?
-					.call(&[])?
-					.as_list()?;
-			for i in 1..gas_types_list.len() + 1 {
-				let v = gas_types_list.get((i) as u32)?;
-				gas_specific_heat.push(gas_types_list.get(&v)?.as_number()?);
-				gas_vis_threshold.push(
-					meta_gas_visibility_list
-						.get(&v)
-						.unwrap_or_else(|_| Value::null())
-						.as_number()
-						.ok(),
-				);
-				gas_id_from_type.insert(unsafe { v.value.data.id }, (i - 1) as u8);
-				gas_id_to_type.push(v);
+	GAS_ID_INFO.with(|g_| {
+		let mut gas_id_info = g_.borrow_mut();
+		*gas_id_info = Default::default();
+		let total_num_gases: u8 = gas_types_list.len() as u8;
+		let mut gas_specific_heat: Vec<f32> = Vec::with_capacity(total_num_gases as usize);
+		let mut gas_vis_threshold: Vec<Option<f32>> = Vec::with_capacity(total_num_gases as usize);
+		#[cfg(feature = "reaction_hooks")]
+		let mut gas_fusion_powers: Vec<f32> = Vec::with_capacity(total_num_gases as usize);
+		let meta_gas_visibility_list: auxtools::List = Proc::find("/proc/meta_gas_visibility_list")
+			.ok_or_else(|| runtime!("Could not find meta_gas_visibility_list!"))?
+			.call(&[])?
+			.as_list()?;
+		#[cfg(feature = "reaction_hooks")]
+		let meta_fusion_powers_list: auxtools::List = Proc::find("/proc/meta_gas_fusion_list")
+			.ok_or_else(|| runtime!("Could not find meta_gas_fusion_list!"))?
+			.call(&[])?
+			.as_list()?;
+		for i in 1..gas_types_list.len() + 1 {
+			let v = gas_types_list.get((i) as u32)?;
+			gas_specific_heat.push(gas_types_list.get(&v)?.as_number()?);
+			gas_vis_threshold.push(
+				meta_gas_visibility_list
+					.get(&v)
+					.unwrap_or_else(|_| Value::null())
+					.as_number()
+					.ok(),
+			);
+			#[cfg(feature = "reaction_hooks")]
+			gas_fusion_powers.push(
+				meta_fusion_powers_list
+					.get(&v)
+					.unwrap()
+					.as_number()
+					.unwrap(),
+			);
+			gas_id_info
+				.id_from_type
+				.insert(unsafe { v.raw.data.id }, (i - 1) as u8);
+			let gas_str = v.to_string()?;
+			if let Some(stripped) = gas_str.strip_prefix("/datum/gas/") {
+				gas_id_info
+					.id_from_string
+					.insert(stripped.to_string(), (i - 1) as u8);
+			} else {
+				gas_id_info.id_from_string.insert(gas_str, (i - 1) as u8);
 			}
-			*GAS_SPECIFIC_HEAT.write() = Some(gas_specific_heat);
-			*GAS_VIS_THRESHOLD.write() = Some(gas_vis_threshold);
-			TOTAL_NUM_GASES.store(total_num_gases, Ordering::Release);
-			Ok(Value::from(true))
-		})
+
+			gas_id_info.id_to_type.push(v);
+		}
+		*GAS_SPECIFIC_HEAT.write() = Some(gas_specific_heat);
+		*GAS_VIS_THRESHOLD.write() = Some(gas_vis_threshold);
+		#[cfg(feature = "reaction_hooks")]
+		FUSION_POWER.with(|f| {
+			*f.borrow_mut() = gas_fusion_powers;
+		});
+		TOTAL_NUM_GASES.store(total_num_gases, Ordering::Release);
+		Ok(Value::from(true))
 	})
 }
 
 fn get_reaction_info() -> Vec<Reaction> {
 	let gas_reactions = Value::globals()
-		.get("SSair")
+		.get(byond_string!("SSair"))
 		.unwrap()
-		.get_list("gas_reactions")
+		.get_list(byond_string!("gas_reactions"))
 		.unwrap();
 	let mut reaction_cache: Vec<Reaction> = Vec::with_capacity(gas_reactions.len() as usize);
 	for i in 1..gas_reactions.len() + 1 {
@@ -112,6 +148,11 @@ pub fn gas_specific_heat(idx: u8) -> f32 {
 		.clone()
 }
 
+#[cfg(feature = "reaction_hooks")]
+pub fn gas_fusion_power(idx: &u8) -> f32 {
+	FUSION_POWER.with(|g| *g.borrow().get(*idx as usize).unwrap())
+}
+
 /// Returns the total number of gases in use. Only used by gas mixtures; should probably stay that way.
 pub fn total_num_gases() -> u8 {
 	TOTAL_NUM_GASES.load(Ordering::Relaxed)
@@ -130,22 +171,33 @@ pub fn gas_visibility(idx: usize) -> Option<f32> {
 
 /// Returns the appropriate index to be used by the game for a given gas datum.
 pub fn gas_id_from_type(path: &Value) -> Result<u8, Runtime> {
-	GAS_ID_FROM_TYPE.with(|g| {
+	GAS_ID_INFO.with(|g| {
 		Ok(*g
 			.borrow()
-			.get(&unsafe { path.value.data.id })
+			.id_from_type
+			.get(&unsafe { path.raw.data.id })
 			.ok_or_else(|| runtime!("Invalid type! This should be a gas datum typepath!"))?)
 	})
 }
 
 /// Takes an index and returns a Value representing the datum typepath of gas datum stored in that index.
 pub fn gas_id_to_type(id: u8) -> DMResult {
-	GAS_ID_TO_TYPE.with(|g| {
-		let gas_id_to_type = g.borrow();
-		Ok(gas_id_to_type
+	GAS_ID_INFO.with(|g| {
+		Ok(g.borrow()
+			.id_to_type
 			.get(id as usize)
 			.ok_or_else(|| runtime!("Invalid gas ID: {}", id))?
 			.clone())
+	})
+}
+
+pub fn gas_id_from_type_name(name: &str) -> Result<u8, Runtime> {
+	GAS_ID_INFO.with(|g| {
+		Ok(*g
+			.borrow()
+			.id_from_string
+			.get(name)
+			.ok_or_else(|| runtime!("Invalid gas name: {}", name))?)
 	})
 }
 
@@ -167,11 +219,11 @@ thread_local! {
 }
 
 impl GasMixtures {
-	pub fn with_all_mixtures<F>(mut f: F)
+	pub fn with_all_mixtures<T, F>(mut f: F) -> T
 	where
-		F: FnMut(&Vec<RwLock<GasMixture>>),
+		F: FnMut(&Vec<RwLock<GasMixture>>) -> T,
 	{
-		f(&GAS_MIXTURES.read());
+		f(&GAS_MIXTURES.read())
 	}
 	fn with_gas_mixture<T, F>(id: f32, mut f: F) -> Result<T, Runtime>
 	where
@@ -184,9 +236,9 @@ impl GasMixtures {
 			.read();
 		f(&mix)
 	}
-	fn with_gas_mixture_mut<F>(id: f32, mut f: F) -> DMResult
+	fn with_gas_mixture_mut<T, F>(id: f32, mut f: F) -> Result<T, Runtime>
 	where
-		F: FnMut(&mut GasMixture) -> DMResult,
+		F: FnMut(&mut GasMixture) -> Result<T, Runtime>,
 	{
 		let gas_mixtures = GAS_MIXTURES.read();
 		let mut mix = gas_mixtures
@@ -195,9 +247,9 @@ impl GasMixtures {
 			.write();
 		f(&mut mix)
 	}
-	fn with_gas_mixtures<F>(src: f32, arg: f32, mut f: F) -> DMResult
+	fn with_gas_mixtures<T, F>(src: f32, arg: f32, mut f: F) -> Result<T, Runtime>
 	where
-		F: FnMut(&GasMixture, &GasMixture) -> DMResult,
+		F: FnMut(&GasMixture, &GasMixture) -> Result<T, Runtime>,
 	{
 		let gas_mixtures = GAS_MIXTURES.read();
 		let src_gas = gas_mixtures
@@ -210,9 +262,9 @@ impl GasMixtures {
 			.read();
 		f(&src_gas, &arg_gas)
 	}
-	fn with_gas_mixtures_mut<F>(src: f32, arg: f32, mut f: F) -> DMResult
+	fn with_gas_mixtures_mut<T, F>(src: f32, arg: f32, mut f: F) -> Result<T, Runtime>
 	where
-		F: FnMut(&mut GasMixture, &mut GasMixture) -> DMResult,
+		F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<T, Runtime>,
 	{
 		let src = src.to_bits() as usize;
 		let arg = arg.to_bits() as usize;
@@ -238,9 +290,9 @@ impl GasMixtures {
 			)
 		}
 	}
-	fn with_gas_mixtures_custom<F>(src: f32, arg: f32, mut f: F) -> DMResult
+	fn with_gas_mixtures_custom<T, F>(src: f32, arg: f32, mut f: F) -> Result<T, Runtime>
 	where
-		F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> DMResult,
+		F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
 	{
 		let src = src.to_bits() as usize;
 		let arg = arg.to_bits() as usize;
@@ -273,7 +325,7 @@ impl GasMixtures {
 				mix.set(
 					byond_string!("_extools_pointer_gasmixture"),
 					f32::from_bits(next_idx as u32),
-				);
+				)?;
 			} else {
 				let idx = gas_ids.borrow_mut().pop().unwrap();
 				GAS_MIXTURES
@@ -285,7 +337,7 @@ impl GasMixtures {
 				mix.set(
 					byond_string!("_extools_pointer_gasmixture"),
 					f32::from_bits(idx as u32),
-				);
+				)?;
 			}
 			Ok(Value::null())
 		})
@@ -295,18 +347,20 @@ impl GasMixtures {
 		if let Ok(float_bits) = mix.get_number(byond_string!("_extools_pointer_gasmixture")) {
 			let idx = float_bits.to_bits();
 			NEXT_GAS_IDS.with(|gas_ids| gas_ids.borrow_mut().push(idx as usize));
-			mix.set(byond_string!("_extools_pointer_gasmixture"), &Value::null());
+			mix.set(byond_string!("_extools_pointer_gasmixture"), &Value::null())?;
 		}
 		Ok(Value::null())
 	}
 }
 
 #[shutdown]
-fn _shut_down_heats()
+fn _shut_down_gases()
 // these are each called literally once per game so i can have as many as i want, neener neener
 {
-	let mut mixtures = GAS_MIXTURES.write();
-	mixtures.clear();
+	GAS_MIXTURES.write().clear();
+	NEXT_GAS_IDS.with(|gas_ids| {
+		gas_ids.borrow_mut().clear();
+	});
 }
 
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.
@@ -321,9 +375,9 @@ where
 }
 
 /// As with_mix, but mutable.
-pub fn with_mix_mut<F>(mix: &Value, f: F) -> DMResult
+pub fn with_mix_mut<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
 where
-	F: FnMut(&mut GasMixture) -> DMResult,
+	F: FnMut(&mut GasMixture) -> Result<T, Runtime>,
 {
 	GasMixtures::with_gas_mixture_mut(
 		mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
@@ -332,9 +386,9 @@ where
 }
 
 /// As with_mix, but with two mixes.
-pub fn with_mixes<F>(src_mix: &Value, arg_mix: &Value, f: F) -> DMResult
+pub fn with_mixes<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
-	F: FnMut(&GasMixture, &GasMixture) -> DMResult,
+	F: FnMut(&GasMixture, &GasMixture) -> Result<T, Runtime>,
 {
 	GasMixtures::with_gas_mixtures(
 		src_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
@@ -344,9 +398,9 @@ where
 }
 
 /// As with_mix_mut, but with two mixes.
-pub fn with_mixes_mut<F>(src_mix: &Value, arg_mix: &Value, f: F) -> DMResult
+pub fn with_mixes_mut<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
-	F: FnMut(&mut GasMixture, &mut GasMixture) -> DMResult,
+	F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<T, Runtime>,
 {
 	GasMixtures::with_gas_mixtures_mut(
 		src_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
@@ -356,9 +410,9 @@ where
 }
 
 /// Allows different lock levels for each gas. Instead of relevant refs to the gases, returns the RWLock object.
-pub fn with_mixes_custom<F>(src_mix: &Value, arg_mix: &Value, f: F) -> DMResult
+pub fn with_mixes_custom<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
-	F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> DMResult,
+	F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
 {
 	GasMixtures::with_gas_mixtures_custom(
 		src_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,

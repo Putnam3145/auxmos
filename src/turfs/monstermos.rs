@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use auxcallback::{callback_sender_by_id_insert, process_callbacks_for_millis};
+use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
 
 use std::cell::Cell;
 
@@ -75,7 +75,7 @@ fn finalize_eq(
 	max_x: i32,
 	max_y: i32,
 ) {
-	let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
+	let sender = byond_callback_sender();
 	let transfer_dirs = monstermos_orig.take();
 	let planet_transfer_amount = transfer_dirs[6];
 	if planet_transfer_amount > 0.0 {
@@ -124,7 +124,7 @@ fn finalize_eq(
 				}
 				adj_orig.set(adj_info);
 				sender
-					.send(Box::new(move |_| {
+					.send(Box::new(move || {
 						let real_amount = Value::from(-amount);
 						let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
 						let other_turf = unsafe { Value::turf_by_id_unchecked(adj_id as u32) };
@@ -188,7 +188,7 @@ fn explosively_depressurize(
 	cur_orig.set(cur_info);
 	let mut warned_about_planet_atmos = false;
 	let mut cur_queue_idx = 0;
-	let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
+	let sender = byond_callback_sender();
 	while cur_queue_idx < turfs.len() {
 		let (i, m) = turfs[cur_queue_idx];
 		cur_queue_idx += 1;
@@ -204,7 +204,7 @@ fn explosively_depressurize(
 		if m.is_immutable() {
 			space_turfs.push((i, m));
 			sender
-				.send(Box::new(move |_| {
+				.send(Box::new(move || {
 					unsafe { Value::turf_by_id_unchecked(i) }.set(
 						"pressure_specific_target",
 						&[&unsafe { Value::turf_by_id_unchecked(i) }],
@@ -229,7 +229,7 @@ fn explosively_depressurize(
 						}
 						let (call_result_sender, call_result_receiver) = flume::bounded(0);
 						sender
-							.send(Box::new(move |_| {
+							.send(Box::new(move || {
 								unsafe { Value::turf_by_id_unchecked(i) }.call(
 									"consider_firelocks",
 									&[&unsafe { Value::turf_by_id_unchecked(loc) }],
@@ -277,7 +277,7 @@ fn explosively_depressurize(
 					adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 					adj_info.curr_transfer_amount = 0.0;
 					sender
-						.send(Box::new(move |_| {
+						.send(Box::new(move || {
 							unsafe { Value::turf_by_id_unchecked(adj_i) }.set(
 								"pressure_specific_target",
 								&[&unsafe { Value::turf_by_id_unchecked(i) }],
@@ -312,9 +312,12 @@ fn explosively_depressurize(
 			adj_info.curr_transfer_amount += cur_info.curr_transfer_amount;
 			if adj_info.curr_transfer_dir == 6 {
 				sender
-					.send(Box::new(move |_| {
+					.send(Box::new(move || {
 						let byond_turf = unsafe { Value::turf_by_id_unchecked(adj_i) };
-						byond_turf.set("pressure_difference", cur_info.curr_transfer_amount)?;
+						byond_turf.set(
+							byond_string!("pressure_difference"),
+							cur_info.curr_transfer_amount,
+						)?;
 						byond_turf.set(
 							"pressure_direction",
 							(1 << cur_info.curr_transfer_dir) as f32,
@@ -325,9 +328,12 @@ fn explosively_depressurize(
 			}
 			m.clear_air();
 			sender
-				.send(Box::new(move |_| {
+				.send(Box::new(move || {
 					let byond_turf = unsafe { Value::turf_by_id_unchecked(i) };
-					byond_turf.set("pressure_difference", cur_info.curr_transfer_amount)?;
+					byond_turf.set(
+						byond_string!("pressure_difference"),
+						cur_info.curr_transfer_amount,
+					)?;
 					byond_turf.set(
 						"pressure_direction",
 						(1 << cur_info.curr_transfer_dir) as f32,
@@ -343,11 +349,12 @@ fn explosively_depressurize(
 }
 
 // In its own function due to the Rust compiler not liking a massive function in a hook.
-fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
-	let equalize_turf_limit = src.get_number("equalize_turf_limit")? as usize;
-	let equalize_hard_turf_limit = src.get_number("equalize_hard_turf_limit")? as usize;
-	let max_x = ctx.get_world().get_number("maxx")? as i32;
-	let max_y = ctx.get_world().get_number("maxy")? as i32;
+fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
+	let equalize_turf_limit = src.get_number(byond_string!("equalize_turf_limit"))? as usize;
+	let equalize_hard_turf_limit =
+		src.get_number(byond_string!("equalize_hard_turf_limit"))? as usize;
+	let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
+	let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
 	let turf_receiver = HIGH_PRESSURE_TURFS.1.clone();
 	let resumed = args
 		.get(0)
@@ -367,8 +374,8 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 			let mut queue_cycle_slow = 1;
 			let mut queue_cycle = 1;
 			let turf_sender = MONSTERMOS_TURF_CHANNEL.0.clone();
-			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
-			for i in turf_receiver.try_iter() {
+			let sender = byond_callback_sender();
+			for i in turf_receiver.try_iter().flatten() {
 				if let Some(m) = TURF_GASES.get(&i) {
 					if m.simulation_level == SIMULATION_LEVEL_ALL && m.adjacency > 0 {
 						let our_info = info.entry(i).or_default().get();
@@ -772,7 +779,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 											let (call_result_sender, call_result_receiver) =
 												flume::bounded(0);
 											sender
-												.send(Box::new(move |_| {
+												.send(Box::new(move || {
 													unsafe {
 														Value::turf_by_id_unchecked(i as u32)
 													}
@@ -866,7 +873,7 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 	if arg_limit <= 0.0 {
 		return Ok(Value::from(1.0));
 	}
-	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
+	process_callbacks_for_millis(arg_limit as u64);
 	if let Err(prev_value) = EQUALIZATION_STEP.compare_exchange(
 		EQUALIZATION_DONE,
 		EQUALIZATION_NONE,
@@ -885,5 +892,5 @@ fn actual_equalize(src: &Value, args: &[Value], ctx: &DMContext) -> DMResult {
 // Returns: TRUE if not done, FALSE if done
 #[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
 fn _hook_equalize() {
-	actual_equalize(src, args, ctx)
+	actual_equalize(src, args)
 }

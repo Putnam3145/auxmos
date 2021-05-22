@@ -2,11 +2,11 @@ use itertools::Itertools;
 
 use itertools::EitherOrBoth::{Both, Left, Right};
 
-use tinyvec::TinyVec;
-
 use std::cmp::Ordering;
 
 use std::cell::Cell;
+
+use super::reaction::ReactionIdentifier;
 
 use super::constants::*;
 
@@ -68,14 +68,14 @@ pub struct GasMixture {
 	pub volume: f32,
 	min_heat_capacity: f32,
 	immutable: bool,
-	mole_ids: TinyVec<[u8; 8]>,
-	moles: TinyVec<[f32; 8]>,
-	heat_capacities: TinyVec<[f32; 8]>,
+	mole_ids: Vec<u8>,
+	moles: Vec<f32>,
+	heat_capacities: Vec<f32>,
 	cached_heat_capacity: Cell<Option<f32>>,
 }
 
 /*
-	Cell is not safe. However, we use it only for caching heat capacity. The worst case race condition
+	Cell is not thread-safe. However, we use it only for caching heat capacity. The worst case race condition
 	is thus thread A and B try to access heat capacity at the same time; both find that it's currently
 	uncached, so both go to calculate it; both calculate it, and both calculate it to the same value,
 	then one sets the cache to that value, then the other does.
@@ -97,9 +97,9 @@ impl GasMixture {
 	/// Makes an empty gas mixture.
 	pub fn new() -> Self {
 		GasMixture {
-			mole_ids: TinyVec::new(),
-			moles: TinyVec::new(),
-			heat_capacities: TinyVec::new(),
+			mole_ids: Vec::with_capacity(8),
+			moles: Vec::with_capacity(8),
+			heat_capacities: Vec::with_capacity(8),
 			temperature: 2.7,
 			volume: 2500.0,
 			min_heat_capacity: 0.0,
@@ -128,7 +128,7 @@ impl GasMixture {
 		self.min_heat_capacity = amt;
 	}
 	// Returns an iterator over the gas keys and mole amounts thereof.
-	fn enumerate(&self) -> impl Iterator<Item = (&u8, &f32)> {
+	pub fn enumerate(&self) -> impl Iterator<Item = (&u8, &f32)> {
 		self.mole_ids.iter().zip(self.moles.iter())
 	}
 	fn enumerate_with_heat(&self) -> impl Iterator<Item = (&u8, &f32, &f32)> {
@@ -185,10 +185,9 @@ impl GasMixture {
 				}
 			}
 		}
-		self.recalculate_heat_capacity();
+		self.cached_heat_capacity.set(None); // will be recalculated, this is the only time it's required (!!)
 	}
 	/// The heat capacity of the material. [joules?]/mole-kelvin.
-	#[inline]
 	pub fn heat_capacity(&self) -> f32 {
 		if let Some(heat_cap) = self.cached_heat_capacity.get() {
 			heat_cap
@@ -200,10 +199,6 @@ impl GasMixture {
 			self.cached_heat_capacity.set(Some(heat_cap));
 			heat_cap
 		}
-	}
-	#[inline]
-	fn recalculate_heat_capacity(&mut self) {
-		self.cached_heat_capacity.set(None);
 	}
 	/// The total mole count of the mixture. Moles.
 	pub fn total_moles(&self) -> f32 {
@@ -234,13 +229,14 @@ impl GasMixture {
 				}
 			}
 		}
-		if our_heat_capacity + other_heat_capacity > MINIMUM_HEAT_CAPACITY {
+		let combined_heat_capacity = our_heat_capacity + other_heat_capacity;
+		if combined_heat_capacity > MINIMUM_HEAT_CAPACITY {
 			self.set_temperature(
 				(our_heat_capacity * self.temperature + other_heat_capacity * giver.temperature)
-					/ (our_heat_capacity + other_heat_capacity),
+					/ (combined_heat_capacity),
 			);
 		}
-		self.recalculate_heat_capacity();
+		self.cached_heat_capacity.set(Some(combined_heat_capacity));
 	}
 	/// Returns a gas mixture that contains a given percentage of this mixture's moles; if this mix is mutable, also removes those moles from the original.
 	pub fn remove_ratio(&mut self, mut ratio: f32) -> GasMixture {
@@ -403,13 +399,13 @@ impl GasMixture {
 		with_reactions(|reactions| reactions.iter().any(|r| r.check_conditions(self)))
 	}
 	/// Gets all of the reactions this mix should do.
-	pub fn all_reactable(&self) -> Vec<std::string::String> {
+	pub fn all_reactable(&self) -> Vec<ReactionIdentifier> {
 		with_reactions(|reactions| {
 			reactions
 				.iter()
 				.filter_map(|r| {
 					if r.check_conditions(self) {
-						Some(r.id.clone())
+						Some(r.get_id())
 					} else {
 						None
 					}

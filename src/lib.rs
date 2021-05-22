@@ -13,6 +13,11 @@ use gas::reaction::react_by_id;
 
 use gas::constants::*;
 
+#[hook("/proc/process_atmos_callbacks")]
+fn _atmos_callback_handle() {
+	auxcallback::callback_processing_hook(args)
+}
+
 #[hook("/datum/gas_mixture/proc/__gasmixture_register")]
 fn _register_gasmixture_hook() {
 	gas::GasMixtures::register_gasmix(src)
@@ -280,7 +285,7 @@ fn _react_hook() {
 	let holder = args.first().unwrap_or(&n);
 	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
 	for reaction in reactions {
-		ret |= react_by_id(&reaction, src, holder)?.as_number()? as i32;
+		ret |= react_by_id(reaction, src, holder)?.as_number()? as i32;
 		if ret & STOP_REACTIONS == STOP_REACTIONS {
 			return Ok(Value::from(ret as f32));
 		}
@@ -320,14 +325,16 @@ fn _equalize_with_hook() {
 #[hook("/proc/equalize_all_gases_in_list")]
 fn _equalize_all_hook() {
 	use std::collections::BTreeSet;
-	let gas_list: BTreeSet<usize> = args
+	let value_list = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of args for equalize all: 0"))?
-		.as_list()?
-		.to_vec()
-		.iter()
-		.map(|v| {
-			v.get_number(byond_string!("_extools_pointer_gasmixture"))
+		.as_list()?;
+	let gas_list: BTreeSet<usize> = (1..value_list.len() + 1)
+		.map(|i| {
+			value_list
+				.get(i)
+				.unwrap()
+				.get_number(byond_string!("_extools_pointer_gasmixture"))
 				.unwrap()
 				.to_bits() as usize
 		})

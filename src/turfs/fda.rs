@@ -4,9 +4,9 @@ use crate::GasMixtures;
 
 use std::time::{Duration, Instant};
 
-use auxcallback::{callback_sender_by_id_insert, process_callbacks_for_millis};
+use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 
 const PROCESS_NOT_STARTED: u8 = 0;
 
@@ -20,13 +20,13 @@ static TURF_PROCESS_TIME: AtomicU64 = AtomicU64::new(1000000);
 
 static HEAT_PROCESS_TIME: AtomicU64 = AtomicU64::new(1000000);
 
-static SUBSYSTEM_FIRE_COUNT: AtomicU32 = AtomicU32::new(0);
+static WAITING_FOR_THREAD: AtomicBool = AtomicBool::new(false);
 
 lazy_static! {
 	// Speeds up excited group processing.
 	static ref LOW_PRESSURE_TURFS: (
-		flume::Sender<TurfID>,
-		flume::Receiver<TurfID>
+		flume::Sender<Vec<TurfID>>,
+		flume::Receiver<Vec<TurfID>>
 	) = flume::unbounded();
 }
 
@@ -41,7 +41,6 @@ fn _process_turf_hook() {
 		echo FEA, the original SS13 atmos system.
 	*/
 	// Don't want to start it while there's already a thread running, so we only start it if it hasn't been started.
-	SUBSYSTEM_FIRE_COUNT.store(src.get_number("times_fired")? as u32, Ordering::SeqCst);
 	let resumed = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 0"))?
@@ -51,25 +50,22 @@ fn _process_turf_hook() {
 		&& PROCESSING_TURF_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED
 		&& !PROCESSING_HEAT.load(Ordering::SeqCst)
 	{
-		let fda_max_steps = src.get_number("share_max_steps").unwrap_or_else(|_| 1.0) as i32;
-		let fda_pressure_goal = src
-			.get_number("share_pressure_diff_to_stop")
-			.unwrap_or_else(|_| 101.325);
-		let max_x = ctx.get_world().get_number("maxx")? as i32;
-		let max_y = ctx.get_world().get_number("maxy")? as i32;
+		let fda_max_steps = src
+			.get_number(byond_string!("share_max_steps"))
+			.unwrap_or_else(|_| 1.0) as i32;
+		let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
+		let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
 		rayon::spawn(move || {
 			PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
-			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
 			let start_time = Instant::now();
 			let high_pressure_sender = HIGH_PRESSURE_TURFS.0.clone();
 			let low_pressure_sender = LOW_PRESSURE_TURFS.0.clone();
-			let initial_fire_count = SUBSYSTEM_FIRE_COUNT.load(Ordering::SeqCst);
 			let mut cur_count = 1;
-			GasMixtures::with_all_mixtures(|all_mixtures| {
-				loop {
-					if cur_count > fda_max_steps {
-						break;
-					}
+			loop {
+				if cur_count > fda_max_steps || WAITING_FOR_THREAD.load(Ordering::SeqCst) {
+					break;
+				}
+				GasMixtures::with_all_mixtures(|all_mixtures| {
 					let turfs_to_save = TURF_GASES
 						/*
 							This uses the DashMap raw API to access the shards directly.
@@ -170,7 +166,7 @@ fn _process_turf_hook() {
 														|| gas.compare(&planet_atmos)
 															> MINIMUM_MOLES_DELTA_TO_MOVE
 													{
-														end_gas.merge(planet_atmos);
+														end_gas.merge(&planet_atmos);
 														adj_amount += 1;
 														should_share = true;
 													}
@@ -217,12 +213,10 @@ fn _process_turf_hook() {
 						In short: the above actually needs to finish before the below starts
 						for consistency, so collect() is desired. This has been tested, by the way.
 					*/
-					let should_break = turfs_to_save
+					let (low_pressure, high_pressure): (Vec<_>, Vec<_>) = turfs_to_save
 						.par_iter()
-						.map(|(i, m, end_gas, mut pressure_diffs, adj_amount)| {
-							let mut this_high_pressure = false;
+						.filter_map(|(i, m, end_gas, mut pressure_diffs, adj_amount)| {
 							if let Some(entry) = all_mixtures.get(m.mix) {
-								let mut pressure_diff_exists = false;
 								let mut max_diff = 0.0f32;
 								let moved_pressure = {
 									let gas = entry.read();
@@ -231,17 +225,7 @@ fn _process_turf_hook() {
 								for pressure_diff in pressure_diffs.iter_mut() {
 									// pressure_diff.1 here was set to a negative above, so we just add.
 									pressure_diff.1 += moved_pressure;
-									max_diff = max_diff.max(pressure_diff.1);
-									// See the explanation below.
-									pressure_diff_exists =
-										pressure_diff_exists || pressure_diff.1.abs() > 0.5;
-									this_high_pressure = this_high_pressure
-										|| pressure_diff.1.abs() > fda_pressure_goal;
-								}
-								if max_diff.abs() > 1.0 {
-									let _ = high_pressure_sender.try_send(*i);
-								} else {
-									let _ = low_pressure_sender.try_send(*i);
+									max_diff = max_diff.max(pressure_diff.1.abs());
 								}
 								/*
 									1.0 - GAS_DIFFUSION_CONSTANT * adj_amount is going to be
@@ -269,49 +253,62 @@ fn _process_turf_hook() {
 									to do any more and we don't need to send the
 									value to byond, so we don't. However, if we do...
 								*/
-								if pressure_diff_exists {
-									let turf_id = *i;
-									let diffs_copy = pressure_diffs;
-									sender
-										.try_send(Box::new(move |_| {
-											if turf_id == 0 {
-												return Ok(Value::null());
-											}
-											let turf =
-												unsafe { Value::turf_by_id_unchecked(turf_id) };
-											for &(id, diff) in diffs_copy.iter() {
-												if id != 0 {
-													let enemy_tile =
-														unsafe { Value::turf_by_id_unchecked(id) };
-													if diff > 5.0 {
-														turf.call(
-															"consider_pressure_difference",
-															&[&enemy_tile, &Value::from(diff)],
-														)?;
-													} else if diff < -5.0 {
-														enemy_tile.call(
-															"consider_pressure_difference",
-															&[&turf.clone(), &Value::from(-diff)],
-														)?;
-													}
-												}
-											}
-											Ok(Value::null())
-										}))
-										.unwrap();
+								Some((*i, pressure_diffs, max_diff))
+							} else {
+								None
+							}
+						})
+						.partition(|&(_, _, max_diff)| max_diff <= 5.0);
+					if cfg!(putnamos) || cfg!(monstermos) {
+						let _ = high_pressure_sender
+							.try_send(high_pressure.par_iter().map(|(i, _, _)| *i).collect());
+					}
+					let _ = low_pressure_sender.try_send(
+						low_pressure
+							.par_iter()
+							.filter_map(
+								|&(i, _, max_diff)| {
+									if max_diff <= 1.0 {
+										Some(i)
+									} else {
+										None
+									}
+								},
+							)
+							.collect(),
+					);
+					let pressure_deltas_chunked = high_pressure.par_chunks(20).collect::<Vec<_>>();
+					pressure_deltas_chunked.par_iter().for_each(|temp_value| {
+						let sender = byond_callback_sender();
+						let these_pressure_deltas = temp_value.iter().copied().collect::<Vec<_>>();
+						let _ = sender.try_send(Box::new(move || {
+							for &(turf_id, pressure_diffs, _) in
+								these_pressure_deltas.iter().filter(|&(id, _, _)| *id != 0)
+							{
+								let turf = unsafe { Value::turf_by_id_unchecked(turf_id) };
+								for &(id, diff) in pressure_diffs.iter() {
+									if id != 0 {
+										let enemy_tile = unsafe { Value::turf_by_id_unchecked(id) };
+										if diff > 5.0 {
+											turf.call(
+												"consider_pressure_difference",
+												&[&enemy_tile, &Value::from(diff)],
+											)?;
+										} else if diff < -5.0 {
+											enemy_tile.call(
+												"consider_pressure_difference",
+												&[&turf.clone(), &Value::from(-diff)],
+											)?;
+										}
+									}
 								}
 							}
-							this_high_pressure
-						})
-						.reduce(|| false, |a, b| a || b);
-					if should_break
-						|| SUBSYSTEM_FIRE_COUNT.load(Ordering::SeqCst) != initial_fire_count
-					{
-						return;
-					}
-					cur_count += 1;
-				}
-			});
+							Ok(Value::null())
+						}));
+					});
+				});
+				cur_count += 1;
+			}
 			//Alright, now how much time did that take?
 			let bench = start_time.elapsed().as_nanos();
 			PROCESSING_TURF_STEP.store(PROCESS_DONE, Ordering::SeqCst);
@@ -325,20 +322,25 @@ fn _process_turf_hook() {
 
 #[hook("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
 fn _finish_process_turfs() {
+	WAITING_FOR_THREAD.store(true, Ordering::SeqCst);
 	let arg_limit = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf finishing: 0"))?
 		.as_number()?;
-	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
+	let processing_callbacks_unfinished = process_callbacks_for_millis(arg_limit as u64);
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
-	Ok(Value::from(
-		PROCESSING_TURF_STEP.compare_exchange(
-			PROCESS_DONE,
-			PROCESS_NOT_STARTED,
-			Ordering::SeqCst,
-			Ordering::Relaxed,
-		) == Err(PROCESS_PROCESSING),
-	))
+	let processing_turfs_unfinished = PROCESSING_TURF_STEP.compare_exchange(
+		PROCESS_DONE,
+		PROCESS_NOT_STARTED,
+		Ordering::SeqCst,
+		Ordering::Relaxed,
+	) == Err(PROCESS_PROCESSING);
+	if processing_callbacks_unfinished || processing_turfs_unfinished {
+		Ok(Value::from(true))
+	} else {
+		WAITING_FOR_THREAD.store(false, Ordering::SeqCst);
+		Ok(Value::from(false))
+	}
 }
 
 #[hook("/datum/controller/subsystem/air/proc/turf_process_time")]
@@ -391,12 +393,12 @@ fn _process_heat_hook() {
 			turf tiles are 1 meter^2 anyway--the atmos subsystem
 			does this in general, thus turf gas mixtures being 2.5 m^3.
 		*/
-		let time_delta = (src.get_number("wait")? / 10.0) as f64;
-		let max_x = ctx.get_world().get_number("maxx")? as i32;
-		let max_y = ctx.get_world().get_number("maxy")? as i32;
+		let time_delta = (src.get_number(byond_string!("wait"))? / 10.0) as f64;
+		let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
+		let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
 		rayon::spawn(move || {
 			let start_time = Instant::now();
-			let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
+			let sender = byond_callback_sender();
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * time_delta;
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * time_delta;
 			TURF_TEMPERATURES
@@ -404,8 +406,7 @@ fn _process_heat_hook() {
 					Same weird shard trick as above.
 				*/
 				.shards()
-				.iter()
-				.par_bridge()
+				.par_iter()
 				.map(|shard| {
 					shard
 						.read()
@@ -422,10 +423,7 @@ fn _process_heat_hook() {
 								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 								let mut is_temp_delta_with_air = false;
 								if let Some(m) = TURF_GASES.get(&i) {
-									if m.simulation_level != SIMULATION_LEVEL_NONE
-										&& m.simulation_level & SIMULATION_LEVEL_DISABLED
-											!= SIMULATION_LEVEL_DISABLED
-									{
+									if m.simulation_level & SIMULATION_LEVEL_ANY > 0 {
 										GasMixtures::with_all_mixtures(|all_mixtures| {
 											if let Some(entry) = all_mixtures.get(m.mix) {
 												if let Some(gas) = entry.try_read() {
@@ -479,8 +477,10 @@ fn _process_heat_hook() {
 						})
 						.collect::<Vec<_>>()
 				})
-				.flatten_iter()
-				.for_each(|(i, new_temp)| {
+				.flatten()
+				.collect::<Vec<_>>() // for consistency, unfortunately
+				.iter()
+				.for_each(|&(i, new_temp)| {
 					let t: &mut ThermalInfo = &mut TURF_TEMPERATURES.get_mut(&i).unwrap();
 					if let Some(m) = TURF_GASES.get(&i) {
 						if m.simulation_level != SIMULATION_LEVEL_NONE
@@ -516,9 +516,9 @@ fn _process_heat_hook() {
 						&& t.temperature > t.heat_capacity
 					{
 						// not what heat capacity means but whatever
-						let _ = sender.try_send(Box::new(move |_| {
+						let _ = sender.try_send(Box::new(move || {
 							let turf = unsafe { Value::turf_by_id_unchecked(i) };
-							turf.set("to_be_destroyed", 1.0);
+							turf.set(byond_string!("to_be_destroyed"), 1.0)?;
 							Ok(Value::null())
 						}));
 					}
@@ -535,11 +535,7 @@ fn _process_heat_hook() {
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to heat processing: 0"))?
 		.as_number()?;
-	Ok(Value::from(process_callbacks_for_millis(
-		ctx,
-		SSAIR_NAME.to_string(),
-		arg_limit as u64,
-	)))
+	Ok(Value::from(process_callbacks_for_millis(arg_limit as u64)))
 }
 
 static POST_PROCESS_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
@@ -553,14 +549,14 @@ fn _post_process_turfs() {
 	if POST_PROCESS_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
 		rayon::spawn(move || {
 			POST_PROCESS_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
-			TURF_GASES.shards().iter().par_bridge().for_each(|shard| {
-				let sender = callback_sender_by_id_insert(SSAIR_NAME.to_string());
+			TURF_GASES.shards().par_iter().for_each(|shard| {
+				let sender = byond_callback_sender();
 				GasMixtures::with_all_mixtures(|all_mixtures| {
-					shard.read().iter().for_each(|(&i, m_v)| {
+					shard.read().par_iter().for_each(|(&i, m_v)| {
 						let m = m_v.get();
-						if m.simulation_level > SIMULATION_LEVEL_NONE
-							&& (m.simulation_level & SIMULATION_LEVEL_DISABLED
-								!= SIMULATION_LEVEL_DISABLED)
+						if m.simulation_level > 0
+							&& m.simulation_level & SIMULATION_LEVEL_DISABLED
+								!= SIMULATION_LEVEL_DISABLED
 						{
 							if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
 								let visibility = gas.visibility_hash();
@@ -568,7 +564,7 @@ fn _post_process_turfs() {
 									check_and_update_vis_hash(i, visibility);
 								let reactable = gas.can_react();
 								if should_update_visuals || reactable {
-									let _ = sender.try_send(Box::new(move |_| {
+									let _ = sender.try_send(Box::new(move || {
 										let turf = unsafe { Value::turf_by_id_unchecked(i) };
 										if reactable {
 											turf.get(byond_string!("air"))?
@@ -589,7 +585,7 @@ fn _post_process_turfs() {
 		});
 	}
 	Ok(Value::from(
-		process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64)
+		process_callbacks_for_millis(arg_limit as u64)
 			|| POST_PROCESS_STEP.compare_exchange(
 				PROCESS_DONE,
 				PROCESS_NOT_STARTED,
@@ -614,14 +610,14 @@ fn process_excited_groups() {
 		.as_number()?
 		== 1.0;
 	if !resumed && EXCITED_GROUP_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
-		let max_x = ctx.get_world().get_number("maxx")? as i32;
-		let max_y = ctx.get_world().get_number("maxy")? as i32;
+		let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
+		let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
 		rayon::spawn(move || {
 			use std::collections::{BTreeSet, VecDeque};
 			EXCITED_GROUP_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
 			let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
 			let low_pressure_receiver = LOW_PRESSURE_TURFS.1.clone();
-			for initial_turf in low_pressure_receiver.try_iter() {
+			for initial_turf in low_pressure_receiver.try_iter().flatten() {
 				if found_turfs.contains(&initial_turf) {
 					continue;
 				}
@@ -644,8 +640,7 @@ fn process_excited_groups() {
 							min_pressure = min_pressure.min(pressure);
 							max_pressure = max_pressure.max(pressure);
 							if (max_pressure - min_pressure).abs()
-								>= 0.4 * (turfs.len() as f32).sqrt()
-								|| min_pressure <= 1.0
+								>= (0.4 * (turfs.len() as f32).sqrt()).max(1.0)
 							{
 								return;
 							}
@@ -662,12 +657,14 @@ fn process_excited_groups() {
 								}
 							}
 						}
-						if max_pressure - min_pressure < 1.0 {
+						if max_pressure - min_pressure
+							< (0.4 * (turfs.len() as f32).sqrt()).max(1.0)
+						{
 							fully_mixed.multiply((turfs.len() as f64).recip() as f32);
-							for turf in turfs.iter() {
+							turfs.par_iter().for_each(|turf| {
 								let mut mix = all_mixtures.get(turf.mix).unwrap().write();
 								mix.copy_from_mutable(&fully_mixed);
-							}
+							});
 						}
 					});
 				}
@@ -679,7 +676,7 @@ fn process_excited_groups() {
 		.get(1)
 		.ok_or_else(|| runtime!("Wrong number of arguments to excited group processing: 1"))?
 		.as_number()?;
-	process_callbacks_for_millis(ctx, SSAIR_NAME.to_string(), arg_limit as u64);
+	process_callbacks_for_millis(arg_limit as u64);
 	Ok(Value::from(
 		EXCITED_GROUP_STEP.compare_exchange(
 			PROCESS_DONE,
@@ -693,11 +690,9 @@ fn process_excited_groups() {
 #[shutdown]
 fn reset_auxmos_processing() {
 	PROCESSING_TURF_STEP.store(PROCESS_NOT_STARTED, Ordering::SeqCst);
-	SUBSYSTEM_FIRE_COUNT.store(0, Ordering::SeqCst);
 	EXCITED_GROUP_STEP.store(PROCESS_NOT_STARTED, Ordering::SeqCst);
 	POST_PROCESS_STEP.store(PROCESS_NOT_STARTED, Ordering::SeqCst);
 	PROCESSING_HEAT.store(false, Ordering::SeqCst);
 	TURF_PROCESS_TIME.store(1000000, Ordering::SeqCst);
 	HEAT_PROCESS_TIME.store(1000000, Ordering::SeqCst);
-	SUBSYSTEM_FIRE_COUNT.store(0, Ordering::SeqCst)
 }

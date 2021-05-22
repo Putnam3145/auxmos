@@ -9,6 +9,7 @@ edition = "2018"
 [features]
 monstermos = []
 putnamos = []
+reaction_hooks = []
 explosive_decompression = ["monstermos"]
 putnamos_decompression = ["putnamos"]
 
@@ -28,7 +29,7 @@ coarsetime = "0.1.16"
 parking_lot = "0.11.1"
 
 [dependencies.dashmap]
-version = "3.11.10"
+version = "4.0.2"
 features = ["raw-api"]
 
 [dependencies.tinyvec]

@@ -103,6 +103,9 @@ fn _hook_init() {
 			*f.borrow_mut() = gas_fusion_powers;
 		});
 		TOTAL_NUM_GASES.store(total_num_gases, Ordering::Release);
+		Proc::find("/world/proc/refresh_atmos_grid")
+			.unwrap()
+			.call(&[])?;
 		Ok(Value::from(true))
 	})
 }
@@ -213,10 +216,11 @@ pub struct GasMixtures {}
 lazy_static! {
 	static ref GAS_MIXTURES: RwLock<Vec<RwLock<GasMixture>>> =
 		RwLock::new(Vec::with_capacity(100000));
+	static ref NEXT_GAS_IDS: crossbeam::queue::ArrayQueue<usize> = crossbeam::queue::ArrayQueue::new(8192); //260 kb
+	static ref BACKUP_GAS_IDS: crossbeam::queue::SegQueue<usize> = crossbeam::queue::SegQueue::new();
 }
-thread_local! {
-	static NEXT_GAS_IDS: RefCell<Vec<usize>> = RefCell::new(Vec::new());
-}
+
+static ALREADY_ENQUEUING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 impl GasMixtures {
 	pub fn with_all_mixtures<T, F>(mut f: F) -> T
@@ -315,38 +319,57 @@ impl GasMixtures {
 	}
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
 	pub fn register_gasmix(mix: &Value) -> DMResult {
-		NEXT_GAS_IDS.with(|gas_ids| -> DMResult {
-			if gas_ids.borrow().is_empty() {
-				let mut gas_mixtures = GAS_MIXTURES.write();
-				let next_idx = gas_mixtures.len();
-				gas_mixtures.push(RwLock::new(GasMixture::from_vol(
-					mix.get_number(byond_string!("initial_volume"))?,
-				)));
-				mix.set(
-					byond_string!("_extools_pointer_gasmixture"),
-					f32::from_bits(next_idx as u32),
-				)?;
-			} else {
-				let idx = gas_ids.borrow_mut().pop().unwrap();
-				GAS_MIXTURES
-					.read()
-					.get(idx)
-					.unwrap()
-					.write()
-					.clear_with_vol(mix.get_number(byond_string!("initial_volume"))?);
-				mix.set(
-					byond_string!("_extools_pointer_gasmixture"),
-					f32::from_bits(idx as u32),
-				)?;
+		if let Some(idx) = NEXT_GAS_IDS.pop() {
+			{
+				if !BACKUP_GAS_IDS.is_empty() && ALREADY_ENQUEUING.load(Ordering::SeqCst) {
+					rayon::spawn(|| {
+						ALREADY_ENQUEUING.store(true, Ordering::SeqCst);
+						loop {
+							if let Some(id) = BACKUP_GAS_IDS.pop() {
+								if let Err(id) = NEXT_GAS_IDS.push(id) {
+									BACKUP_GAS_IDS.push(id);
+									ALREADY_ENQUEUING.store(false, Ordering::SeqCst);
+									return;
+								}
+							} else {
+								ALREADY_ENQUEUING.store(false, Ordering::SeqCst);
+								return;
+							}
+						}
+					});
+				}
 			}
-			Ok(Value::null())
-		})
+			GAS_MIXTURES
+				.read()
+				.get(idx)
+				.unwrap()
+				.write()
+				.clear_with_vol(mix.get_number(byond_string!("initial_volume"))?);
+			mix.set(
+				byond_string!("_extools_pointer_gasmixture"),
+				f32::from_bits(idx as u32),
+			)?;
+		} else {
+			let initial_volume = mix.get_number(byond_string!("initial_volume"))?;
+			let new_entry = RwLock::new(GasMixture::from_vol(initial_volume));
+			mix.set(
+				byond_string!("_extools_pointer_gasmixture"),
+				f32::from_bits({
+					let mut gas_mixtures = GAS_MIXTURES.write();
+					let next_idx = gas_mixtures.len();
+					gas_mixtures.push(new_entry);
+					next_idx
+				} as u32),
+			)?;
+		}
+		Ok(Value::null())
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
 	pub fn unregister_gasmix(mix: &Value) -> DMResult {
 		if let Ok(float_bits) = mix.get_number(byond_string!("_extools_pointer_gasmixture")) {
-			let idx = float_bits.to_bits();
-			NEXT_GAS_IDS.with(|gas_ids| gas_ids.borrow_mut().push(idx as usize));
+			if let Err(bits) = NEXT_GAS_IDS.push(float_bits.to_bits() as usize) {
+				BACKUP_GAS_IDS.push(bits);
+			}
 			mix.set(byond_string!("_extools_pointer_gasmixture"), &Value::null())?;
 		}
 		Ok(Value::null())
@@ -358,9 +381,12 @@ fn _shut_down_gases()
 // these are each called literally once per game so i can have as many as i want, neener neener
 {
 	GAS_MIXTURES.write().clear();
-	NEXT_GAS_IDS.with(|gas_ids| {
-		gas_ids.borrow_mut().clear();
-	});
+	while !NEXT_GAS_IDS.is_empty() {
+		NEXT_GAS_IDS.pop();
+	}
+	while !BACKUP_GAS_IDS.is_empty() {
+		BACKUP_GAS_IDS.pop();
+	}
 }
 
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.
@@ -422,7 +448,7 @@ where
 }
 
 pub(crate) fn amt_gases() -> usize {
-	NEXT_GAS_IDS.with(|next_gas_ids| GAS_MIXTURES.read().len() - next_gas_ids.borrow().len())
+	GAS_MIXTURES.read().len() - (NEXT_GAS_IDS.len() + BACKUP_GAS_IDS.len())
 }
 
 pub(crate) fn tot_gases() -> usize {

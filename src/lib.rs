@@ -90,8 +90,7 @@ fn _remove_ratio_hook() {
 		Err(runtime!("remove_ratio called with fewer than 2 arguments"))
 	} else {
 		with_mixes_mut(src, &args[0], |src_mix, into_mix| {
-			into_mix
-				.copy_from_mutable(&src_mix.remove_ratio(args[1].as_number().unwrap_or_default()));
+			&src_mix.remove_ratio(into_mix, args[1].as_number().unwrap_or_default());
 			Ok(Value::null())
 		})
 	}
@@ -103,7 +102,7 @@ fn _remove_hook() {
 		Err(runtime!("remove called with fewer than 2 arguments"))
 	} else {
 		with_mixes_mut(src, &args[0], |src_mix, into_mix| {
-			into_mix.copy_from_mutable(&src_mix.remove(args[1].as_number().unwrap_or_default()));
+			src_mix.remove(into_mix, args[1].as_number().unwrap_or_default());
 			Ok(Value::null())
 		})
 	}
@@ -219,16 +218,19 @@ fn _scrub_into_hook() {
 	} else {
 		with_mixes_mut(src, &args[0], |src_gas, dest_gas| {
 			let gases_to_scrub = args[1].as_list()?;
-			let mut buffer = gas::gas_mixture::GasMixture::from_vol(gas::constants::CELL_VOLUME);
-			buffer.set_temperature(src_gas.get_temperature());
-			for idx in 1..gases_to_scrub.len() + 1 {
-				if let Ok(gas_id) = gas_id_from_type(&gases_to_scrub.get(idx).unwrap()) {
-					buffer.set_moles(gas_id, src_gas.get_moles(gas_id));
-					src_gas.set_moles(gas_id, 0.0);
+			let mut buffer =
+				gas::gas_mixture::GasMixture::new_from_global(gas::constants::CELL_VOLUME);
+			buffer.with_mut(|buffer| {
+				buffer.set_temperature(src_gas.get_temperature());
+				for idx in 1..gases_to_scrub.len() + 1 {
+					if let Ok(gas_id) = gas_id_from_type(&gases_to_scrub.get(idx).unwrap()) {
+						buffer.set_moles(gas_id, src_gas.get_moles(gas_id));
+						src_gas.set_moles(gas_id, 0.0);
+					}
 				}
-			}
-			dest_gas.merge(&buffer);
-			Ok(Value::from(true))
+				dest_gas.merge(&buffer);
+				Ok(Value::from(true))
+			})
 		})
 	}
 }
@@ -339,25 +341,31 @@ fn _equalize_all_hook() {
 				.to_bits() as usize
 		})
 		.collect(); // collect because get_number is way slower than the one-time allocation
-	let mut tot = gas::gas_mixture::GasMixture::new();
+	let mut tot_ref = gas::gas_mixture::GasMixture::new_from_global(0.0);
 	let mut tot_vol: f64 = 0.0;
 	GasMixtures::with_all_mixtures(move |all_mixtures| {
-		for &id in gas_list.iter() {
-			if let Some(src_gas_lock) = all_mixtures.get(id) {
-				let src_gas = src_gas_lock.read();
-				tot.merge(&src_gas);
-				tot_vol += src_gas.volume as f64;
-			}
-		}
-		if tot_vol > 0.0 {
+		tot_ref.with_borrowed_vec_mut(all_mixtures, |tot| {
 			for &id in gas_list.iter() {
-				if let Some(dest_gas_lock) = all_mixtures.get(id) {
-					let dest_gas = &mut dest_gas_lock.write();
-					let vol = dest_gas.volume; // don't wanna borrow it in the below
-					dest_gas.copy_from_mutable(&tot);
-					dest_gas.multiply((vol as f64 / tot_vol) as f32);
+				if let Some(src_gas_lock) = all_mixtures.get(id) {
+					let src_gas = src_gas_lock.read();
+					tot.merge(&src_gas);
+					tot_vol += src_gas.volume as f64;
 				}
 			}
+		});
+		if tot_vol > 0.0 {
+			use rayon;
+			use rayon::prelude::*;
+			tot_ref.with_borrowed_vec(all_mixtures, |tot| {
+				gas_list.par_iter().for_each(|&id| {
+					if let Some(dest_gas_lock) = all_mixtures.get(id) {
+						let dest_gas = &mut dest_gas_lock.write();
+						let vol = dest_gas.volume; // don't wanna borrow it in the below
+						dest_gas.copy_from_mutable(&tot);
+						dest_gas.multiply((vol as f64 / tot_vol) as f32);
+					}
+				});
+			});
 		}
 	});
 	Ok(Value::null())

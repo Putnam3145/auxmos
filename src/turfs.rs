@@ -10,7 +10,13 @@ use super::gas::gas_mixture::GasMixture;
 
 use auxtools::*;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, AtomicU8, Ordering};
+
+use parking_lot::RwLock;
+
+use itertools::Itertools;
+
+use std::cell::Cell;
 
 use crate::constants::*;
 
@@ -26,10 +32,14 @@ const NORTH: u8 = 1;
 const SOUTH: u8 = 2;
 const EAST: u8 = 4;
 const WEST: u8 = 8;
-//const UP: u8 = 16;
-//const DOWN: u8 = 32;
+const UP: u8 = 16;
+const DOWN: u8 = 32;
 
 type TurfID = u32;
+
+static MAX_X: AtomicI32 = AtomicI32::new(255);
+static TURFS_PER_Z: AtomicI32 = AtomicI32::new(65025);
+static MAX_Z: AtomicU8 = AtomicU8::new(0);
 
 // TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
 #[derive(Clone, Copy, Default)]
@@ -37,7 +47,7 @@ struct TurfMixture {
 	pub mix: usize,
 	pub adjacency: u8,
 	pub simulation_level: u8,
-	pub planetary_atmos: Option<&'static str>,
+	pub planetary_atmos: Option<u64>,
 }
 
 #[allow(dead_code)]
@@ -99,24 +109,267 @@ impl TurfMixture {
 }
 
 // all non-space turfs get these, not just ones with air--a lot of gas logic relies on all TurfMixtures having a valid mix
-#[derive(Clone, Copy, Default)]
+#[derive(Clone)]
 struct ThermalInfo {
-	pub temperature: f32,
+	_temperature: Cell<f32>,
 	pub thermal_conductivity: f32,
 	pub heat_capacity: f32,
 	pub adjacency: u8,
 	pub adjacent_to_space: bool,
 }
 
+impl ThermalInfo {
+	unsafe fn set_temperature(&self, new_temp: f32) {
+		self._temperature.set(new_temp);
+	}
+	fn get_temperature(&self) -> f32 {
+		self._temperature.get()
+	}
+}
+
+/*
+	Again with the sync cell, but: there are precisely two places in the entire codebase
+	where temperature is set: during heat processing and during turf initialization.
+	We can thus expect no race conditions. I think. I'll make the setter unsafe.
+*/
+unsafe impl Sync for ThermalInfo {}
+
+unsafe impl Send for ThermalInfo {}
+
+#[derive(Clone)]
+struct Turf<V: Clone> {
+	_id: TurfID,
+	value: V,
+}
+
+impl<V: Copy> Copy for Turf<V> {}
+
+impl<V: Clone> Turf<V> {
+	pub fn id(&self) -> TurfID {
+		self._id
+	}
+	pub fn new(_id: TurfID, value: V) -> Self {
+		Turf { _id, value }
+	}
+}
+
+use std::ops::{Deref, DerefMut};
+
+impl<V: Clone> Deref for Turf<V> {
+	type Target = V;
+
+	fn deref(&self) -> &V {
+		&self.value
+	}
+}
+
+impl<V: Clone> DerefMut for Turf<V> {
+	fn deref_mut(&mut self) -> &mut V {
+		&mut self.value
+	}
+}
+
+struct TurfMap<V: Clone> {
+	z_levels: Vec<RwLock<Vec<Turf<V>>>>,
+	z_size: usize,
+	max_x: i32,
+	max_y: i32,
+}
+
+#[allow(dead_code)]
+impl<V: Clone> TurfMap<V> {
+	// type Container = RwLock<Vec<(TurfID,V)>>
+	fn new() -> Self {
+		TurfMap {
+			z_levels: Vec::with_capacity(16),
+			z_size: 255 * 255,
+			max_x: 255,
+			max_y: 255,
+		}
+	}
+	pub fn x(&self, id: TurfID) -> usize {
+		(id as i32 % self.max_x) as usize
+	}
+	pub fn y(&self, id: TurfID) -> usize {
+		((id as i32 % (self.max_x * self.max_y)) / self.max_x) as usize
+	}
+	pub fn z(&self, id: TurfID) -> usize {
+		(id) as usize / self.z_size
+	}
+	pub fn has_z(&self, id: TurfID) -> bool {
+		self.z_levels.len() > self.z(id)
+	}
+	pub(crate) fn with_z<T>(&self, z: usize, f: impl FnOnce(&RwLock<Vec<Turf<V>>>) -> T) -> T {
+		f(self.z_levels.get(z).unwrap())
+	}
+	pub(crate) fn with_key<T>(
+		&self,
+		id: &TurfID,
+		f: impl FnOnce(&RwLock<Vec<Turf<V>>>, Result<usize, usize>) -> T,
+	) -> T {
+		self.with_z(
+			self.z(*id),
+			|specific_z| {
+				let idx = { specific_z.read().binary_search_by_key(id, |turf| turf.id()) };
+				f(&specific_z, idx)
+			},
+		)
+	}
+	pub fn read<T>(&self, id: &TurfID, f: impl FnOnce(&Turf<V>) -> T) -> Option<T> {
+		self.with_key(&id, |z, res| {
+			if let Ok(idx) = res {
+				Some(f(unsafe { z.read().get_unchecked(idx) }))
+			} else {
+				None
+			}
+		})
+	}
+	pub fn get_copy(&self, id: &TurfID) -> Option<Turf<V>> {
+		self.with_key(&id, |z, res| {
+			if let Ok(idx) = res {
+				Some(unsafe { z.read().get_unchecked(idx).clone() })
+			} else {
+				None
+			}
+		})
+	}
+	pub fn modify(&self, id: TurfID, f: impl FnOnce(&mut Turf<V>)) {
+		self.with_key(&id, |z, res| {
+			if let Ok(idx) = res {
+				f(unsafe { &mut z.write().get_unchecked_mut(idx) });
+			}
+		});
+	}
+	pub fn modify_or_insert_with(
+		&self,
+		id: TurfID,
+		f: impl FnOnce(&mut Turf<V>),
+		g: impl FnOnce() -> V,
+	) {
+		self.with_key(&id, |z, res| match res {
+			Ok(idx) => {
+				f(unsafe { &mut z.write().get_unchecked_mut(idx) });
+			}
+			Err(idx) => {
+				z.write().insert(idx, Turf::new(id, g()));
+			}
+		})
+	}
+	pub fn remove(&self, id: &TurfID) -> Option<Turf<V>> {
+		self.with_key(&id, |z, res| {
+			if let Ok(idx) = res {
+				Some(z.write().remove(idx))
+			} else {
+				None
+			}
+		})
+	}
+	pub fn insert(&self, id: TurfID, element: V) -> Option<Turf<V>> {
+		self.with_key(&id, |z, res| match res {
+			Ok(idx) => {
+				let mut lock = z.write();
+				let reference = unsafe { lock.get_unchecked_mut(idx) };
+				let ret = reference.clone();
+				**reference = element;
+				Some(ret)
+			}
+			Err(idx) => {
+				z.write().insert(idx, Turf::new(id, element));
+				None
+			}
+		})
+	}
+	pub fn insert_with<F>(&self, id: TurfID, f: F) -> Option<Turf<V>>
+	where
+		F: FnOnce() -> V,
+	{
+		self.insert(id, f())
+	}
+	pub fn resize(&mut self, max_x: i32, max_y: i32, new_z_amount: usize) {
+		let z_size = (max_x * max_y) as usize;
+		if z_size != self.z_size {
+			let all_turfs: Vec<_> = self
+				.z_levels
+				.iter()
+				.flat_map(|l| l.read().iter().cloned().collect::<Vec<_>>())
+				.collect();
+			let mut new_vecs: Vec<Vec<Turf<V>>> = Vec::with_capacity(new_z_amount);
+			for (_, group) in &all_turfs
+				.into_iter()
+				.group_by(|t| (t.id() / z_size as u32) & 1 == 0)
+			{
+				new_vecs.push(group.collect::<Vec<_>>());
+			}
+			for (idx, v) in new_vecs.iter().enumerate() {
+				*self.z_levels[idx].write() = v.clone();
+			}
+		}
+		self.z_levels
+			.resize_with(new_z_amount, || RwLock::new(Vec::with_capacity(16384)));
+	}
+	pub fn clear(&mut self) {
+		self.z_levels.clear();
+	}
+	pub fn iter(&self) -> std::slice::Iter<RwLock<Vec<Turf<V>>>> {
+		self.z_levels.iter()
+	}
+	pub fn for_each_adjacent(
+		&self,
+		adj: u8,
+		maybe_z_idx: Option<usize>,
+		i: TurfID,
+		mut f: impl FnMut(usize, &Turf<V>),
+	) {
+		let z_idx = maybe_z_idx.unwrap_or_else(|| self.z(i));
+		if adj & (NORTH | WEST | EAST | SOUTH) > 0 {
+			self.with_z(self.z(i), |lock| {
+				let z = lock.read();
+				if adj & WEST == WEST {
+					f(3, z.get(z_idx - 1).unwrap());
+				}
+				if adj & EAST == EAST {
+					f(2, z.get(z_idx + 1).unwrap());
+				}
+				if adj & NORTH == NORTH {
+					if let Ok(idx) = z.binary_search_by_key(
+						&adjacent_tile_id(0, i, self.max_x, self.max_y),
+						|e| e.id(),
+					) {
+						f(0, z.get(idx).unwrap())
+					}
+				}
+				if adj & SOUTH == SOUTH {
+					if let Ok(idx) = z.binary_search_by_key(
+						&adjacent_tile_id(1, i, self.max_x, self.max_y),
+						|e| e.id(),
+					) {
+						f(1, z.get(idx).unwrap())
+					}
+				}
+			})
+		}
+		if adj & UP == UP {
+			self.read(&adjacent_tile_id(4, i, self.max_x, self.max_y), |turf| {
+				f(4, turf)
+			});
+		}
+		if adj & DOWN == DOWN {
+			self.read(&adjacent_tile_id(5, i, self.max_x, self.max_y), |turf| {
+				f(5, turf)
+			});
+		}
+	}
+}
+
 lazy_static! {
 	// All the turfs that have gas mixtures.
-	static ref TURF_GASES: DashMap<TurfID, TurfMixture> = DashMap::new();
+	static ref TURF_GASES: RwLock<TurfMap<TurfMixture>> = RwLock::new(TurfMap::new());
 	// Turfs with temperatures/heat capacities. This is distinct from the above.
-	static ref TURF_TEMPERATURES: DashMap<TurfID, ThermalInfo> = DashMap::new();
+	static ref TURF_TEMPERATURES: RwLock<TurfMap<ThermalInfo>> = RwLock::new(TurfMap::new());
 	// We store planetary atmos by hash of the initial atmos string here for speed.
-	static ref PLANETARY_ATMOS: DashMap<&'static str, GasMixture> = DashMap::new();
-	// In a separate dashmap because if it isn't most of the post-process time is spent acquiring write locks
-	static ref TURF_VIS_HASH: DashMap<TurfID, AtomicU64> = DashMap::new();
+	static ref PLANETARY_ATMOS: DashMap<u64, GasMixture> = DashMap::new();
+	// these are pretty sparse and totally independent, so, dashmap
+	static ref TURF_VIS_HASH: DashMap<TurfID,AtomicU64> = DashMap::new();
 	// For monstermos or other hypothetical fast-process systems.
 	static ref HIGH_PRESSURE_TURFS: (
 		flume::Sender<Vec<TurfID>>,
@@ -135,17 +388,37 @@ fn check_and_update_vis_hash(id: TurfID, hash: u64) -> bool {
 
 #[shutdown]
 fn _shutdown_turfs() {
-	TURF_GASES.clear();
-	TURF_TEMPERATURES.clear();
+	TURF_GASES.write().clear();
+	TURF_TEMPERATURES.write().clear();
 	PLANETARY_ATMOS.clear();
 	TURF_VIS_HASH.clear();
+}
+
+#[hook("/world/proc/refresh_atmos_grid")]
+fn _hook_refresh_grid() {
+	let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
+	let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
+	let max_z = auxtools::Value::world().get_number(byond_string!("maxz"))? as u8;
+	MAX_X.store(max_x, Ordering::Relaxed);
+	TURFS_PER_Z.store(max_x * max_y, Ordering::Relaxed);
+	MAX_Z.store(max_z, Ordering::Relaxed);
+	TURF_GASES.write().resize(max_x, max_y, max_z as usize);
+	TURF_TEMPERATURES
+		.write()
+		.resize(max_x, max_y, max_z as usize);
+	Ok(Value::null())
 }
 
 #[hook("/turf/proc/update_air_ref")]
 fn _hook_register_turf() {
 	let simulation_level = args[0].as_number()?;
+	if !TURF_GASES.read().has_z(unsafe { src.raw.data.id }) {
+		Proc::find("/world/proc/refresh_atmos_grid")
+			.unwrap()
+			.call(&[])?;
+	}
 	if simulation_level < 0.0 {
-		TURF_GASES.remove(&unsafe { src.raw.data.id });
+		TURF_GASES.read().remove(&unsafe { src.raw.data.id });
 		Ok(Value::null())
 	} else {
 		let mut to_insert: TurfMixture = Default::default();
@@ -156,16 +429,25 @@ fn _hook_register_turf() {
 		to_insert.simulation_level = args[0].as_number()? as u8;
 		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
 			if is_planet != 0.0 {
+				use std::hash::Hasher;
+				let mut hasher = std::collections::hash_map::DefaultHasher::new();
 				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
-					to_insert.planetary_atmos = Some(Box::leak(at_str.into_boxed_str()));
-					let mut entry = PLANETARY_ATMOS
-						.entry(to_insert.planetary_atmos.unwrap())
-						.or_insert(to_insert.get_gas_copy());
-					entry.mark_immutable();
+					hasher.write(at_str.as_bytes());
+					let hash = hasher.finish();
+					to_insert.planetary_atmos = Some(hash);
+					if !PLANETARY_ATMOS.contains_key(&hash) {
+						to_insert.planetary_atmos = Some(hash);
+						let mut entry = PLANETARY_ATMOS
+							.entry(hash)
+							.or_insert_with(|| to_insert.get_gas_copy());
+						entry.mark_immutable();
+					}
 				}
 			}
 		}
-		TURF_GASES.insert(unsafe { src.raw.data.id }, to_insert);
+		TURF_GASES
+			.read()
+			.insert(unsafe { src.raw.data.id }, to_insert);
 		Ok(Value::null())
 	}
 }
@@ -180,22 +462,18 @@ fn _hook_turf_update_temp() {
 		.unwrap_or_default()
 		> 0.0
 	{
-		let mut entry = TURF_TEMPERATURES
-			.entry(unsafe { src.raw.data.id })
-			.or_insert_with(|| ThermalInfo {
-				temperature: 293.15,
-				thermal_conductivity: 0.0,
-				heat_capacity: 0.0,
+		TURF_TEMPERATURES.read().insert(
+			unsafe { src.raw.data.id },
+			ThermalInfo {
+				_temperature: Cell::new(src.get_number(byond_string!("initial_temperature"))?),
+				thermal_conductivity: src.get_number(byond_string!("thermal_conductivity"))?,
+				heat_capacity: src.get_number(byond_string!("heat_capacity"))?,
 				adjacency: NORTH | SOUTH | WEST | EAST,
-				adjacent_to_space: false,
-			});
-		entry.thermal_conductivity = src.get_number(byond_string!("thermal_conductivity"))?;
-		entry.heat_capacity = src.get_number(byond_string!("heat_capacity"))?;
-		entry.adjacency = NORTH | SOUTH | WEST | EAST;
-		entry.adjacent_to_space = args[0].as_number()? != 0.0;
-		entry.temperature = src.get_number(byond_string!("initial_temperature"))?;
+				adjacent_to_space: args[0].as_number()? != 0.0,
+			},
+		);
 	} else {
-		TURF_TEMPERATURES.remove(&unsafe { src.raw.data.id });
+		TURF_TEMPERATURES.read().remove(&unsafe { src.raw.data.id });
 	}
 	Ok(Value::null())
 }
@@ -204,22 +482,18 @@ fn _hook_turf_update_temp() {
 fn _hook_sleep() {
 	let arg = if let Some(arg_get) = args.get(0) {
 		// null is falsey in byond so
-		arg_get.as_number()?
+		arg_get.as_number().unwrap_or_else(|_| 1.0) // and pretty much everything else is truthy
 	} else {
 		0.0
 	};
 	if arg == 0.0 {
-		TURF_GASES
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
-				turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
-			});
+		TURF_GASES.read().modify(unsafe { src.raw.data.id }, |m| {
+			m.simulation_level &= !SIMULATION_LEVEL_DISABLED
+		});
 	} else {
-		TURF_GASES
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
-				turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
-			});
+		TURF_GASES.read().modify(unsafe { src.raw.data.id }, |m| {
+			m.simulation_level |= SIMULATION_LEVEL_DISABLED
+		});
 	}
 	Ok(Value::from(true))
 }
@@ -231,53 +505,53 @@ fn _hook_adjacent_turfs() {
 		for i in 1..adjacent_list.len() + 1 {
 			adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
 		}
-		TURF_GASES
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
-				turf.adjacency = adjacency as u8;
-			});
+		TURF_GASES.read().try_modify_or_defer(unsafe { src.raw.data.id }, |m| {
+			m.adjacency = adjacency as u8
+		});
 	} else {
 		TURF_GASES
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
-				turf.adjacency = 0;
-			});
+			.read()
+			.modify(unsafe { src.raw.data.id }, |m| m.adjacency = 0);
 	}
 	if let Ok(atmos_blocked_directions) =
 		src.get_number(byond_string!("conductivity_blocked_directions"))
 	{
 		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);
-		TURF_TEMPERATURES
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|entry| {
+		TURF_TEMPERATURES.read().modify_or_insert_with(
+			unsafe { src.raw.data.id },
+			|entry| {
 				entry.adjacency = adjacency;
-			})
-			.or_insert_with(|| ThermalInfo {
-				temperature: src
-					.get_number(byond_string!("initial_temperature"))
-					.unwrap(),
+			},
+			|| ThermalInfo {
+				_temperature: Cell::new(
+					src.get_number(byond_string!("initial_temperature"))
+						.unwrap(),
+				),
 				thermal_conductivity: src
 					.get_number(byond_string!("thermal_conductivity"))
 					.unwrap(),
 				heat_capacity: src.get_number(byond_string!("heat_capacity")).unwrap(),
 				adjacency: adjacency,
 				adjacent_to_space: args[0].as_number().unwrap() != 0.0,
-			});
+			},
+		);
 	}
 	Ok(Value::null())
 }
 
 #[hook("/turf/proc/return_temperature")]
 fn _hook_turf_temperature() {
-	if let Some(temp_info) = TURF_TEMPERATURES.get(&unsafe { src.raw.data.id }) {
-		if temp_info.temperature.is_normal() {
-			Ok(Value::from(temp_info.temperature))
-		} else {
-			src.get(byond_string!("initial_temperature"))
-		}
-	} else {
-		src.get(byond_string!("initial_temperature"))
-	}
+	TURF_TEMPERATURES
+		.read()
+		.read(&unsafe { src.raw.data.id }, |temp_info| {
+			let t = temp_info.get_temperature();
+			if t.is_normal() {
+				Ok(Value::from(t))
+			} else {
+				src.get(byond_string!("initial_temperature"))
+			}
+		})
+		.unwrap_or_else(|| src.get(byond_string!("initial_temperature")))
 }
 
 #[hook("/turf/proc/set_temperature")]
@@ -286,20 +560,21 @@ fn _hook_set_temperature() {
 		.get(0)
 		.ok_or_else(|| runtime!("Invalid argument count to turf temperature set: 0"))?
 		.as_number()?;
-	TURF_TEMPERATURES
-		.entry(unsafe { src.raw.data.id })
-		.and_modify(|turf| {
-			turf.temperature = argument;
-		})
-		.or_insert_with(|| ThermalInfo {
-			temperature: argument,
+	TURF_TEMPERATURES.read().modify_or_insert_with(
+		unsafe { src.raw.data.id },
+		|turf| unsafe {
+			turf.set_temperature(argument);
+		},
+		|| ThermalInfo {
+			_temperature: Cell::new(argument),
 			thermal_conductivity: src
 				.get_number(byond_string!("thermal_conductivity"))
 				.unwrap(),
 			heat_capacity: src.get_number(byond_string!("heat_capacity")).unwrap(),
 			adjacency: 0,
 			adjacent_to_space: false,
-		});
+		},
+	);
 	Ok(Value::null())
 }
 
@@ -377,52 +652,5 @@ fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {
 		4 => (i + z_size) as TurfID,
 		5 => (i - z_size) as TurfID,
 		_ => i as TurfID,
-	}
-}
-#[derive(Clone, Copy)]
-struct AdjacentTileIDs {
-	adj: u8,
-	i: TurfID,
-	max_x: i32,
-	max_y: i32,
-	count: u8,
-}
-
-impl Iterator for AdjacentTileIDs {
-	type Item = (u8, TurfID);
-
-	fn next(&mut self) -> Option<Self::Item> {
-		loop {
-			if self.count > 6 {
-				return None;
-			} else {
-				self.count += 1;
-				let bit = 1 << (self.count - 1);
-				if self.adj & bit == bit {
-					return Some((
-						self.count - 1,
-						adjacent_tile_id(self.count - 1, self.i, self.max_x, self.max_y),
-					));
-				}
-			}
-		}
-	}
-
-	fn size_hint(&self) -> (usize, Option<usize>) {
-		(0, Some(self.adj.count_ones() as usize))
-	}
-}
-
-use std::iter::FusedIterator;
-
-impl FusedIterator for AdjacentTileIDs {}
-
-fn adjacent_tile_ids(adj: u8, i: TurfID, max_x: i32, max_y: i32) -> AdjacentTileIDs {
-	AdjacentTileIDs {
-		adj,
-		i,
-		max_x,
-		max_y,
-		count: 0,
 	}
 }

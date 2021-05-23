@@ -107,6 +107,21 @@ impl GasMixture {
 			cached_heat_capacity: Cell::new(None),
 		}
 	}
+	/// Makes an empty gas mixture using the global mixes slab, otherwise allocates a new one. Opaque as to which one.
+	pub fn new_from_global(vol: f32) -> GasMixtureAlloc {
+		use super::{GAS_MIXTURES, NEXT_GAS_IDS};
+		if let Some(idx) = NEXT_GAS_IDS.pop() {
+			GAS_MIXTURES
+				.read()
+				.get(idx)
+				.unwrap()
+				.write()
+				.clear_with_vol(vol);
+			GasMixtureAlloc::Slab(idx)
+		} else {
+			GasMixtureAlloc::Heap(GasMixture::from_vol(vol))
+		}
+	}
 	/// Makes an empty gas mixture with the given volume.
 	pub fn from_vol(vol: f32) -> Self {
 		let mut ret: GasMixture = GasMixture::new();
@@ -239,24 +254,22 @@ impl GasMixture {
 		self.cached_heat_capacity.set(Some(combined_heat_capacity));
 	}
 	/// Returns a gas mixture that contains a given percentage of this mixture's moles; if this mix is mutable, also removes those moles from the original.
-	pub fn remove_ratio(&mut self, mut ratio: f32) -> GasMixture {
-		let mut removed = GasMixture::from_vol(self.volume);
+	pub fn remove_ratio(&mut self, into: &mut GasMixture, mut ratio: f32) {
 		if ratio <= 0.0 {
-			return removed;
+			return;
 		}
 		if ratio >= 1.0 {
 			ratio = 1.0;
 		}
-		removed.copy_from_mutable(self);
-		removed.multiply(ratio);
+		into.copy_from_mutable(self);
+		into.multiply(ratio);
 		self.multiply(1.0 - ratio);
 		self.garbage_collect();
-		removed.garbage_collect();
-		removed
+		into.garbage_collect();
 	}
 	/// As remove_ratio, but a raw number of moles instead of a ratio.
-	pub fn remove(&mut self, amount: f32) -> GasMixture {
-		self.remove_ratio(amount / self.total_moles())
+	pub fn remove(&mut self, into: &mut GasMixture, amount: f32) {
+		self.remove_ratio(into, amount / self.total_moles())
 	}
 	/// Copies from a given gas mixture, if we're mutable.
 	pub fn copy_from_mutable(&mut self, sample: &GasMixture) {
@@ -388,10 +401,11 @@ impl GasMixture {
 	/// Multiplies every gas molage with this value.
 	pub fn multiply(&mut self, multiplier: f32) {
 		if !self.immutable {
+			self.cached_heat_capacity
+				.set(Some(self.heat_capacity() * multiplier)); // hax
 			for amt in self.moles.iter_mut() {
 				*amt *= multiplier;
 			}
-			*self.cached_heat_capacity.get_mut() = Some(self.heat_capacity() * multiplier); // hax
 		}
 	}
 	/// Checks if the proc can react with any reactions.
@@ -513,6 +527,64 @@ impl<'a> Mul<f32> for &'a GasMixture {
 		let mut ret = self.clone();
 		ret.multiply(rhs);
 		ret
+	}
+}
+
+use parking_lot::RwLock;
+
+pub enum GasMixtureAlloc {
+	Slab(usize),
+	Heap(GasMixture),
+}
+
+impl GasMixtureAlloc {
+	pub fn with_borrowed_vec<T>(
+		&self,
+		list: &Vec<RwLock<GasMixture>>,
+		f: impl FnOnce(&GasMixture) -> T,
+	) -> T {
+		match self {
+			Self::Slab(idx) => f(&list.get(*idx).unwrap().read()),
+			Self::Heap(mix) => f(mix),
+		}
+	}
+	pub fn with_borrowed_vec_mut<T>(
+		&mut self,
+		list: &Vec<RwLock<GasMixture>>,
+		f: impl FnOnce(&mut GasMixture) -> T,
+	) -> T {
+		match self {
+			Self::Slab(idx) => f(&mut list.get(*idx).unwrap().write()),
+			Self::Heap(mix) => f(mix),
+		}
+	}
+	pub fn with<T>(&self, f: impl FnOnce(&GasMixture) -> T) -> T {
+		match self {
+			Self::Slab(_) => self.with_borrowed_vec(&super::GAS_MIXTURES.read(), f),
+			Self::Heap(mix) => f(mix),
+		}
+	}
+	pub fn with_mut<T>(&mut self, f: impl FnOnce(&mut GasMixture) -> T) -> T {
+		match self {
+			Self::Slab(_) => self.with_borrowed_vec_mut(&super::GAS_MIXTURES.read(), f),
+			Self::Heap(mix) => f(mix),
+		}
+	}
+	pub fn copy_to_new(&self) -> GasMixture {
+		match self {
+			Self::Slab(_) => self.with(|gas| gas.clone()),
+			Self::Heap(mix) => mix.clone(),
+		}
+	}
+}
+
+impl Drop for GasMixtureAlloc {
+	fn drop(&mut self) {
+		if let Self::Slab(idx) = self {
+			if let Err(idx) = super::NEXT_GAS_IDS.push(*idx) {
+				super::BACKUP_GAS_IDS.push(idx);
+			}
+		}
 	}
 }
 

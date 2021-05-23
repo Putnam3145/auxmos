@@ -53,8 +53,6 @@ fn _process_turf_hook() {
 		let fda_max_steps = src
 			.get_number(byond_string!("share_max_steps"))
 			.unwrap_or_else(|_| 1.0) as i32;
-		let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
-		let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
 		rayon::spawn(move || {
 			PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
 			let start_time = Instant::now();
@@ -66,28 +64,15 @@ fn _process_turf_hook() {
 					break;
 				}
 				GasMixtures::with_all_mixtures(|all_mixtures| {
-					let turfs_to_save = TURF_GASES
-						/*
-							This uses the DashMap raw API to access the shards directly.
-							This allows for it to be parallelized much more efficiently
-							with rayon; the speedup gained from this is actually linear
-							with the amount of cores the CPU has, which, to be frank,
-							is way better than I was expecting, even though this operation
-							is technically embarassingly parallel. It'll probably reach
-							some maximum due to the global turf mixture lock access,
-							but it's already blazingly fast on my i7, so it should be fine.
-						*/
-						.shards()
-						.par_iter()
-						.map(|shard| {
-							shard
-								.read()
-								.iter()
-								.filter_map(|(&i, m_v)| {
-									// m_v is a SharedValue<TurfMixture>. Need to use get() on it to get the original.
-									// It's dereferenced to copy it. m_v is Copy, so this is reasonably fast.
-									// This is necessary because otherwise we're escaping a reference to the closure below.
-									let m = *m_v.get();
+					let turf_gases: &TurfMap<_> = &TURF_GASES.read();
+					let turfs_to_save = turf_gases
+						.iter()
+						.par_bridge()
+						.map(|z_level| {
+							let z = z_level.read();
+							z.iter()
+								.enumerate()
+								.filter_map(|(index, m)| {
 									let adj = m.adjacency;
 									/*
 										We don't want to simulate space turfs or other unsimulated turfs. They're
@@ -99,7 +84,6 @@ fn _process_turf_hook() {
 										& SIMULATION_LEVEL_DISABLED
 										!= SIMULATION_LEVEL_DISABLED)
 									{
-										let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 										let mut adj_amount = 0;
 										if let Some(gas) =
 											all_mixtures.get(m.mix).unwrap().try_read()
@@ -109,7 +93,7 @@ fn _process_turf_hook() {
 												so we make sure we don't do that unless we
 												absolutely need to. Saving is fast enough.
 											*/
-											let mut end_gas = GasMixture::from_vol(2500.0);
+											let mut end_gas = GasMixture::new_from_global(2500.0);
 											let mut pressure_diffs: [(TurfID, f32); 6] =
 												Default::default();
 											/*
@@ -123,8 +107,12 @@ fn _process_turf_hook() {
 												Technically that's ρν², but, like, video games.
 											*/
 											let mut should_share = false;
-											for (j, loc) in adj_tiles {
-												if let Some(turf) = TURF_GASES.get(&loc) {
+											let mut inconsistent = false;
+											turf_gases.for_each_adjacent(
+												m.adjacency,
+												Some(index),
+												m.id(),
+												|j, turf| {
 													if turf.simulation_level
 														& SIMULATION_LEVEL_DISABLED
 														!= SIMULATION_LEVEL_DISABLED
@@ -133,10 +121,13 @@ fn _process_turf_hook() {
 															all_mixtures.get(turf.mix)
 														{
 															if let Some(mix) = entry.try_read() {
-																end_gas.merge(&mix);
+																end_gas.with_borrowed_vec_mut(
+																	all_mixtures,
+																	|g| g.merge(&mix),
+																);
 																adj_amount += 1;
 																pressure_diffs[j as usize] = (
-																	loc,
+																	turf.id(),
 																	-mix.return_pressure()
 																		* GAS_DIFFUSION_CONSTANT,
 																);
@@ -147,18 +138,20 @@ fn _process_turf_hook() {
 																	> MINIMUM_MOLES_DELTA_TO_MOVE
 																{
 																	should_share = true;
+																	return;
 																}
-															} else {
-																return None;
 															}
 														}
+														inconsistent = true;
 													}
-												}
-											}
-											// Obviously planetary atmos needs love too.
+												},
+											);
+											if inconsistent {
+												return None;
+											};
 											if let Some(planet_atmos_id) = m.planetary_atmos {
 												if let Some(planet_atmos_entry) =
-													PLANETARY_ATMOS.get(planet_atmos_id)
+													PLANETARY_ATMOS.get(&planet_atmos_id)
 												{
 													let planet_atmos = planet_atmos_entry.value();
 													if should_share
@@ -166,7 +159,10 @@ fn _process_turf_hook() {
 														|| gas.compare(&planet_atmos)
 															> MINIMUM_MOLES_DELTA_TO_MOVE
 													{
-														end_gas.merge(&planet_atmos);
+														end_gas.with_borrowed_vec_mut(
+															all_mixtures,
+															|g| g.merge(&planet_atmos),
+														);
 														adj_amount += 1;
 														should_share = true;
 													}
@@ -189,8 +185,10 @@ fn _process_turf_hook() {
 												but I digress.)
 											*/
 											if should_share {
-												end_gas.multiply(GAS_DIFFUSION_CONSTANT);
-												Some((i, m, end_gas, pressure_diffs, adj_amount))
+												end_gas.with_borrowed_vec_mut(all_mixtures, |g| {
+													g.multiply(GAS_DIFFUSION_CONSTANT)
+												});
+												Some((*m, end_gas, pressure_diffs, adj_amount))
 											} else {
 												None
 											}
@@ -215,7 +213,7 @@ fn _process_turf_hook() {
 					*/
 					let (low_pressure, high_pressure): (Vec<_>, Vec<_>) = turfs_to_save
 						.par_iter()
-						.filter_map(|(i, m, end_gas, mut pressure_diffs, adj_amount)| {
+						.filter_map(|(m, end_gas, mut pressure_diffs, adj_amount)| {
 							if let Some(entry) = all_mixtures.get(m.mix) {
 								let mut max_diff = 0.0f32;
 								let moved_pressure = {
@@ -244,7 +242,7 @@ fn _process_turf_hook() {
 									gas.multiply(
 										1.0 - (*adj_amount as f32 * GAS_DIFFUSION_CONSTANT),
 									);
-									gas.merge(&end_gas);
+									end_gas.with_borrowed_vec(all_mixtures, |g| gas.merge(&g));
 								}
 								/*
 									If there is neither a major pressure difference
@@ -253,7 +251,7 @@ fn _process_turf_hook() {
 									to do any more and we don't need to send the
 									value to byond, so we don't. However, if we do...
 								*/
-								Some((*i, pressure_diffs, max_diff))
+								Some((m.id(), pressure_diffs, max_diff))
 							} else {
 								None
 							}
@@ -394,25 +392,22 @@ fn _process_heat_hook() {
 			does this in general, thus turf gas mixtures being 2.5 m^3.
 		*/
 		let time_delta = (src.get_number(byond_string!("wait"))? / 10.0) as f64;
-		let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
-		let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
 		rayon::spawn(move || {
+			use itertools::EitherOrBoth;
 			let start_time = Instant::now();
 			let sender = byond_callback_sender();
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * time_delta;
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * time_delta;
-			TURF_TEMPERATURES
-				/*
-					Same weird shard trick as above.
-				*/
-				.shards()
-				.par_iter()
-				.map(|shard| {
-					shard
-						.read()
+			let turf_temperatures = TURF_TEMPERATURES.read();
+			let melting_turfs = turf_temperatures // dude, iterators are sick (also terrible)
+				.iter()
+				.par_bridge()
+				.map(|z_lock| {
+					let z = z_lock.read();
+					let z_vec = z
 						.iter()
-						.filter_map(|(&i, t_v)| {
-							let t = *t_v.get();
+						.enumerate()
+						.filter_map(|(index, t)| {
 							let adj = t.adjacency;
 							/*
 								If it has no thermal conductivity or low thermal capacity,
@@ -420,38 +415,43 @@ fn _process_heat_hook() {
 							*/
 							if t.thermal_conductivity > 0.0 && t.heat_capacity > 300.0 && adj > 0 {
 								let mut heat_delta = 0.0;
-								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
-								let mut is_temp_delta_with_air = false;
-								if let Some(m) = TURF_GASES.get(&i) {
-									if m.simulation_level & SIMULATION_LEVEL_ANY > 0 {
-										GasMixtures::with_all_mixtures(|all_mixtures| {
-											if let Some(entry) = all_mixtures.get(m.mix) {
-												if let Some(gas) = entry.try_read() {
-													if (t.temperature - gas.get_temperature()).abs()
-														> 1.0
-													{
-														is_temp_delta_with_air = true;
+								let is_temp_delta_with_air = TURF_GASES
+									.read()
+									.read(&t.id(), |m| {
+										if m.simulation_level & SIMULATION_LEVEL_ANY > 0 {
+											GasMixtures::with_all_mixtures(|all_mixtures| {
+												if let Some(entry) = all_mixtures.get(m.mix) {
+													if let Some(gas) = entry.try_read() {
+														if (t.get_temperature()
+															- gas.get_temperature())
+														.abs() > 1.0
+														{
+															true;
+														}
 													}
 												}
-											}
-										});
-									}
-								}
-								for (_, loc) in adj_tiles {
-									if let Some(other) = TURF_TEMPERATURES.get(&loc) {
+											});
+										}
+										false
+									})
+									.unwrap_or(false);
+								TURF_TEMPERATURES.read().for_each_adjacent(
+									adj,
+									Some(index),
+									t.id(),
+									|_, other| {
 										heat_delta +=
 											t.thermal_conductivity.min(other.thermal_conductivity)
-												* (other.temperature - t.temperature) * (t
-												.heat_capacity
-												* other.heat_capacity
-												/ (t.heat_capacity + other.heat_capacity));
+												* (other.get_temperature() - t.get_temperature())
+												* (t.heat_capacity * other.heat_capacity
+													/ (t.heat_capacity + other.heat_capacity));
 										/*
 											The horrible line above is essentially
 											sharing between solids--making it the minimum of both
 											conductivities makes this consistent, funnily enough.
 										*/
-									}
-								}
+									},
+								);
 								if t.adjacent_to_space {
 									/*
 										Straight up the standard blackbody radiation
@@ -461,13 +461,13 @@ fn _process_heat_hook() {
 										this will never go into infinities.
 									*/
 									let blackbody_radiation: f64 = (emissivity_constant
-										* ((t.temperature as f64).powi(4)))
+										* ((t.get_temperature() as f64).powi(4)))
 										- radiation_from_space_tick;
 									heat_delta -= blackbody_radiation as f32;
 								}
 								let temp_delta = heat_delta / t.heat_capacity;
 								if is_temp_delta_with_air || temp_delta.abs() > 0.1 {
-									Some((i, t.temperature + temp_delta))
+									Some((t.id(), t.get_temperature() + temp_delta))
 								} else {
 									None
 								}
@@ -475,54 +475,96 @@ fn _process_heat_hook() {
 								None
 							}
 						})
-						.collect::<Vec<_>>()
+						.collect::<Vec<_>>();
+					(z_lock, z_vec)
 				})
-				.flatten()
 				.collect::<Vec<_>>() // for consistency, unfortunately
 				.iter()
-				.for_each(|&(i, new_temp)| {
-					let t: &mut ThermalInfo = &mut TURF_TEMPERATURES.get_mut(&i).unwrap();
-					if let Some(m) = TURF_GASES.get(&i) {
-						if m.simulation_level != SIMULATION_LEVEL_NONE
-							&& m.simulation_level & SIMULATION_LEVEL_DISABLED
-								!= SIMULATION_LEVEL_DISABLED
-						{
-							GasMixtures::with_all_mixtures(|all_mixtures| {
-								if let Some(entry) = all_mixtures.get(m.mix) {
-									let gas: &mut GasMixture = &mut entry.write();
-									t.temperature = gas.temperature_share_non_gas(
-										/*
-											This value should be lower than the
-											turf-to-turf conductivity for balance reasons
-											as well as realism, otherwise fires will
-											just sort of solve theirselves over time.
-										*/
-										t.thermal_conductivity * OPEN_HEAT_TRANSFER_COEFFICIENT,
-										new_temp,
-										t.heat_capacity,
-									);
+				.par_bridge()
+				.flat_map_iter(|(z_lock, gases_to_save)| {
+					let z = z_lock.read();
+					z.iter()
+						.merge_join_by(gases_to_save, |z_entry, g_entry| {
+							z_entry.id().cmp(&g_entry.0)
+						})
+						.filter_map(|res| {
+							match res {
+								EitherOrBoth::Left(_) => None,
+								EitherOrBoth::Right(_) => None,
+								EitherOrBoth::Both(t, &(i, new_temp)) => {
+									if TURF_GASES
+										.read()
+										.read(&i, |m| {
+											if m.simulation_level != SIMULATION_LEVEL_NONE
+												&& m.simulation_level & SIMULATION_LEVEL_DISABLED
+													!= SIMULATION_LEVEL_DISABLED
+											{
+												GasMixtures::with_all_mixtures(|all_mixtures| {
+													if let Some(entry) = all_mixtures.get(m.mix) {
+														let gas: &mut GasMixture =
+															&mut entry.write();
+														unsafe {
+															t.set_temperature(
+																	gas.temperature_share_non_gas(
+																		/*
+																			This value should be lower than the
+																			turf-to-turf conductivity for balance reasons
+																			as well as realism, otherwise fires will
+																			just sort of solve theirselves over time.
+																		*/
+																		t.thermal_conductivity
+																			* OPEN_HEAT_TRANSFER_COEFFICIENT,
+																		new_temp,
+																		t.heat_capacity,
+																	),
+																);
+														}
+														false
+													} else {
+														true
+													}
+												})
+											} else {
+												true
+											}
+										})
+										.unwrap_or(true)
+									// did not find gas and share with it
+									{
+										unsafe {
+											t.set_temperature(new_temp);
+										}
+									}
+									if !t.get_temperature().is_normal() {
+										unsafe {
+											t.set_temperature(2.7);
+										}
+									}
+									if t.heat_capacity > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
+										&& t.get_temperature() > t.heat_capacity
+									{
+										Some(i.clone())
+									} else {
+										None
+									}
 								}
-							});
-						} else {
-							t.temperature = new_temp;
-						}
-					} else {
-						t.temperature = new_temp;
+							}
+						})
+						.collect::<Vec<_>>()
+				})
+				.collect::<Vec<_>>(); // jesus christ how horrifying
+					  //See also par_chunks() and par_chunks_mut() for similar behavior on slices, without having to allocate intermediate Vecs for the chunks.
+			melting_turfs.into_par_iter().chunks(20).for_each(|chunk| {
+				// not what heat capacity means but whatever
+				let _ = sender.try_send(Box::new(move || {
+					for i in chunk.iter().copied() {
+						let turf = unsafe { Value::turf_by_id_unchecked(i) };
+						turf.set(byond_string!("to_be_destroyed"), 1.0)?;
 					}
-					if !t.temperature.is_normal() {
-						t.temperature = 2.7
-					}
-					if t.heat_capacity > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
-						&& t.temperature > t.heat_capacity
-					{
-						// not what heat capacity means but whatever
-						let _ = sender.try_send(Box::new(move || {
-							let turf = unsafe { Value::turf_by_id_unchecked(i) };
-							turf.set(byond_string!("to_be_destroyed"), 1.0)?;
-							Ok(Value::null())
-						}));
-					}
-				});
+					Ok(Value::null())
+				}));
+			});
+			// and this is why it's disabled by default
 			PROCESSING_HEAT.store(false, Ordering::SeqCst);
 			//Alright, now how much time did that take?
 			let bench = start_time.elapsed().as_nanos();
@@ -549,36 +591,60 @@ fn _post_process_turfs() {
 	if POST_PROCESS_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
 		rayon::spawn(move || {
 			POST_PROCESS_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
-			TURF_GASES.shards().par_iter().for_each(|shard| {
+			TURF_GASES.read().iter().par_bridge().for_each(|z_level| {
 				let sender = byond_callback_sender();
+				let z = z_level.read();
 				GasMixtures::with_all_mixtures(|all_mixtures| {
-					shard.read().par_iter().for_each(|(&i, m_v)| {
-						let m = m_v.get();
-						if m.simulation_level > 0
-							&& m.simulation_level & SIMULATION_LEVEL_DISABLED
-								!= SIMULATION_LEVEL_DISABLED
-						{
-							if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
-								let visibility = gas.visibility_hash();
-								let should_update_visuals =
-									check_and_update_vis_hash(i, visibility);
-								let reactable = gas.can_react();
-								if should_update_visuals || reactable {
-									let _ = sender.try_send(Box::new(move || {
-										let turf = unsafe { Value::turf_by_id_unchecked(i) };
-										if reactable {
-											turf.get(byond_string!("air"))?
-												.call("react", &[&turf])?;
-										}
-										if should_update_visuals {
-											turf.call("update_visuals", &[&Value::null()])?;
-										}
-										Ok(Value::null())
-									}));
+					let (reacting, updating_only): (Vec<_>, Vec<_>) = z
+						.iter()
+						.filter_map(|m| {
+							if m.simulation_level > 0
+								&& m.simulation_level & SIMULATION_LEVEL_DISABLED
+									!= SIMULATION_LEVEL_DISABLED
+							{
+								if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
+									let visibility = gas.visibility_hash();
+									let should_update_visuals =
+										check_and_update_vis_hash(m.id(), visibility);
+									let reactable = gas.can_react();
+									if should_update_visuals || reactable {
+										Some((m.id(), should_update_visuals, reactable))
+									} else {
+										None
+									}
+								} else {
+									None
+								}
+							} else {
+								None
+							}
+						})
+						.partition(|&entry| entry.2);
+					for chunk_prelude in reacting.chunks(5) {
+						let chunk: Vec<_> = chunk_prelude.iter().copied().collect();
+						let _ = sender.try_send(Box::new(move || {
+							for &(i, should_update_visuals, reactable) in &chunk {
+								let turf = unsafe { Value::turf_by_id_unchecked(i) };
+								if reactable {
+									turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+								}
+								if should_update_visuals {
+									turf.call("update_visuals", &[&Value::null()])?;
 								}
 							}
-						}
-					});
+							Ok(Value::null())
+						}));
+					}
+					for chunk_prelude in updating_only.chunks(10) {
+						let chunk: Vec<_> = chunk_prelude.iter().copied().collect();
+						let _ = sender.try_send(Box::new(move || {
+							for &(i, _, _) in &chunk {
+								let turf = unsafe { Value::turf_by_id_unchecked(i) };
+								turf.call("update_visuals", &[&Value::null()])?;
+							}
+							Ok(Value::null())
+						}));
+					}
 				});
 			});
 			POST_PROCESS_STEP.store(PROCESS_DONE, Ordering::SeqCst);
@@ -610,31 +676,29 @@ fn process_excited_groups() {
 		.as_number()?
 		== 1.0;
 	if !resumed && EXCITED_GROUP_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
-		let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
-		let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
 		rayon::spawn(move || {
 			use std::collections::{BTreeSet, VecDeque};
 			EXCITED_GROUP_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
 			let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
 			let low_pressure_receiver = LOW_PRESSURE_TURFS.1.clone();
+			let turf_gases = TURF_GASES.read();
 			for initial_turf in low_pressure_receiver.try_iter().flatten() {
 				if found_turfs.contains(&initial_turf) {
 					continue;
 				}
-				if let Some(initial_mix_ref) = TURF_GASES.get(&initial_turf) {
+				if let Some(initial_mix) = turf_gases.get_copy(&initial_turf) {
 					let mut border_turfs: VecDeque<(TurfID, TurfMixture)> =
 						VecDeque::with_capacity(40);
 					let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
-					let mut min_pressure = initial_mix_ref.return_pressure();
+					let mut min_pressure = initial_mix.return_pressure();
 					let mut max_pressure = min_pressure;
 					let mut fully_mixed = GasMixture::from_vol(2500.0);
-					border_turfs.push_back((initial_turf, *initial_mix_ref.value()));
+					border_turfs.push_back((initial_turf, *initial_mix));
 					found_turfs.insert(initial_turf);
 					GasMixtures::with_all_mixtures(|all_mixtures| {
 						while !border_turfs.is_empty() && turfs.len() < 400 {
 							let (i, turf) = border_turfs.pop_front().unwrap();
 							turfs.push(turf);
-							let adj_tiles = adjacent_tile_ids(turf.adjacency, i, max_x, max_y);
 							let mix = all_mixtures.get(turf.mix).unwrap().read();
 							let pressure = mix.return_pressure();
 							min_pressure = min_pressure.min(pressure);
@@ -645,17 +709,21 @@ fn process_excited_groups() {
 								return;
 							}
 							fully_mixed.merge(&mix);
-							for (_, loc) in adj_tiles {
-								if found_turfs.contains(&loc) {
-									continue;
-								}
-								found_turfs.insert(loc);
-								if let Some(border_mix) = TURF_GASES.get(&loc) {
-									if border_mix.simulation_level == SIMULATION_LEVEL_ALL {
-										border_turfs.push_back((loc, *border_mix));
+							turf_gases.for_each_adjacent(
+								turf.adjacency,
+								None,
+								i,
+								|_, border_mix| {
+									let loc = border_mix.id();
+									if found_turfs.contains(&loc) {
+										return;
 									}
-								}
-							}
+									found_turfs.insert(loc);
+									if border_mix.simulation_level == SIMULATION_LEVEL_ALL {
+										border_turfs.push_back((loc, **border_mix));
+									}
+								},
+							);
 						}
 						if max_pressure - min_pressure
 							< (0.4 * (turfs.len() as f32).sqrt()).max(1.0)

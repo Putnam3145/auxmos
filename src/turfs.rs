@@ -169,11 +169,14 @@ impl<V: Clone> DerefMut for Turf<V> {
 	}
 }
 
+type DeferredOp<T> = Box<dyn Fn(&mut T) + Send + Sync + 'static>;
+
 struct TurfMap<V: Clone> {
 	z_levels: Vec<RwLock<Vec<Turf<V>>>>,
 	z_size: usize,
 	max_x: i32,
 	max_y: i32,
+	write_operations: crossbeam::queue::ArrayQueue<(TurfID,DeferredOp<Turf<V>>)>,
 }
 
 #[allow(dead_code)]
@@ -185,6 +188,7 @@ impl<V: Clone> TurfMap<V> {
 			z_size: 255 * 255,
 			max_x: 255,
 			max_y: 255,
+			write_operations: crossbeam::queue::ArrayQueue::new(1024),
 		}
 	}
 	pub fn x(&self, id: TurfID) -> usize {
@@ -198,6 +202,9 @@ impl<V: Clone> TurfMap<V> {
 	}
 	pub fn has_z(&self, id: TurfID) -> bool {
 		self.z_levels.len() > self.z(id)
+	}
+	fn do_deferred_funcs() {
+
 	}
 	pub(crate) fn with_z<T>(&self, z: usize, f: impl FnOnce(&RwLock<Vec<Turf<V>>>) -> T) -> T {
 		f(self.z_levels.get(z).unwrap())
@@ -233,7 +240,14 @@ impl<V: Clone> TurfMap<V> {
 			}
 		})
 	}
-	pub fn modify(&self, id: TurfID, f: impl FnOnce(&mut Turf<V>)) {
+	unsafe fn do_modification(&self, z: &RwLock<Vec<Turf<V>>>, id: TurfID, idx: usize, f: (impl Fn(&mut Turf<V>) + Send + Sync + 'static)) {
+		if let Some(mut lock) = z.try_write() {
+			f(&mut lock.get_unchecked_mut(idx));
+		} else {
+			let _ = self.write_operations.push((id,Box::new(f)));
+		}
+	}
+	pub fn modify(&self, id: TurfID, f: (impl Fn(&mut Turf<V>) + Send + Sync + 'static)) {
 		self.with_key(&id, |z, res| {
 			if let Ok(idx) = res {
 				f(unsafe { &mut z.write().get_unchecked_mut(idx) });
@@ -243,8 +257,8 @@ impl<V: Clone> TurfMap<V> {
 	pub fn modify_or_insert_with(
 		&self,
 		id: TurfID,
-		f: impl FnOnce(&mut Turf<V>),
-		g: impl FnOnce() -> V,
+		f: (impl Fn(&mut Turf<V>) + Send + Sync + 'static),
+		g: impl Fn() -> V,
 	) {
 		self.with_key(&id, |z, res| match res {
 			Ok(idx) => {
@@ -505,7 +519,7 @@ fn _hook_adjacent_turfs() {
 		for i in 1..adjacent_list.len() + 1 {
 			adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
 		}
-		TURF_GASES.read().try_modify_or_defer(unsafe { src.raw.data.id }, |m| {
+		TURF_GASES.read().modify(unsafe { src.raw.data.id }, move |m| {
 			m.adjacency = adjacency as u8
 		});
 	} else {
@@ -519,7 +533,7 @@ fn _hook_adjacent_turfs() {
 		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);
 		TURF_TEMPERATURES.read().modify_or_insert_with(
 			unsafe { src.raw.data.id },
-			|entry| {
+			move |entry| {
 				entry.adjacency = adjacency;
 			},
 			|| ThermalInfo {
@@ -562,7 +576,7 @@ fn _hook_set_temperature() {
 		.as_number()?;
 	TURF_TEMPERATURES.read().modify_or_insert_with(
 		unsafe { src.raw.data.id },
-		|turf| unsafe {
+		move |turf| unsafe {
 			turf.set_temperature(argument);
 		},
 		|| ThermalInfo {

@@ -13,6 +13,7 @@ reaction_hooking = []
 plasma_fire_hook = ["reaction_hooking"]
 trit_fire_hook = ["reaction_hooking"]
 fusion_hook = ["reaction_hooking"]
+all_hooks = ["fusion_hook", "trit_fire_hook", "plasma_fire_hook"]
 explosive_decompression = ["monstermos"]
 putnamos_decompression = ["putnamos"]
 

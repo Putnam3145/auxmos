@@ -131,7 +131,7 @@ fn finalize_eq(
 						if let Err(e) =
 							turf.call("consider_pressure_difference", &[&other_turf, &real_amount])
 						{
-							turf.call("stack_trace", &[&Value::from_string(e.message.as_str())])
+							turf.call("stack_trace", &[&Value::from_string(e.message.as_str())?])
 								.unwrap();
 						}
 						Ok(Value::null())
@@ -356,11 +356,6 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 	let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
 	let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
 	let turf_receiver = HIGH_PRESSURE_TURFS.1.clone();
-	let resumed = args
-		.get(0)
-		.ok_or_else(|| runtime!("Wrong number of arguments to turf equalization: 0"))?
-		.as_number()?
-		== 1.0;
 	if !turf_receiver.is_empty()
 		&& EQUALIZATION_STEP.compare_exchange(
 			EQUALIZATION_NONE,
@@ -388,8 +383,8 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 						}
 						let adj_tiles = adjacent_tile_ids(m.adjacency, i, max_x, max_y);
 						let mut any_comparison_good = false;
-						for (_, loc) in adj_tiles.iter() {
-							if let Some(gas) = TURF_GASES.get(loc) {
+						for (_, loc) in adj_tiles {
+							if let Some(gas) = TURF_GASES.get(&loc) {
 								if (gas.total_moles() - our_moles).abs()
 									> MINIMUM_MOLES_DELTA_TO_MOVE
 								{
@@ -430,12 +425,12 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 							total_moles += cur_turf.total_moles();
 						}
 						for (_, loc) in
-							adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y).iter()
+							adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y)
 						{
-							if found_turfs.contains(loc) {
+							if found_turfs.contains(&loc) {
 								continue;
 							}
-							if let Some(adj_turf) = TURF_GASES.get(loc) {
+							if let Some(adj_turf) = TURF_GASES.get(&loc) {
 								let adj_orig = info.entry(cur_idx).or_default();
 								let mut adj_info = adj_orig.get();
 								#[cfg(feature = "explosive_decompression")]
@@ -471,7 +466,7 @@ fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
 										adj_info = Default::default();
 										adj_info.last_cycle = queue_cycle;
 										adj_orig.set(adj_info);
-										border_turfs.push_back((*loc, *adj_turf.value()));
+										border_turfs.push_back((loc, *adj_turf.value()));
 									}
 								}
 							}

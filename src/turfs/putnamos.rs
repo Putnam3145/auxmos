@@ -47,7 +47,7 @@ fn explosively_depressurize(
 		}
 		if m.is_immutable() {
 			space_turfs.push((i, m));
-			actual_turf.set(byond_string!("pressure_specific_target"), &actual_turf);
+			actual_turf.set(byond_string!("pressure_specific_target"), &actual_turf)?;
 		} else {
 			if cur_queue_idx > equalize_hard_turf_limit {
 				continue;
@@ -87,14 +87,14 @@ fn explosively_depressurize(
 				if !adjacency_info.contains_key(&adj_i) && !adj_m.is_immutable() {
 					adjacency_info.insert(i, Cell::new((OPP_DIR_INDEX[j as usize], 0.0)));
 					unsafe { Value::turf_by_id_unchecked(adj_i) }
-						.set(byond_string!("pressure_specific_target"), &actual_turf);
+						.set(byond_string!("pressure_specific_target"), &actual_turf)?;
 					progression_order.push((adj_i, *adj_m));
 				}
 			}
 		}
 		cur_queue_idx += 1;
 	}
-	let hpd = auxmos::Value::get_global(byond_string!("SSAir"))?
+	let hpd = auxtools::Value::globals().get(byond_string!("SSAir"))?
 		.get_list(byond_string!("high_pressure_delta"))?;
 	for (i, m) in progression_order.iter().rev() {
 		let cur_orig = adjacency_info.get(i).unwrap();
@@ -114,18 +114,18 @@ fn explosively_depressurize(
 			adj_info.1 += cur_info.1;
 			if adj_info.0 != 6 {
 				let adj_turf = unsafe { Value::turf_by_id_unchecked(adj_i) };
-				adj_turf.set(byond_string!("pressure_difference"), cur_info.1);
+				adj_turf.set(byond_string!("pressure_difference"), cur_info.1)?;
 				adj_turf.set(
 					byond_string!("pressure_direction"),
 					(1 << cur_info.0) as f32,
-				);
+				)?;
 			}
 			m.clear_air();
-			actual_turf.set(byond_string!("pressure_difference"), cur_info.1);
+			actual_turf.set(byond_string!("pressure_difference"), cur_info.1)?;
 			actual_turf.set(
 				byond_string!("pressure_direction"),
 				(1 << cur_info.0) as f32,
-			);
+			)?;
 			actual_turf.call("handle decompression floor rip", &[&Value::from(sum)])?;
 			adj_orig.set(adj_info);
 			cur_orig.set(cur_info);

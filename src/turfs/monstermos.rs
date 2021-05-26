@@ -332,7 +332,7 @@ fn explosively_depressurize(
 	}
 }
 
-// In its own function due to the Rust compiler not liking a massive function in a hook.
+#[deprecated(note = "Figure out what's wrong with it and it can be enabled, I'm not bothering for now.")]
 pub(crate) fn equalize(
 	equalize_turf_limit: usize,
 	equalize_hard_turf_limit: usize,

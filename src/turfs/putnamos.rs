@@ -122,7 +122,7 @@ fn explosively_depressurize(
 	Ok(Value::null())
 }
 
-#[inline(never)]
+#[deprecated(note = "Figure out what's wrong with it and it can be enabled, I'm not bothering for now.")]
 pub fn equalize(
 	equalize_turf_limit: usize,
 	equalize_hard_turf_limit: usize,

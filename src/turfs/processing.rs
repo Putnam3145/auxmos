@@ -70,6 +70,7 @@ fn _process_turf_hook() {
 			src.get_number(byond_string!("equalize_hard_turf_limit"))? as usize;
 		let equalize_enabled = cfg!(feature = "equalization")
 			&& src.get_number(byond_string!("equalize_enabled"))? != 0.0;
+		let group_pressure_goal = src.get_number(byond_string!("excited_group_pressure_goal"))?;
 		let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
 		let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
 		rayon::spawn(move || {
@@ -98,7 +99,7 @@ fn _process_turf_hook() {
 			};
 			{
 				let start_time = Instant::now();
-				let processed_turfs = excited_group_processing(max_x, max_y, low_pressure_turfs);
+				let processed_turfs = excited_group_processing(max_x, max_y, group_pressure_goal, low_pressure_turfs);
 				let bench = start_time.elapsed().as_millis();
 				let _ = sender.try_send(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
@@ -415,7 +416,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 	(high_pressure_turfs, low_pressure_turfs)
 }
 
-fn excited_group_processing(max_x: i32, max_y: i32, low_pressure_turfs: BTreeSet<TurfID>) -> usize {
+fn excited_group_processing(max_x: i32, max_y: i32, pressure_goal: f32, low_pressure_turfs: BTreeSet<TurfID>) -> usize {
 	let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
 	for &initial_turf in low_pressure_turfs.iter() {
 		if found_turfs.contains(&initial_turf) {
@@ -440,7 +441,7 @@ fn excited_group_processing(max_x: i32, max_y: i32, low_pressure_turfs: BTreeSet
 						let pressure = mix.return_pressure();
 						let this_max = max_pressure.max(pressure);
 						let this_min = min_pressure.min(pressure);
-						if (this_max - this_min).abs() >= 1.0 {
+						if (this_max - this_min).abs() >= pressure_goal {
 							continue;
 						}
 						min_pressure = this_min;

@@ -122,6 +122,8 @@ fn explosively_depressurize(
 	Ok(Value::null())
 }
 
+// Just floodfills to lower-pressure turfs until it can't find any more.
+
 #[deprecated(note = "Figure out what's wrong with it and it can be enabled, I'm not bothering for now.")]
 pub fn equalize(
 	equalize_turf_limit: usize,
@@ -144,6 +146,7 @@ pub fn equalize(
 			found_turfs.insert(initial_idx);
 			let (mut avg_pressure, mut pressure_weight) = (initial_turf.return_pressure() as f64, 1.0);
 			if GasMixtures::with_all_mixtures(|all_mixtures| {
+				// floodfill
 				while border_turfs.len() > 0 && turfs.len() < equalize_turf_limit {
 					let (cur_idx, cur_turf, parent_turf, pressure_delta) =
 						border_turfs.pop_front().unwrap();

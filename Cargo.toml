@@ -7,13 +7,14 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-monstermos = []
-putnamos = []
+equalization = []
+monstermos = ["equalization"]
+putnamos = ["equalization"]
 reaction_hooking = []
 plasma_fire_hook = ["reaction_hooking"]
 trit_fire_hook = ["reaction_hooking"]
 fusion_hook = ["reaction_hooking"]
-all_hooks = ["fusion_hook", "trit_fire_hook", "plasma_fire_hook"]
+all_reaction_hooks = ["fusion_hook", "trit_fire_hook", "plasma_fire_hook"]
 explosive_decompression = ["monstermos"]
 putnamos_decompression = ["putnamos"]
 

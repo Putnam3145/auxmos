@@ -113,6 +113,17 @@ impl GasMixture {
 		ret.volume = vol;
 		ret
 	}
+	/// Returns an object that can be used to merge many gases into one, then average them.
+	pub fn merger() -> GasSummer {
+		GasSummer {
+			cur_ids: Vec::with_capacity(8),
+			cur_summed_counts: Vec::with_capacity(8),
+			cur_summed_heat_cap: 0.0,
+			cur_summed_heat: 0.0,
+			cur_summed_vols: 0.0,
+			cur_temp: -1.0,
+		}
+	}
 	/// Returns the temperature of the mix. T
 	pub fn get_temperature(&self) -> f32 {
 		self.temperature
@@ -513,6 +524,74 @@ impl<'a> Mul<f32> for &'a GasMixture {
 		let mut ret = self.clone();
 		ret.multiply(rhs);
 		ret
+	}
+}
+
+pub struct GasSummer {
+	cur_ids: Vec<u8>,
+	cur_summed_counts: Vec<f64>,
+	cur_summed_heat_cap: f64,
+	cur_summed_heat: f64,
+	cur_summed_vols: f64,
+	cur_temp: f64,
+}
+
+impl GasSummer {
+	pub fn merge(&mut self, gas: &GasMixture) {
+		for e in gas.enumerate() {
+			let (id, amt) = (e.0, *e.1 as f64);
+			match self.cur_ids.linear_search(id) {
+				Ok(idx) => unsafe { *self.cur_summed_counts.get_unchecked_mut(idx) += amt },
+				Err(idx) => {
+					self.cur_summed_counts.insert(idx, amt);
+					self.cur_ids.insert(idx, *id);
+				}
+			}
+		}
+		self.cur_summed_heat_cap += gas.heat_capacity() as f64;
+		self.cur_summed_heat += gas.thermal_energy() as f64;
+		self.cur_summed_vols += gas.volume as f64;
+		self.cur_temp = self.cur_summed_heat / self.cur_summed_heat_cap;
+	}
+	pub fn copy_into(&self, gas: &mut GasMixture) {
+		if gas.immutable {
+			return;
+		}
+		let coeff = (gas.volume as f64) / self.cur_summed_vols;
+		gas.clear();
+		for (&id, amt) in self.cur_ids.iter().zip(
+			self.cur_summed_counts
+				.iter()
+				.map(|amt| (amt * coeff) as f32),
+		) {
+			gas.set_moles(id, amt);
+		}
+		gas.set_temperature(self.cur_temp as f32);
+	}
+	pub fn copy_with_vol(&self, vol: f64) -> GasMixture {
+		let coeff = vol / self.cur_summed_vols;
+		GasMixture {
+			mole_ids: self.cur_ids.clone(),
+			moles: self
+				.cur_summed_counts
+				.iter()
+				.map(|amt| (amt * coeff) as f32)
+				.collect(),
+			heat_capacities: self
+				.cur_ids
+				.iter()
+				.map(|&id| gas_specific_heat(id))
+				.collect(),
+			temperature: self.cur_temp as f32,
+			volume: vol as f32,
+			min_heat_capacity: 0.0,
+			immutable: false,
+			cached_heat_capacity: Cell::new(None),
+		}
+	}
+	pub fn return_pressure(&self) -> f32 {
+		let moles = self.cur_summed_counts.iter().sum::<f64>();
+		((moles * R_IDEAL_GAS_EQUATION as f64 * self.cur_temp as f64) / self.cur_summed_vols) as f32
 	}
 }
 

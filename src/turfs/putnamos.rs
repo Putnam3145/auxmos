@@ -6,20 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use std::cell::Cell;
 
-use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
-
-use std::sync::atomic::{AtomicU8, Ordering};
-
-const EQUALIZATION_NONE: u8 = 0;
-const EQUALIZATION_PROCESSING: u8 = 1;
-const EQUALIZATION_DONE: u8 = 2;
-
-static EQUALIZATION_STEP: AtomicU8 = AtomicU8::new(0);
-
-#[shutdown]
-fn putnamos_cleanup() {
-	EQUALIZATION_STEP.store(EQUALIZATION_NONE, Ordering::SeqCst);
-}
+use auxcallback::byond_callback_sender;
 
 const OPP_DIR_INDEX: [u8; 7] = [1, 0, 3, 2, 5, 4, 6];
 
@@ -94,7 +81,8 @@ fn explosively_depressurize(
 		}
 		cur_queue_idx += 1;
 	}
-	let hpd = auxtools::Value::globals().get(byond_string!("SSAir"))?
+	let hpd = auxtools::Value::globals()
+		.get(byond_string!("SSAir"))?
 		.get_list(byond_string!("high_pressure_delta"))?;
 	for (i, m) in progression_order.iter().rev() {
 		let cur_orig = adjacency_info.get(i).unwrap();
@@ -134,162 +122,113 @@ fn explosively_depressurize(
 	Ok(Value::null())
 }
 
-fn actual_equalize(src: &Value, args: &[Value]) -> DMResult {
-	let equalize_turf_limit = src.get_number(byond_string!("equalize_turf_limit"))? as usize;
-	let equalize_hard_turf_limit =
-		src.get_number(byond_string!("equalize_hard_turf_limit"))? as usize;
-	let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
-	let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
-	let turf_receiver = HIGH_PRESSURE_TURFS.1.clone();
-	let resumed = args
-		.get(0)
-		.ok_or_else(|| runtime!("Wrong number of arguments to turf equalization: 0"))?
-		.as_number()?
-		== 1.0;
-	if !resumed
-		&& !turf_receiver.is_empty()
-		&& EQUALIZATION_STEP.compare_exchange(
-			EQUALIZATION_NONE,
-			EQUALIZATION_PROCESSING,
-			Ordering::SeqCst,
-			Ordering::Relaxed,
-		) == Ok(EQUALIZATION_NONE)
-	{
-		rayon::spawn(move || {
-			let sender = byond_callback_sender();
-			'turf_loop: for initial_idx in turf_receiver.try_iter().flatten() {
-				if let Some(initial_turf) = TURF_GASES.get(&initial_idx) {
-					if initial_turf.simulation_level == SIMULATION_LEVEL_ALL
-						&& initial_turf.adjacency > 0
-					{
-						let our_moles = initial_turf.total_moles();
-						if our_moles < 10.0 {
-							continue;
-						}
-					} else {
-						continue;
-					}
-					let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
-					let mut turfs: Vec<(TurfID, TurfMixture, TurfID, f32)> =
-						Vec::with_capacity(equalize_turf_limit);
-					let mut border_turfs: VecDeque<(TurfID, TurfMixture, TurfID, f32)> =
-						VecDeque::with_capacity(equalize_turf_limit);
-					let mut final_mix = GasMixture::new();
-					border_turfs.push_back((initial_idx, *initial_turf, initial_idx, 0.0));
-					let mut was_space = false;
-					GasMixtures::with_all_mixtures(|all_mixtures| {
-						while border_turfs.len() > 0 && turfs.len() < equalize_turf_limit {
-							let (cur_idx, cur_turf, parent_turf, pressure_delta) =
-								border_turfs.pop_front().unwrap();
-							if let Some(entry) = all_mixtures.get(cur_turf.mix) {
-								let gas: &GasMixture = &entry.read();
-								final_mix.merge(gas);
-								final_mix.volume += gas.volume;
-							}
-							turfs.push((cur_idx, cur_turf, parent_turf, pressure_delta));
-							if let Some(our_gas_entry) = all_mixtures.get(cur_turf.mix) {
-								let should_get_adjacents = { !our_gas_entry.read().is_immutable() };
-								if should_get_adjacents {
-									for (_, loc) in
-										adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y)
+#[inline(never)]
+pub fn equalize(
+	equalize_turf_limit: usize,
+	equalize_hard_turf_limit: usize,
+	max_x: i32,
+	max_y: i32,
+	high_pressure_turfs: BTreeSet<TurfID>,
+) -> usize {
+	let sender = byond_callback_sender();
+	let mut turfs_processed = 0;
+	let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
+	'turf_loop: for &initial_idx in high_pressure_turfs.iter() {
+		if let Some(initial_turf) = TURF_GASES.get(&initial_idx) {
+			let mut turfs: Vec<(TurfID, TurfMixture, TurfID, f32)> =
+				Vec::with_capacity(equalize_turf_limit);
+			let mut border_turfs: VecDeque<(TurfID, TurfMixture, TurfID, f32)> =
+				VecDeque::with_capacity(equalize_turf_limit);
+			let mut merger = GasMixture::merger();
+			border_turfs.push_back((initial_idx, *initial_turf, initial_idx, 0.0));
+			found_turfs.insert(initial_idx);
+			let (mut avg_pressure, mut pressure_weight) = (initial_turf.return_pressure() as f64, 1.0);
+			if GasMixtures::with_all_mixtures(|all_mixtures| {
+				while border_turfs.len() > 0 && turfs.len() < equalize_turf_limit {
+					let (cur_idx, cur_turf, parent_turf, pressure_delta) =
+						border_turfs.pop_front().unwrap();
+					if let Some(our_gas_entry) = all_mixtures.get(cur_turf.mix) {
+						let gas = our_gas_entry.read();
+						merger.merge(&gas);
+						turfs.push((cur_idx, cur_turf, parent_turf, pressure_delta));
+						if !gas.is_immutable() {
+							for (_, loc) in
+								adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y)
+							{
+								if found_turfs.contains(&loc) {
+									continue;
+								}
+								found_turfs.insert(loc);
+								if let Some(adj_turf) = TURF_GASES.get(&loc) {
+									if cfg!(feature = "putnamos_decompression")
+										&& adj_turf.is_immutable()
 									{
-										if found_turfs.contains(&loc) {
-											continue;
-										}
-										if let Some(adj_turf) = TURF_GASES.get(&loc) {
-											if let Some(entry) = all_mixtures.get(adj_turf.mix) {
-												let gas: &GasMixture = &entry.read();
-												if cfg!(putnamos_decompression)
-													&& gas.is_immutable()
-												{
-													let _ = sender.try_send(Box::new(move || {
-														explosively_depressurize(
-															cur_idx,
-															cur_turf,
-															equalize_hard_turf_limit,
-															max_x,
-															max_y,
-														)
-													}));
-													was_space = true;
-													return;
-												} else {
-													let delta = gas.return_pressure()
-														- final_mix.return_pressure();
-													if delta < 0.0 {
-														border_turfs.push_back((
-															loc,
-															*adj_turf.value(),
-															cur_idx,
-															-delta,
-														));
-													}
-												}
-											}
+										let _ = sender.try_send(Box::new(move || {
+											explosively_depressurize(
+												cur_idx,
+												cur_turf,
+												equalize_hard_turf_limit,
+												max_x,
+												max_y,
+											)
+										}));
+										return true;
+									} else {
+										let other_pressure = adj_turf.return_pressure();
+										let delta =
+											avg_pressure as f32 - other_pressure;
+										avg_pressure = (avg_pressure * pressure_weight) + other_pressure as f64;
+										pressure_weight += 1.0;
+										avg_pressure /= pressure_weight;
+										if delta < 0.0 {
+											border_turfs.push_back((
+												loc,
+												*adj_turf.value(),
+												cur_idx,
+												-delta,
+											));
 										}
 									}
 								}
 							}
-							found_turfs.insert(cur_idx);
 						}
-					});
-					if was_space {
-						continue 'turf_loop;
 					}
-					final_mix.multiply(1.0 / turfs.len() as f32);
-					GasMixtures::with_all_mixtures(|all_mixtures| {
-						for (cur_idx, cur_turf, parent_turf, pressure_delta) in turfs.iter() {
-							if let Some(entry) = all_mixtures.get(cur_turf.mix) {
-								let gas: &mut GasMixture = &mut entry.write();
-								gas.copy_from_mutable(&final_mix);
-							}
-							let idx_copy = *cur_idx;
-							let parent_copy = *parent_turf;
-							let actual_delta = *pressure_delta;
-							let _ = sender.try_send(Box::new(move || {
-								if parent_copy != 0 {
-									let turf = unsafe { Value::turf_by_id_unchecked(idx_copy) };
-									let enemy_turf =
-										unsafe { Value::turf_by_id_unchecked(parent_copy) };
-									enemy_turf.call(
-										"consider_pressure_difference",
-										&[&turf, &Value::from(actual_delta)],
-									)?;
-								}
-								Ok(Value::null())
-							}));
-						}
-					});
 				}
+				false
+			}) || turfs.len() == 1 {
+				continue 'turf_loop;
 			}
-			EQUALIZATION_STEP.store(EQUALIZATION_DONE, Ordering::Relaxed);
-		});
+			let final_mix = merger.copy_with_vol(CELL_VOLUME as f64);
+			turfs_processed += turfs.len();
+			let to_send = GasMixtures::with_all_mixtures(|all_mixtures| {
+				turfs
+					.iter()
+					.map(|(cur_idx, cur_turf, parent_turf, pressure_delta)| {
+						if let Some(entry) = all_mixtures.get(cur_turf.mix) {
+							let gas: &mut GasMixture = &mut entry.write();
+							gas.copy_from_mutable(&final_mix);
+						}
+						(*cur_idx, *parent_turf, *pressure_delta)
+					})
+					.collect::<Vec<_>>()
+			});
+			for chunk_prelude in to_send.chunks(20) {
+				let chunk: Vec<_> = chunk_prelude.iter().copied().collect();
+				let _ = sender.try_send(Box::new(move || {
+					for &(idx, parent, delta) in chunk.iter() {
+						if parent != 0 {
+							let turf = unsafe { Value::turf_by_id_unchecked(idx) };
+							let enemy_turf = unsafe { Value::turf_by_id_unchecked(parent) };
+							enemy_turf.call(
+								"consider_pressure_difference",
+								&[&turf, &Value::from(delta)],
+							)?;
+						}
+					}
+					Ok(Value::null())
+				}));
+			}
+		}
 	}
-	let arg_limit = args
-		.get(1)
-		.ok_or_else(|| runtime!("Wrong number of arguments to turf equalization: 1"))?
-		.as_number()?;
-	if arg_limit <= 0.0 {
-		return Ok(Value::from(true));
-	}
-	process_callbacks_for_millis(arg_limit as u64);
-	if let Err(prev_value) = EQUALIZATION_STEP.compare_exchange(
-		EQUALIZATION_DONE,
-		EQUALIZATION_NONE,
-		Ordering::SeqCst,
-		Ordering::Relaxed,
-	) {
-		Ok(Value::from(
-			prev_value != EQUALIZATION_DONE && prev_value != EQUALIZATION_NONE,
-		))
-	} else {
-		Ok(Value::from(false))
-	}
-}
-
-// Expected function call: process_turf_equalize_extools((Master.current_ticklimit - TICK_USAGE) * world.tick_lag)
-// Returns: TRUE if not done, FALSE if done
-#[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
-fn _hook_equalize() {
-	actual_equalize(src, args)
+	turfs_processed
 }

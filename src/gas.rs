@@ -421,6 +421,24 @@ where
 	)
 }
 
+#[hook("/proc/fix_corrupted_atmos")]
+fn _fix_corrupted_atmos() {
+	rayon::spawn(|| {
+		for lock in GAS_MIXTURES.read().iter() {
+			if {
+				if let Some(gas) = lock.try_read() {
+					gas.is_corrupt()
+				} else {
+					false
+				}
+			} {
+				lock.write().fix_corruption();
+			}
+		}
+	});
+	Ok(Value::null())
+}
+
 pub(crate) fn amt_gases() -> usize {
 	NEXT_GAS_IDS.with(|next_gas_ids| GAS_MIXTURES.read().len() - next_gas_ids.borrow().len())
 }

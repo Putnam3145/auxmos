@@ -124,7 +124,9 @@ fn explosively_depressurize(
 
 // Just floodfills to lower-pressure turfs until it can't find any more.
 
-#[deprecated(note = "Figure out what's wrong with it and it can be enabled, I'm not bothering for now.")]
+#[deprecated(
+	note = "Figure out what's wrong with it and it can be enabled, I'm not bothering for now."
+)]
 pub fn equalize(
 	equalize_turf_limit: usize,
 	equalize_hard_turf_limit: usize,
@@ -144,7 +146,8 @@ pub fn equalize(
 			let mut merger = GasMixture::merger();
 			border_turfs.push_back((initial_idx, *initial_turf, initial_idx, 0.0));
 			found_turfs.insert(initial_idx);
-			let (mut avg_pressure, mut pressure_weight) = (initial_turf.return_pressure() as f64, 1.0);
+			let (mut avg_pressure, mut pressure_weight) =
+				(initial_turf.return_pressure() as f64, 1.0);
 			if GasMixtures::with_all_mixtures(|all_mixtures| {
 				// floodfill
 				while border_turfs.len() > 0 && turfs.len() < equalize_turf_limit {
@@ -178,9 +181,9 @@ pub fn equalize(
 										return true;
 									} else {
 										let other_pressure = adj_turf.return_pressure();
-										let delta =
-											avg_pressure as f32 - other_pressure;
-										avg_pressure = (avg_pressure * pressure_weight) + other_pressure as f64;
+										let delta = avg_pressure as f32 - other_pressure;
+										avg_pressure = (avg_pressure * pressure_weight)
+											+ other_pressure as f64;
 										pressure_weight += 1.0;
 										avg_pressure /= pressure_weight;
 										if delta < 0.0 {
@@ -198,7 +201,8 @@ pub fn equalize(
 					}
 				}
 				false
-			}) || turfs.len() == 1 {
+			}) || turfs.len() == 1
+			{
 				continue 'turf_loop;
 			}
 			let final_mix = merger.copy_with_vol(CELL_VOLUME as f64);

@@ -99,7 +99,8 @@ fn _process_turf_hook() {
 			};
 			{
 				let start_time = Instant::now();
-				let processed_turfs = excited_group_processing(max_x, max_y, group_pressure_goal, low_pressure_turfs);
+				let processed_turfs =
+					excited_group_processing(max_x, max_y, group_pressure_goal, low_pressure_turfs);
 				let bench = start_time.elapsed().as_millis();
 				let _ = sender.try_send(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
@@ -234,6 +235,9 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 										so we make sure we don't do that unless we
 										absolutely need to. Saving is fast enough.
 									*/
+									if gas.is_corrupt() {
+										return None;
+									}
 									let mut end_gas = GasMixture::from_vol(2500.0);
 									let mut pressure_diffs: [(TurfID, f32); 6] = Default::default();
 									/*
@@ -254,6 +258,9 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 											{
 												if let Some(entry) = all_mixtures.get(turf.mix) {
 													if let Some(mix) = entry.try_read() {
+														if mix.is_corrupt() {
+															continue;
+														}
 														end_gas.merge(&mix);
 														adj_amount += 1;
 														pressure_diffs[j as usize] = (
@@ -416,7 +423,12 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 	(high_pressure_turfs, low_pressure_turfs)
 }
 
-fn excited_group_processing(max_x: i32, max_y: i32, pressure_goal: f32, low_pressure_turfs: BTreeSet<TurfID>) -> usize {
+fn excited_group_processing(
+	max_x: i32,
+	max_y: i32,
+	pressure_goal: f32,
+	low_pressure_turfs: BTreeSet<TurfID>,
+) -> usize {
 	let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
 	for &initial_turf in low_pressure_turfs.iter() {
 		if found_turfs.contains(&initial_turf) {
@@ -466,10 +478,12 @@ fn excited_group_processing(max_x: i32, max_y: i32, pressure_goal: f32, low_pres
 					}
 				}
 				let final_gas = fully_mixed.copy_with_vol(2500.0);
-				turfs.par_iter().for_each(|turf| {
-					let mut mix = all_mixtures.get(turf.mix).unwrap().write();
-					mix.copy_from_mutable(&final_gas);
-				});
+				if !final_gas.is_corrupt() {
+					turfs.par_iter().for_each(|turf| {
+						let mut mix = all_mixtures.get(turf.mix).unwrap().write();
+						mix.copy_from_mutable(&final_gas);
+					});
+				}
 			});
 		}
 	}
@@ -491,18 +505,38 @@ fn post_process() {
 						&& m.simulation_level & SIMULATION_LEVEL_DISABLED
 							!= SIMULATION_LEVEL_DISABLED
 					{
+						if let Some(planet_atmos_id) = m.planetary_atmos {
+							if let Some(planet_atmos_entry) = PLANETARY_ATMOS.get(planet_atmos_id) {
+								let planet_atmos = planet_atmos_entry.value();
+								if {
+									if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
+										let comparison = gas.compare(planet_atmos);
+										comparison < 1.0 && comparison > 0.0
+									} else {
+										false
+									}
+								} {
+									if let Some(mut gas) =
+										all_mixtures.get(m.mix).unwrap().try_write()
+									{
+										gas.copy_from_mutable(planet_atmos);
+									}
+								}
+							}
+						}
 						if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
 							let visibility = gas.visibility_hash();
 							let should_update_visuals = check_and_update_vis_hash(i, visibility);
 							let reactable = gas.can_react();
+							let corrupt = gas.is_corrupt();
 							if should_update_visuals || reactable {
-								return Some((i, should_update_visuals, reactable));
+								return Some((i, should_update_visuals, reactable, corrupt));
 							}
 						}
 					}
 					return None;
 				})
-				.for_each(|(i, should_update_visuals, reactable)| {
+				.for_each(|(i, should_update_visuals, reactable, corrupt)| {
 					if should_update_visuals {
 						visual_updaters.push_back(i);
 						if reacters.len() >= 10 {
@@ -528,6 +562,12 @@ fn post_process() {
 								Ok(Value::null())
 							}));
 						}
+					}
+					if corrupt {
+						let _ = sender.try_send(Box::new(move || {
+							let turf = unsafe { Value::turf_by_id_unchecked(i) };
+							turf.call("force_air_reset", &[])
+						}));
 					}
 				});
 			let _ = sender.try_send(Box::new(move || {

@@ -171,6 +171,19 @@ fn _set_temperature_hook() {
 	}
 }
 
+#[hook("/datum/gas_mixture/proc/partial_heat_capacity")]
+fn _partial_heat_capacity() {
+	if args.is_empty() {
+		Err(runtime!("Incorrect arg len for partial_heat_capacity (0)."))
+	} else {
+		with_mix(src, |mix| {
+			Ok(Value::from(
+				mix.partial_heat_capacity(gas_id_from_type(&args[0])?),
+			))
+		})
+	}
+}
+
 #[hook("/datum/gas_mixture/proc/set_volume")]
 fn _set_volume_hook() {
 	if args.is_empty() {

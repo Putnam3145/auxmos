@@ -102,7 +102,7 @@ impl GasMixture {
 			heat_capacities: Vec::with_capacity(8),
 			temperature: 2.7,
 			volume: 2500.0,
-			min_heat_capacity: 0.0,
+			min_heat_capacity: MINIMUM_HEAT_CAPACITY,
 			immutable: false,
 			cached_heat_capacity: Cell::new(None),
 		}
@@ -124,6 +124,28 @@ impl GasMixture {
 			cur_temp: -1.0,
 		}
 	}
+	/// Returns if any data is corrupt.
+	pub fn is_corrupt(&self) -> bool {
+		self.mole_ids.iter().any(|&i| i > total_num_gases())
+			|| self.moles.iter().any(|amt| !amt.is_normal())
+			|| self.heat_capacities.iter().any(|cap| !cap.is_normal())
+			|| !self.temperature.is_normal()
+			|| (self.mole_ids.len() != self.moles.len())
+			|| (self.mole_ids.len() != self.heat_capacities.len())
+	}
+	/// Fixes any corruption found.
+	pub fn fix_corruption(&mut self) {
+		self.mole_ids.truncate(total_num_gases() as usize);
+		self.heat_capacities = self
+			.mole_ids
+			.iter()
+			.map(|&i| gas_specific_heat(i))
+			.collect();
+		self.garbage_collect();
+		if !self.temperature.is_normal() {
+			self.set_temperature(293.15);
+		}
+	}
 	/// Returns the temperature of the mix. T
 	pub fn get_temperature(&self) -> f32 {
 		self.temperature
@@ -138,11 +160,12 @@ impl GasMixture {
 	pub fn set_min_heat_capacity(&mut self, amt: f32) {
 		self.min_heat_capacity = amt;
 	}
-	// Returns an iterator over the gas keys and mole amounts thereof.
+	/// Returns an iterator over the gas keys and mole amounts thereof.
 	pub fn enumerate(&self) -> impl Iterator<Item = (&u8, &f32)> {
 		self.mole_ids.iter().zip(self.moles.iter())
 	}
-	fn enumerate_with_heat(&self) -> impl Iterator<Item = (&u8, &f32, &f32)> {
+	/// Same as above, but with heat included.
+	pub fn enumerate_with_heat(&self) -> impl Iterator<Item = (&u8, &f32, &f32)> {
 		self.enumerate()
 			.zip(self.heat_capacities.iter())
 			.map(|((a, b), c)| (a, b, c))
@@ -201,14 +224,23 @@ impl GasMixture {
 	/// The heat capacity of the material. [joules?]/mole-kelvin.
 	pub fn heat_capacity(&self) -> f32 {
 		if let Some(heat_cap) = self.cached_heat_capacity.get() {
-			heat_cap
+			if heat_cap.is_normal() {
+				return heat_cap;
+			}
+		}
+		let heat_cap = self
+			.enumerate_with_heat()
+			.fold(0.0, |acc, (_, amt, &cap)| amt.mul_add(cap, acc))
+			.max(self.min_heat_capacity);
+		self.cached_heat_capacity.set(Some(heat_cap));
+		heat_cap
+	}
+	/// Heat capacity of exactly one gas in this mix.
+	pub fn partial_heat_capacity(&self, idx: u8) -> f32 {
+		if let Ok(i) = self.mole_ids.linear_search(&idx) {
+			unsafe { self.moles.get_unchecked(i) * self.heat_capacities.get_unchecked(i) }
 		} else {
-			let heat_cap = self
-				.enumerate_with_heat()
-				.fold(0.0, |acc, (_, amt, cap)| acc + amt * cap)
-				.max(self.min_heat_capacity);
-			self.cached_heat_capacity.set(Some(heat_cap));
-			heat_cap
+			0.0
 		}
 	}
 	/// The total mole count of the mixture. Moles.
@@ -225,7 +257,7 @@ impl GasMixture {
 	}
 	/// Merges one gas mixture into another.
 	pub fn merge(&mut self, giver: &GasMixture) {
-		if self.immutable {
+		if self.immutable || giver.is_corrupt() {
 			return;
 		}
 		let our_heat_capacity = self.heat_capacity();
@@ -271,7 +303,7 @@ impl GasMixture {
 	}
 	/// Copies from a given gas mixture, if we're mutable.
 	pub fn copy_from_mutable(&mut self, sample: &GasMixture) {
-		if self.immutable {
+		if self.immutable && !sample.is_corrupt() {
 			return;
 		}
 		self.mole_ids = sample.mole_ids.clone();
@@ -392,7 +424,7 @@ impl GasMixture {
 	pub fn clear_with_vol(&mut self, vol: f32) {
 		self.temperature = 2.7;
 		self.volume = vol;
-		self.min_heat_capacity = 0.0;
+		self.min_heat_capacity = MINIMUM_HEAT_CAPACITY;
 		self.immutable = false;
 		self.clear();
 	}
@@ -402,7 +434,8 @@ impl GasMixture {
 			for amt in self.moles.iter_mut() {
 				*amt *= multiplier;
 			}
-			*self.cached_heat_capacity.get_mut() = Some(self.heat_capacity() * multiplier); // hax
+			self.cached_heat_capacity
+				.set(Some(self.heat_capacity() * multiplier)); // hax
 		}
 	}
 	/// Checks if the proc can react with any reactions.

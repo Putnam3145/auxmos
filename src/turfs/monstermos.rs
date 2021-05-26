@@ -332,7 +332,9 @@ fn explosively_depressurize(
 	}
 }
 
-#[deprecated(note = "Figure out what's wrong with it and it can be enabled, I'm not bothering for now.")]
+#[deprecated(
+	note = "Figure out what's wrong with it and it can be enabled, I'm not bothering for now."
+)]
 pub(crate) fn equalize(
 	equalize_turf_limit: usize,
 	equalize_hard_turf_limit: usize,
@@ -382,7 +384,7 @@ pub(crate) fn equalize(
 			let mut border_turfs: VecDeque<(TurfID, TurfMixture)> =
 				VecDeque::with_capacity(equalize_turf_limit);
 			let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
-//			let mut planet_turfs: Vec<(TurfID, TurfMixture)> = Vec::new();
+			//			let mut planet_turfs: Vec<(TurfID, TurfMixture)> = Vec::new();
 			let mut total_moles: f32 = 0.0;
 			#[allow(unused_mut)]
 			let mut space_this_time = false;
@@ -397,7 +399,7 @@ pub(crate) fn equalize(
 				found_turfs.insert(cur_idx);
 				if turfs.len() < equalize_turf_limit {
 					if cur_turf.planetary_atmos.is_some() {
-					//	planet_turfs.push((cur_idx, cur_turf));
+						//	planet_turfs.push((cur_idx, cur_turf));
 						continue;
 					}
 					total_moles += cur_turf.total_moles();

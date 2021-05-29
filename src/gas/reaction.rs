@@ -8,13 +8,16 @@ use super::{gas_id_to_type, total_num_gases};
 
 use core::cmp::Ordering;
 
+use bitvec::prelude::*;
+
 #[derive(Clone)]
 pub struct Reaction {
 	id: ReactionIdentifier,
 	min_temp_req: Option<f32>,
 	max_temp_req: Option<f32>,
 	min_ener_req: Option<f32>,
-	min_gas_reqs: Vec<(u8, f32)>,
+	req_gases: BitVec<Lsb0, u8>,
+	min_gas_reqs: Vec<f32>,
 }
 
 #[derive(Copy, Clone)]
@@ -90,11 +93,13 @@ impl Reaction {
 		let min_reqs = reaction
 			.get_list(byond_string!("min_requirements"))
 			.unwrap();
-		let mut min_gas_reqs: Vec<(u8, f32)> = Vec::new();
+		let mut min_gas_reqs = Vec::new();
+		let mut req_gases = BitVec::new();
 		for i in 0..total_num_gases() {
 			if let Ok(gas_req) = min_reqs.get(&gas_id_to_type(i).unwrap()) {
 				if let Ok(req_amount) = gas_req.as_number() {
-					min_gas_reqs.push((i, req_amount));
+					min_gas_reqs.push(req_amount);
+					req_gases.set(1 << i, true);
 				}
 			}
 		}
@@ -122,11 +127,13 @@ impl Reaction {
 			string_id_hash,
 			priority,
 		};
+		req_gases.shrink_to_fit();
 		let our_reaction = Reaction {
 			id,
 			min_temp_req,
 			max_temp_req,
 			min_ener_req,
+			req_gases,
 			min_gas_reqs,
 		};
 		REACTION_VALUES.with(|r| r.borrow_mut().insert(our_reaction.id, reaction.clone()));
@@ -146,9 +153,10 @@ impl Reaction {
 				.min_ener_req
 				.map_or(true, |ener_req| mix.thermal_energy() >= ener_req)
 			&& self
-				.min_gas_reqs
-				.iter()
-				.all(|&(k, v)| mix.get_moles(k) >= v)
+				.req_gases
+				.iter_ones()
+				.zip(self.min_gas_reqs.iter())
+				.all(|(k, &v)| mix.get_moles(k) >= v)
 	}
 	/// Returns the priority of the reaction.
 	pub fn get_priority(&self) -> f32 {

@@ -32,6 +32,7 @@ crossbeam = "0.8.0"
 flume = "0.9.1"
 coarsetime = "0.1.16"
 parking_lot = "0.11.1"
+bitvec = "0.22.3"
 
 [dependencies.dashmap]
 version = "4.0.2"
@@ -47,3 +48,4 @@ lto = 'thin'
 codegen-units = 1
 incremental = true
 debug = true
+panic = "abort"

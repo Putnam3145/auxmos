@@ -2,9 +2,9 @@ use itertools::Itertools;
 
 use itertools::EitherOrBoth::{Both, Left, Right};
 
-use std::cmp::Ordering;
-
 use std::cell::Cell;
+
+use bitvec::prelude::*;
 
 use super::reaction::ReactionIdentifier;
 
@@ -12,45 +12,15 @@ use super::constants::*;
 
 use super::{gas_specific_heat, gas_visibility, total_num_gases, with_reactions};
 
-trait LinearSearch<T> {
-	fn linear_search(&self, x: &T) -> Result<usize, usize>
-	where
-		T: Ord;
-	fn linear_search_by<F>(&self, f: F) -> Result<usize, usize>
-	where
-		F: FnMut(&T) -> Ordering;
-	fn linear_search_by_key<B, F>(&self, b: &B, f: F) -> Result<usize, usize>
-	where
-		B: Ord,
-		F: FnMut(&T) -> B;
-}
-
-impl<T> LinearSearch<T> for [T] {
-	fn linear_search(&self, x: &T) -> Result<usize, usize>
-	where
-		T: Ord,
-	{
-		self.linear_search_by(|p| p.cmp(x))
-	}
-	fn linear_search_by<F>(&self, mut f: F) -> Result<usize, usize>
-	where
-		F: FnMut(&T) -> Ordering,
-	{
-		for (idx, i) in self.iter().enumerate() {
-			match f(i) {
-				Ordering::Equal => return Ok(idx),
-				Ordering::Greater => return Err(idx),
-				_ => (),
-			}
-		}
-		Err(self.len())
-	}
-	fn linear_search_by_key<B, F>(&self, b: &B, mut f: F) -> Result<usize, usize>
-	where
-		B: Ord,
-		F: FnMut(&T) -> B,
-	{
-		self.linear_search_by(|k| f(k).cmp(b))
+fn get_bit_position<O: BitOrder, V: BitStore>(
+	bitvec: &BitVec<O, V>,
+	idx: usize,
+) -> Result<usize, usize> {
+	let count = bitvec.get(..idx).unwrap_or_else(|| bitvec).count_ones();
+	if bitvec.get(idx).map_or(false, |e| *e) {
+		Ok(count)
+	} else {
+		Err(count)
 	}
 }
 
@@ -68,7 +38,7 @@ pub struct GasMixture {
 	pub volume: f32,
 	min_heat_capacity: f32,
 	immutable: bool,
-	mole_ids: Vec<u8>,
+	mole_ids: BitVec<Lsb0, u8>,
 	moles: Vec<f32>,
 	heat_capacities: Vec<f32>,
 	cached_heat_capacity: Cell<Option<f32>>,
@@ -97,7 +67,7 @@ impl GasMixture {
 	/// Makes an empty gas mixture.
 	pub fn new() -> Self {
 		GasMixture {
-			mole_ids: Vec::with_capacity(8),
+			mole_ids: BitVec::new(),
 			moles: Vec::with_capacity(8),
 			heat_capacities: Vec::with_capacity(8),
 			temperature: 2.7,
@@ -113,10 +83,21 @@ impl GasMixture {
 		ret.volume = vol;
 		ret
 	}
+	/// Makes a gas entry allocated by the arena.
+	pub fn new_from_arena(vol: f32) -> GasMixtureAlloc {
+		if let Some(idx) = super::GAS_MIXTURES
+			.read()
+			.try_push(|g| g.clear_with_vol(vol))
+		{
+			GasMixtureAlloc::Arena(idx)
+		} else {
+			GasMixtureAlloc::Heap(GasMixture::from_vol(vol))
+		}
+	}
 	/// Returns an object that can be used to merge many gases into one, then average them.
 	pub fn merger() -> GasSummer {
 		GasSummer {
-			cur_ids: Vec::with_capacity(8),
+			cur_ids: BitVec::new(),
 			cur_summed_counts: Vec::with_capacity(8),
 			cur_summed_heat_cap: 0.0,
 			cur_summed_heat: 0.0,
@@ -126,7 +107,7 @@ impl GasMixture {
 	}
 	/// Returns if any data is corrupt.
 	pub fn is_corrupt(&self) -> bool {
-		self.mole_ids.iter().any(|&i| i > total_num_gases())
+		self.mole_ids.iter_ones().any(|i| i > total_num_gases())
 			|| self.moles.iter().any(|amt| !amt.is_normal())
 			|| self.heat_capacities.iter().any(|cap| !cap.is_normal())
 			|| !self.temperature.is_normal()
@@ -135,11 +116,11 @@ impl GasMixture {
 	}
 	/// Fixes any corruption found.
 	pub fn fix_corruption(&mut self) {
-		self.mole_ids.truncate(total_num_gases() as usize);
+		self.mole_ids.truncate(total_num_gases());
 		self.heat_capacities = self
 			.mole_ids
-			.iter()
-			.map(|&i| gas_specific_heat(i))
+			.iter_ones()
+			.map(|i| gas_specific_heat(i))
 			.collect();
 		self.garbage_collect();
 		if !self.temperature.is_normal() {
@@ -161,11 +142,11 @@ impl GasMixture {
 		self.min_heat_capacity = amt;
 	}
 	/// Returns an iterator over the gas keys and mole amounts thereof.
-	pub fn enumerate(&self) -> impl Iterator<Item = (&u8, &f32)> {
-		self.mole_ids.iter().zip(self.moles.iter())
+	pub fn enumerate(&self) -> impl Iterator<Item = (usize, &f32)> {
+		self.mole_ids.iter_ones().zip(self.moles.iter())
 	}
 	/// Same as above, but with heat included.
-	pub fn enumerate_with_heat(&self) -> impl Iterator<Item = (&u8, &f32, &f32)> {
+	pub fn enumerate_with_heat(&self) -> impl Iterator<Item = (usize, &f32, &f32)> {
 		self.enumerate()
 			.zip(self.heat_capacities.iter())
 			.map(|((a, b), c)| (a, b, c))
@@ -173,18 +154,27 @@ impl GasMixture {
 	/// Allows closures to iterate over each gas.
 	pub fn for_each_gas<F>(&self, f: F)
 	where
-		F: FnMut((&u8, &f32)),
+		F: FnMut((usize, &f32)),
 	{
 		self.enumerate().for_each(f);
 	}
 	/// Returns a slice representing the non-zero gases in the mix.
-	pub fn get_gases(&self) -> &[u8] {
+	pub fn get_gases(&self) -> bitvec::slice::IterOnes<Lsb0, u8> {
+		self.mole_ids.iter_ones()
+	}
+	/// Returns a bitfield of gases in the mix.
+	pub fn gases_as_bitfield(&self) -> &BitSlice<Lsb0, u8> {
 		&self.mole_ids
 	}
 	/// Returns (by value) the amount of moles of a given index the mix has. M
-	pub fn get_moles(&self, idx: u8) -> f32 {
-		if let Ok(i) = self.mole_ids.linear_search(&idx) {
-			*unsafe { self.moles.get_unchecked(i) } // mole_ids and moles have same size, so `i` is always in bounds
+	pub fn get_moles(&self, idx: usize) -> f32 {
+		if self.mole_ids.get(idx).map_or(false, |e| *e) {
+			*unsafe {
+				self.moles
+					.get_unchecked(self.mole_ids.get_unchecked(..idx).count_ones())
+			}
+		// count_ones with the last bit chopped off always returns a value at most moles.len()-1,
+		// because mole_ids is only added to when new moles are added
 		} else {
 			0.0
 		}
@@ -198,28 +188,47 @@ impl GasMixture {
 		self.immutable
 	}
 	/// If mix is not immutable, sets the gas at the given `idx` to the given `amt`.
-	pub fn set_moles(&mut self, idx: u8, amt: f32) {
+	pub fn set_moles(&mut self, idx: usize, amt: f32) {
 		if !self.immutable && idx < total_num_gases() {
 			if amt.is_normal() && amt > GAS_MIN_MOLES {
-				match self.mole_ids.linear_search(&idx) {
+				match get_bit_position(&self.mole_ids, idx) {
 					Ok(i) => {
 						unsafe { *self.moles.get_unchecked_mut(i) = amt };
 					}
 					Err(i) => {
-						self.mole_ids.insert(i, idx);
+						self.mole_ids.set(idx, true);
 						self.moles.insert(i, amt);
 						self.heat_capacities.insert(i, gas_specific_heat(idx));
 					}
 				}
 			} else {
-				if let Ok(i) = self.mole_ids.linear_search(&idx) {
+				if let Ok(i) = get_bit_position(&self.mole_ids, idx) {
 					self.moles.remove(i);
-					self.mole_ids.remove(i);
+					self.mole_ids.set(idx, true);
 					self.heat_capacities.remove(i);
 				}
 			}
 		}
 		self.cached_heat_capacity.set(None); // will be recalculated, this is the only time it's required (!!)
+	}
+	pub fn adjust_moles(&mut self, idx: usize, amt: f32) {
+		if !self.immutable && amt.is_normal() {
+			match get_bit_position(&self.mole_ids, idx) {
+				Ok(i) => {
+					let gas = unsafe { self.moles.get_unchecked_mut(i) };
+					*gas += amt;
+					*gas = gas.clamp(0.0, 1e31);
+				}
+				Err(i) => {
+					if amt > 0.0 {
+						self.mole_ids.set(idx, true);
+						self.moles.insert(i, amt);
+						self.heat_capacities.insert(i, gas_specific_heat(idx));
+					}
+				}
+			}
+			self.garbage_collect();
+		}
 	}
 	/// The heat capacity of the material. [joules?]/mole-kelvin.
 	pub fn heat_capacity(&self) -> f32 {
@@ -236,8 +245,8 @@ impl GasMixture {
 		heat_cap
 	}
 	/// Heat capacity of exactly one gas in this mix.
-	pub fn partial_heat_capacity(&self, idx: u8) -> f32 {
-		if let Ok(i) = self.mole_ids.linear_search(&idx) {
+	pub fn partial_heat_capacity(&self, idx: usize) -> f32 {
+		if let Ok(i) = get_bit_position(&self.mole_ids, idx) {
 			unsafe { self.moles.get_unchecked(i) * self.heat_capacities.get_unchecked(i) }
 		} else {
 			0.0
@@ -262,16 +271,24 @@ impl GasMixture {
 		}
 		let our_heat_capacity = self.heat_capacity();
 		let other_heat_capacity = giver.heat_capacity();
-		for (id, amt, cap) in giver.enumerate_with_heat() {
-			match self.mole_ids.linear_search(id) {
-				Ok(idx) => unsafe { *self.moles.get_unchecked_mut(idx) += amt },
-				Err(idx) => {
-					self.moles.insert(idx, *amt);
-					self.mole_ids.insert(idx, *id);
-					self.heat_capacities.insert(idx, *cap)
+		for (our_idx, pair) in self
+			.mole_ids
+			.iter_ones()
+			.merge_join_by(giver.enumerate_with_heat(), |our_id, (giver_id, _, _)| {
+				our_id.cmp(giver_id)
+			})
+			.enumerate()
+		{
+			match pair {
+				Left(_) => (),
+				Right((_, amt, cap)) => {
+					self.moles.insert(our_idx, *amt);
+					self.heat_capacities.insert(our_idx, *cap);
 				}
+				Both(_, (_, amt, _)) => unsafe { *self.moles.get_unchecked_mut(our_idx) += amt },
 			}
 		}
+		self.mole_ids |= giver.mole_ids.clone();
 		let combined_heat_capacity = our_heat_capacity + other_heat_capacity;
 		if combined_heat_capacity > MINIMUM_HEAT_CAPACITY {
 			self.set_temperature(
@@ -282,24 +299,22 @@ impl GasMixture {
 		self.cached_heat_capacity.set(Some(combined_heat_capacity));
 	}
 	/// Returns a gas mixture that contains a given percentage of this mixture's moles; if this mix is mutable, also removes those moles from the original.
-	pub fn remove_ratio(&mut self, mut ratio: f32) -> GasMixture {
-		let mut removed = GasMixture::from_vol(self.volume);
+	pub fn remove_ratio(&mut self, mut ratio: f32, into: &mut GasMixture) {
 		if ratio <= 0.0 {
-			return removed;
+			return;
 		}
 		if ratio >= 1.0 {
 			ratio = 1.0;
 		}
-		removed.copy_from_mutable(self);
-		removed.multiply(ratio);
+		into.copy_from_mutable(self);
+		into.multiply(ratio);
 		self.multiply(1.0 - ratio);
 		self.garbage_collect();
-		removed.garbage_collect();
-		removed
+		into.garbage_collect();
 	}
 	/// As remove_ratio, but a raw number of moles instead of a ratio.
-	pub fn remove(&mut self, amount: f32) -> GasMixture {
-		self.remove_ratio(amount / self.total_moles())
+	pub fn remove(&mut self, amount: f32, into: &mut GasMixture) {
+		self.remove_ratio(amount / self.total_moles(), into);
 	}
 	/// Copies from a given gas mixture, if we're mutable.
 	pub fn copy_from_mutable(&mut self, sample: &GasMixture) {
@@ -431,11 +446,11 @@ impl GasMixture {
 	/// Multiplies every gas molage with this value.
 	pub fn multiply(&mut self, multiplier: f32) {
 		if !self.immutable {
+			self.cached_heat_capacity
+				.set(Some(self.heat_capacity() * multiplier)); // hax
 			for amt in self.moles.iter_mut() {
 				*amt *= multiplier;
 			}
-			self.cached_heat_capacity
-				.set(Some(self.heat_capacity() * multiplier)); // hax
 		}
 	}
 	/// Checks if the proc can react with any reactions.
@@ -464,26 +479,19 @@ impl GasMixture {
 	}
 	/// Returns true if there's a visible gas in this mix.
 	pub fn is_visible(&self) -> bool {
-		self.enumerate().any(|(&i, gas)| {
-			if let Some(amt) = gas_visibility(i as usize) {
-				gas >= &amt
-			} else {
-				false
-			}
-		})
+		self.enumerate()
+			.any(|(i, &gas)| gas_visibility(i).map_or(false, |amt| gas >= amt))
 	}
 	/// A hashed representation of the visibility of a gas, so that it only needs to update vis when actually changed.
 	pub fn visibility_hash(&self) -> u64 {
 		use std::hash::Hasher;
 		let mut hasher = std::collections::hash_map::DefaultHasher::new();
-		for (&i, gas) in self.enumerate() {
-			if let Some(amt) = gas_visibility(i as usize) {
-				if gas >= &amt {
-					hasher.write(&[
-						i,
-						FACTOR_GAS_VISIBLE_MAX.min((gas / MOLES_GAS_VISIBLE_STEP).ceil()) as u8,
-					]);
-				}
+		for (i, &gas) in self.enumerate() {
+			if gas_visibility(i).map_or(false, |amt| gas >= amt) {
+				hasher.write(&[
+					i as u8,
+					FACTOR_GAS_VISIBLE_MAX.min((gas / MOLES_GAS_VISIBLE_STEP).ceil()) as u8,
+				]);
 			}
 		}
 		hasher.finish()
@@ -496,18 +504,17 @@ impl GasMixture {
 		{
 			for idx in 0..len {
 				let amt = unsafe { *self.moles.get_unchecked(idx) };
-				if !amt.is_normal() || amt < GAS_MIN_MOLES {
+				if !amt.is_normal() || amt <= GAS_MIN_MOLES {
 					del += 1;
 				} else if del > 0 {
 					self.moles.swap(idx - del, idx);
-					self.mole_ids.swap(idx - del, idx);
+					self.mole_ids.set(idx, false);
 					self.heat_capacities.swap(idx - del, idx);
 				}
 			}
 		}
 		if del > 0 {
 			self.moles.truncate(len - del);
-			self.mole_ids.truncate(len - del);
 			self.heat_capacities.truncate(len - del);
 		}
 		// not recaching because the difference is, at literal most, on the order of 0.0001
@@ -560,8 +567,67 @@ impl<'a> Mul<f32> for &'a GasMixture {
 	}
 }
 
+use parking_lot::RwLock;
+
+use super::Arena;
+
+pub enum GasMixtureAlloc {
+	Arena(usize),
+	Heap(GasMixture),
+}
+
+impl GasMixtureAlloc {
+	pub fn with_borrowed_arena<T>(
+		&self,
+		list: &Arena<RwLock<GasMixture>>,
+		f: impl FnOnce(&GasMixture) -> T,
+	) -> T {
+		match self {
+			Self::Arena(idx) => f(&list.get(*idx).unwrap().read()),
+			Self::Heap(mix) => f(mix),
+		}
+	}
+	pub fn with_borrowed_arena_mut<T>(
+		&mut self,
+		list: &Arena<RwLock<GasMixture>>,
+		f: impl FnOnce(&mut GasMixture) -> T,
+	) -> T {
+		match self {
+			Self::Arena(idx) => f(&mut list.get(*idx).unwrap().write()),
+			Self::Heap(mix) => f(mix),
+		}
+	}
+	pub fn with<T>(&self, f: impl FnOnce(&GasMixture) -> T) -> T {
+		match self {
+			Self::Arena(_) => self.with_borrowed_arena(&super::GAS_MIXTURES.read(), f),
+			Self::Heap(mix) => f(mix),
+		}
+	}
+	pub fn with_mut<T>(&mut self, f: impl FnOnce(&mut GasMixture) -> T) -> T {
+		match self {
+			Self::Arena(_) => self.with_borrowed_arena_mut(&super::GAS_MIXTURES.read(), f),
+			Self::Heap(mix) => f(mix),
+		}
+	}
+	pub fn copy_to_new(&self) -> GasMixture {
+		match self {
+			Self::Arena(_) => self.with(|gas| gas.clone()),
+			Self::Heap(mix) => mix.clone(),
+		}
+	}
+}
+
+impl Drop for GasMixtureAlloc {
+	fn drop(&mut self) {
+		if let Self::Arena(idx) = self {
+			// since this is the only reference to this mixture, we can use the unsafe remove
+			unsafe { super::GAS_MIXTURES.read().remove_unsafe(*idx) };
+		}
+	}
+}
+
 pub struct GasSummer {
-	cur_ids: Vec<u8>,
+	cur_ids: BitVec<Lsb0, u8>,
 	cur_summed_counts: Vec<f64>,
 	cur_summed_heat_cap: f64,
 	cur_summed_heat: f64,
@@ -573,11 +639,11 @@ impl GasSummer {
 	pub fn merge(&mut self, gas: &GasMixture) {
 		for e in gas.enumerate() {
 			let (id, amt) = (e.0, *e.1 as f64);
-			match self.cur_ids.linear_search(id) {
+			match get_bit_position(&self.cur_ids, id) {
 				Ok(idx) => unsafe { *self.cur_summed_counts.get_unchecked_mut(idx) += amt },
 				Err(idx) => {
 					self.cur_summed_counts.insert(idx, amt);
-					self.cur_ids.insert(idx, *id);
+					self.cur_ids.set(id, true);
 				}
 			}
 		}
@@ -592,7 +658,7 @@ impl GasSummer {
 		}
 		let coeff = (gas.volume as f64) / self.cur_summed_vols;
 		gas.clear();
-		for (&id, amt) in self.cur_ids.iter().zip(
+		for (id, amt) in self.cur_ids.iter_ones().zip(
 			self.cur_summed_counts
 				.iter()
 				.map(|amt| (amt * coeff) as f32),
@@ -612,8 +678,8 @@ impl GasSummer {
 				.collect(),
 			heat_capacities: self
 				.cur_ids
-				.iter()
-				.map(|&id| gas_specific_heat(id))
+				.iter_ones()
+				.map(|id| gas_specific_heat(id))
 				.collect(),
 			temperature: self.cur_temp as f32,
 			volume: vol as f32,
@@ -668,12 +734,14 @@ mod tests {
 		let mut removed = GasMixture::new();
 		removed.set_moles(0, 22.0);
 		removed.set_moles(1, 82.0);
-		let new = removed.remove_ratio(0.5);
+		let mut new = GasMixture::new();
+		removed.remove_ratio(0.5, &mut new);
 		assert_eq!(removed.compare(&new) >= MINIMUM_MOLES_DELTA_TO_MOVE, false);
 		assert_eq!(removed.get_moles(0), 11.0);
 		assert_eq!(removed.get_moles(1), 41.0);
 		removed.mark_immutable();
-		let new_two = removed.remove_ratio(0.5);
+		let mut new_two = GasMixture::new();
+		removed.remove_ratio(0.5, &mut new_two);
 		assert_eq!(
 			removed.compare(&new_two) >= MINIMUM_MOLES_DELTA_TO_MOVE,
 			true

@@ -149,11 +149,12 @@ fn _hook_register_turf() {
 		Ok(Value::null())
 	} else {
 		let mut to_insert: TurfMixture = Default::default();
-		to_insert.mix = src
-			.get(byond_string!("air"))?
+		let air_ref = src.get(byond_string!("air"))?;
+		unsafe { auxtools::raw_types::funcs::inc_ref_count(air_ref.raw) };
+		to_insert.mix = air_ref
 			.get_number(byond_string!("_extools_pointer_gasmixture"))?
 			.to_bits() as usize;
-		to_insert.simulation_level = args[0].as_number()? as u8;
+		to_insert.simulation_level = simulation_level as u8;
 		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
 			if is_planet != 0.0 {
 				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {

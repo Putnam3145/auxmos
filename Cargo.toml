@@ -47,3 +47,4 @@ lto = 'thin'
 codegen-units = 1
 incremental = true
 debug = true
+panic = 'abort'

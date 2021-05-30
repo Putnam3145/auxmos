@@ -49,3 +49,6 @@ codegen-units = 1
 incremental = true
 debug = true
 panic = "abort"
+
+[profile.dev]
+panic = "abort"

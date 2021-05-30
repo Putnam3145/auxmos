@@ -95,27 +95,30 @@ impl Reaction {
 			.unwrap();
 		let mut min_gas_reqs = Vec::new();
 		let mut req_gases = BitVec::new();
+		req_gases.resize(total_num_gases() + 1, false);
 		for i in 0..total_num_gases() {
 			if let Ok(gas_req) = min_reqs.get(&gas_id_to_type(i).unwrap()) {
 				if let Ok(req_amount) = gas_req.as_number() {
 					min_gas_reqs.push(req_amount);
-					req_gases.set(1 << i, true);
+					req_gases.set(i, true);
 				}
 			}
 		}
+		req_gases.truncate(req_gases.len() - req_gases.trailing_zeros());
+		req_gases.shrink_to_fit();
 		let min_temp_req = min_reqs
-			.get(&Value::from_string("TEMP").unwrap_or(Value::null()))
-			.unwrap_or(Value::null())
+			.get(byond_string!("TEMP"))
+			.unwrap_or_else(|_| Value::null())
 			.as_number()
 			.ok();
 		let max_temp_req = min_reqs
-			.get(&Value::from_string("MAX_TEMP").unwrap_or(Value::null()))
-			.unwrap_or(Value::null())
+			.get(byond_string!("MAX_TEMP"))
+			.unwrap_or_else(|_| Value::null())
 			.as_number()
 			.ok();
 		let min_ener_req = min_reqs
-			.get(&Value::from_string("ENER").unwrap_or(Value::null()))
-			.unwrap_or(Value::null())
+			.get(byond_string!("ENER"))
+			.unwrap_or_else(|_| Value::null())
 			.as_number()
 			.ok();
 		let priority = reaction.get_number(byond_string!("priority")).unwrap();
@@ -127,7 +130,6 @@ impl Reaction {
 			string_id_hash,
 			priority,
 		};
-		req_gases.shrink_to_fit();
 		let our_reaction = Reaction {
 			id,
 			min_temp_req,

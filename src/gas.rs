@@ -210,7 +210,7 @@ struct Index(AtomicUsize);
 impl Index {
 	fn get(&self) -> Option<usize> {
 		let i = self.0.load(Ordering::Relaxed);
-		if (i & (1 << 31)) != 0 {
+		if i.leading_ones() == 0 {
 			Some(i)
 		} else {
 			None
@@ -223,7 +223,7 @@ impl Index {
 		self.0.store(i.0.load(Ordering::Relaxed), Ordering::Relaxed)
 	}
 	fn invalid() -> Self {
-		Self(AtomicUsize::new(1 << 31))
+		Self(AtomicUsize::new(usize::MAX))
 	}
 }
 
@@ -261,10 +261,9 @@ impl<T> Arena<T> {
 	}
 	pub fn get(&self, idx: usize) -> Option<&T> {
 		if let Some(e) = self.internal.get(idx) {
-			if let None = e.0.get() {
-				Some(&e.1)
-			} else {
-				None
+			match e.0.get() {
+				None => Some(&e.1),
+				Some(_) => None,
 			}
 		} else {
 			None
@@ -444,20 +443,26 @@ impl GasMixtures {
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
 	pub fn register_gasmix(mix: &Value) -> DMResult {
 		let vol = mix.get_number(byond_string!("initial_volume"))?;
-		if let Some(idx) = GAS_MIXTURES.read().try_push(|g| g.clear_with_vol(vol)) {
+		if let Some(idx) = {
+			let lock = GAS_MIXTURES.read();
+			lock.try_push(|g| g.clear_with_vol(vol))
+		} {
 			mix.set(
 				byond_string!("_extools_pointer_gasmixture"),
 				f32::from_bits(idx as u32),
 			)?;
 		} else {
-			mix.set(
-				byond_string!("_extools_pointer_gasmixture"),
-				f32::from_bits(
-					GAS_MIXTURES
-						.write()
-						.proper_push(|| GasMixture::from_vol(2500.0)) as u32,
-				),
-			)?;
+			loop {
+				if let Some(mut lock) =
+					GAS_MIXTURES.try_write_for(std::time::Duration::from_micros(500))
+				{
+					mix.set(
+						byond_string!("_extools_pointer_gasmixture"),
+						f32::from_bits(lock.proper_push(|| GasMixture::from_vol(vol)) as u32),
+					)?;
+					break;
+				}
+			}
 		}
 		Ok(Value::null())
 	}
@@ -465,7 +470,12 @@ impl GasMixtures {
 	pub fn unregister_gasmix(mix: &Value) -> DMResult {
 		if let Ok(float_bits) = mix.get_number(byond_string!("_extools_pointer_gasmixture")) {
 			let idx = float_bits.to_bits();
-			GAS_MIXTURES.write().remove(idx as usize);
+			loop {
+				if let Some(mut lock) = GAS_MIXTURES.try_write_for(std::time::Duration::from_micros(500)) {
+					lock.remove(idx as usize);
+					break;
+				};
+			}
 			mix.set(byond_string!("_extools_pointer_gasmixture"), &Value::null())?;
 		}
 		Ok(Value::null())

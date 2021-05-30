@@ -15,12 +15,12 @@ use super::{gas_specific_heat, gas_visibility, total_num_gases, with_reactions};
 fn get_bit_position<O: BitOrder, V: BitStore>(
 	bitvec: &BitVec<O, V>,
 	idx: usize,
-) -> Result<usize, usize> {
+) -> Result<usize, (usize, bool)> {
 	let count = bitvec.get(..idx).unwrap_or_else(|| bitvec).count_ones();
 	if bitvec.get(idx).map_or(false, |e| *e) {
 		Ok(count)
 	} else {
-		Err(count)
+		Err((count, bitvec.len() <= idx))
 	}
 }
 
@@ -195,7 +195,10 @@ impl GasMixture {
 					Ok(i) => {
 						unsafe { *self.moles.get_unchecked_mut(i) = amt };
 					}
-					Err(i) => {
+					Err((i, resize)) => {
+						if resize {
+							self.mole_ids.resize(idx + 1, false);
+						}
 						self.mole_ids.set(idx, true);
 						self.moles.insert(i, amt);
 						self.heat_capacities.insert(i, gas_specific_heat(idx));
@@ -204,7 +207,7 @@ impl GasMixture {
 			} else {
 				if let Ok(i) = get_bit_position(&self.mole_ids, idx) {
 					self.moles.remove(i);
-					self.mole_ids.set(idx, true);
+					self.mole_ids.set(idx, false);
 					self.heat_capacities.remove(i);
 				}
 			}
@@ -213,21 +216,33 @@ impl GasMixture {
 	}
 	pub fn adjust_moles(&mut self, idx: usize, amt: f32) {
 		if !self.immutable && amt.is_normal() {
-			match get_bit_position(&self.mole_ids, idx) {
+			if let Some(i) = match get_bit_position(&self.mole_ids, idx) {
 				Ok(i) => {
 					let gas = unsafe { self.moles.get_unchecked_mut(i) };
 					*gas += amt;
 					*gas = gas.clamp(0.0, 1e31);
+					if !gas.is_normal() || *gas <= GAS_MIN_MOLES {
+						Some(i)
+					} else {
+						None
+					}
 				}
-				Err(i) => {
+				Err((i, resize)) => {
 					if amt > 0.0 {
+						if resize {
+							self.mole_ids.resize(idx + 1, false);
+						}
 						self.mole_ids.set(idx, true);
 						self.moles.insert(i, amt);
 						self.heat_capacities.insert(i, gas_specific_heat(idx));
 					}
+					None
 				}
+			} {
+				self.moles.remove(i);
+				self.mole_ids.set(idx, false);
+				self.heat_capacities.remove(i);
 			}
-			self.garbage_collect();
 		}
 	}
 	/// The heat capacity of the material. [joules?]/mole-kelvin.
@@ -429,6 +444,7 @@ impl GasMixture {
 	/// Clears the moles from the gas.
 	pub fn clear(&mut self) {
 		if !self.immutable {
+			self.mole_ids.set_all(false);
 			self.mole_ids.clear();
 			self.moles.clear();
 			self.heat_capacities.clear();
@@ -641,8 +657,11 @@ impl GasSummer {
 			let (id, amt) = (e.0, *e.1 as f64);
 			match get_bit_position(&self.cur_ids, id) {
 				Ok(idx) => unsafe { *self.cur_summed_counts.get_unchecked_mut(idx) += amt },
-				Err(idx) => {
+				Err((idx, resize)) => {
 					self.cur_summed_counts.insert(idx, amt);
+					if resize {
+						self.cur_ids.resize(id + 1, false);
+					}
 					self.cur_ids.set(id, true);
 				}
 			}

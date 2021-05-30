@@ -540,7 +540,7 @@ fn post_process() {
 							let should_update_visuals = check_and_update_vis_hash(i, visibility);
 							let reactable = gas.can_react();
 							let corrupt = gas.is_corrupt();
-							if should_update_visuals || reactable {
+							if should_update_visuals || reactable || corrupt {
 								return Some((i, should_update_visuals, reactable, corrupt));
 							}
 						}

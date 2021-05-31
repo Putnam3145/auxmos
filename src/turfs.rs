@@ -18,6 +18,8 @@ use crate::GasMixtures;
 
 use dashmap::DashMap;
 
+use fxhash::FxBuildHasher;
+
 use rayon;
 
 use rayon::prelude::*;
@@ -37,7 +39,7 @@ struct TurfMixture {
 	pub mix: usize,
 	pub adjacency: u8,
 	pub simulation_level: u8,
-	pub planetary_atmos: Option<&'static str>,
+	pub planetary_atmos: Option<u32>,
 }
 
 #[allow(dead_code)]
@@ -110,13 +112,13 @@ struct ThermalInfo {
 
 lazy_static! {
 	// All the turfs that have gas mixtures.
-	static ref TURF_GASES: DashMap<TurfID, TurfMixture> = DashMap::new();
+	static ref TURF_GASES: DashMap<TurfID, TurfMixture, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
 	// Turfs with temperatures/heat capacities. This is distinct from the above.
-	static ref TURF_TEMPERATURES: DashMap<TurfID, ThermalInfo> = DashMap::new();
+	static ref TURF_TEMPERATURES: DashMap<TurfID, ThermalInfo, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
 	// We store planetary atmos by hash of the initial atmos string here for speed.
-	static ref PLANETARY_ATMOS: DashMap<&'static str, GasMixture> = DashMap::new();
+	static ref PLANETARY_ATMOS: DashMap<u32, GasMixture, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
 	// In a separate dashmap because if it isn't most of the post-process time is spent acquiring write locks
-	static ref TURF_VIS_HASH: DashMap<TurfID, AtomicU64> = DashMap::new();
+	static ref TURF_VIS_HASH: DashMap<TurfID, AtomicU64, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
 	// For monstermos or other hypothetical fast-process systems.
 	static ref HIGH_PRESSURE_TURFS: (
 		flume::Sender<Vec<TurfID>>,
@@ -157,10 +159,14 @@ fn _hook_register_turf() {
 		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
 			if is_planet != 0.0 {
 				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
-					to_insert.planetary_atmos = Some(Box::leak(at_str.into_boxed_str()));
+					to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
 					let mut entry = PLANETARY_ATMOS
 						.entry(to_insert.planetary_atmos.unwrap())
-						.or_insert(to_insert.get_gas_copy());
+						.or_insert_with(|| {
+							let mut gas = to_insert.get_gas_copy();
+							gas.mark_immutable();
+							gas
+						});
 					entry.mark_immutable();
 				}
 			}

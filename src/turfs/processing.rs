@@ -285,7 +285,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 									// Obviously planetary atmos needs love too.
 									if let Some(planet_atmos_id) = m.planetary_atmos {
 										if let Some(planet_atmos_entry) =
-											PLANETARY_ATMOS.get(planet_atmos_id)
+											PLANETARY_ATMOS.get(&planet_atmos_id)
 										{
 											let planet_atmos = planet_atmos_entry.value();
 											if should_share
@@ -506,7 +506,7 @@ fn post_process() {
 							!= SIMULATION_LEVEL_DISABLED
 					{
 						if let Some(planet_atmos_id) = m.planetary_atmos {
-							if let Some(planet_atmos_entry) = PLANETARY_ATMOS.get(planet_atmos_id) {
+							if let Some(planet_atmos_entry) = PLANETARY_ATMOS.get(&planet_atmos_id) {
 								let planet_atmos = planet_atmos_entry.value();
 								if {
 									if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {

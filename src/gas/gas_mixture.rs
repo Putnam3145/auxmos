@@ -85,10 +85,7 @@ impl GasMixture {
 	}
 	/// Makes a gas entry allocated by the arena.
 	pub fn new_from_arena(vol: f32) -> GasMixtureAlloc {
-		if let Some(idx) = super::GAS_MIXTURES
-			.read()
-			.try_push(|g| g.clear_with_vol(vol))
-		{
+		if let Some(idx) = super::GAS_MIXTURES.try_push(|g| g.clear_with_vol(vol)) {
 			GasMixtureAlloc::Arena(idx)
 		} else {
 			GasMixtureAlloc::Heap(GasMixture::from_vol(vol))
@@ -107,12 +104,12 @@ impl GasMixture {
 	}
 	/// Returns if any data is corrupt.
 	pub fn is_corrupt(&self) -> bool {
-		self.mole_ids.iter_ones().any(|i| i > total_num_gases())
+		!self.temperature.is_normal()
+			|| (self.mole_ids.count_ones() != self.moles.len())
+			|| (self.mole_ids.count_ones() != self.heat_capacities.len())
 			|| self.moles.iter().any(|amt| !amt.is_normal())
 			|| self.heat_capacities.iter().any(|cap| !cap.is_normal())
-			|| !self.temperature.is_normal()
-			|| (self.mole_ids.len() != self.moles.len())
-			|| (self.mole_ids.len() != self.heat_capacities.len())
+			|| self.mole_ids.iter_ones().any(|i| i > total_num_gases())
 	}
 	/// Fixes any corruption found.
 	pub fn fix_corruption(&mut self) {
@@ -131,6 +128,7 @@ impl GasMixture {
 	pub fn get_temperature(&self) -> f32 {
 		self.temperature
 	}
+
 	/// Sets the temperature, if the mix isn't immutable. T
 	pub fn set_temperature(&mut self, temp: f32) {
 		if !self.immutable && temp.is_normal() {
@@ -183,6 +181,7 @@ impl GasMixture {
 	pub fn mark_immutable(&mut self) {
 		self.immutable = true;
 	}
+
 	/// Returns whether this gas mixture is immutable.
 	pub fn is_immutable(&self) -> bool {
 		self.immutable
@@ -214,6 +213,7 @@ impl GasMixture {
 		}
 		self.cached_heat_capacity.set(None); // will be recalculated, this is the only time it's required (!!)
 	}
+
 	pub fn adjust_moles(&mut self, idx: usize, amt: f32) {
 		if !self.immutable && amt.is_normal() {
 			if let Some(i) = match get_bit_position(&self.mole_ids, idx) {
@@ -516,6 +516,7 @@ impl GasMixture {
 	fn garbage_collect(&mut self) {
 		// this is absolutely just a copy job of the source for the rust standard library's retain
 		let mut del = 0;
+		let ones: Vec<usize> = self.mole_ids.iter_ones().collect();
 		let len = self.moles.len();
 		{
 			for idx in 0..len {
@@ -524,7 +525,7 @@ impl GasMixture {
 					del += 1;
 				} else if del > 0 {
 					self.moles.swap(idx - del, idx);
-					self.mole_ids.set(idx, false);
+					self.mole_ids.set(ones[idx], false);
 					self.heat_capacities.swap(idx - del, idx);
 				}
 			}
@@ -583,45 +584,21 @@ impl<'a> Mul<f32> for &'a GasMixture {
 	}
 }
 
-use parking_lot::RwLock;
-
-use super::Arena;
-
 pub enum GasMixtureAlloc {
 	Arena(usize),
 	Heap(GasMixture),
 }
 
 impl GasMixtureAlloc {
-	pub fn with_borrowed_arena<T>(
-		&self,
-		list: &Arena<RwLock<GasMixture>>,
-		f: impl FnOnce(&GasMixture) -> T,
-	) -> T {
-		match self {
-			Self::Arena(idx) => f(&list.get(*idx).unwrap().read()),
-			Self::Heap(mix) => f(mix),
-		}
-	}
-	pub fn with_borrowed_arena_mut<T>(
-		&mut self,
-		list: &Arena<RwLock<GasMixture>>,
-		f: impl FnOnce(&mut GasMixture) -> T,
-	) -> T {
-		match self {
-			Self::Arena(idx) => f(&mut list.get(*idx).unwrap().write()),
-			Self::Heap(mix) => f(mix),
-		}
-	}
 	pub fn with<T>(&self, f: impl FnOnce(&GasMixture) -> T) -> T {
 		match self {
-			Self::Arena(_) => self.with_borrowed_arena(&super::GAS_MIXTURES.read(), f),
+			Self::Arena(idx) => f(super::GAS_MIXTURES.get(*idx).unwrap()),
 			Self::Heap(mix) => f(mix),
 		}
 	}
 	pub fn with_mut<T>(&mut self, f: impl FnOnce(&mut GasMixture) -> T) -> T {
 		match self {
-			Self::Arena(_) => self.with_borrowed_arena_mut(&super::GAS_MIXTURES.read(), f),
+			Self::Arena(idx) => f(super::GAS_MIXTURES.get_mut(*idx).unwrap()),
 			Self::Heap(mix) => f(mix),
 		}
 	}
@@ -636,8 +613,7 @@ impl GasMixtureAlloc {
 impl Drop for GasMixtureAlloc {
 	fn drop(&mut self) {
 		if let Self::Arena(idx) = self {
-			// since this is the only reference to this mixture, we can use the unsafe remove
-			unsafe { super::GAS_MIXTURES.read().remove_unsafe(*idx) };
+			super::GAS_MIXTURES.remove(*idx);
 		}
 	}
 }

@@ -222,6 +222,9 @@ impl Index {
 	fn copy(&self, i: &Index) {
 		self.0.store(i.0.load(Ordering::Relaxed), Ordering::Relaxed)
 	}
+	fn invalidate(&self) {
+		self.0.store(usize::MAX, Ordering::Relaxed);
+	}
 	fn invalid() -> Self {
 		Self(AtomicUsize::new(usize::MAX))
 	}
@@ -236,33 +239,65 @@ impl From<Index> for Option<usize> {
 /*
 	Much like https://docs.rs/generational-arena/0.2.8/generational_arena/struct.Arena.html,
 	but that has properties I don't really need here, so this is my own kinda version.
+	please don't use this for anything else it's got a lot of real stupid crap
+	specifically taking the VERY SPECIFIC facts about the architecture I'm
+	working in into account
 */
 
-pub struct Arena<T> {
-	internal: Vec<(Index, T)>,
+use std::cell::UnsafeCell;
+
+pub struct Arena<T: Default> {
+	internal: UnsafeCell<Vec<Box<[(Index, T)]>>>,
 	first_free_idx: Index,
 	len: AtomicUsize,
 }
 
-impl<T> Arena<T> {
+unsafe impl<T: Default> Sync for Arena<T> {}
+
+impl<T: Default> Arena<T> {
+	const SLICE_SIZE: usize = 16384;
 	pub fn new() -> Self {
 		Arena {
-			internal: Vec::new(),
+			internal: UnsafeCell::new(Vec::with_capacity(512)),
 			first_free_idx: Index::invalid(),
 			len: AtomicUsize::new(0),
 		}
 	}
-	pub fn with_capacity(cap: usize) -> Self {
-		Arena {
-			internal: Vec::with_capacity(cap),
-			first_free_idx: Index::invalid(),
-			len: AtomicUsize::new(0),
+	unsafe fn get_internal(&self, idx: usize) -> Option<&(Index, T)> {
+		if let Some(slice) = self
+			.internal
+			.get()
+			.as_ref()
+			.unwrap()
+			.get(idx / Self::SLICE_SIZE)
+		{
+			Some(slice.get_unchecked(idx % Self::SLICE_SIZE))
+		} else {
+			None
+		}
+	}
+	unsafe fn get_mut_internal(&self, idx: usize) -> Option<&mut (Index, T)> {
+		let internal = &mut *self.internal.get();
+		if let Some(slice) = internal.get_mut(idx / Self::SLICE_SIZE) {
+			Some(slice.get_unchecked_mut(idx % Self::SLICE_SIZE))
+		} else {
+			None
 		}
 	}
 	pub fn get(&self, idx: usize) -> Option<&T> {
-		if let Some(e) = self.internal.get(idx) {
+		if let Some(e) = unsafe { self.get_internal(idx) } {
 			match e.0.get() {
 				None => Some(&e.1),
+				Some(_) => None,
+			}
+		} else {
+			None
+		}
+	}
+	pub fn get_mut(&self, idx: usize) -> Option<&mut T> {
+		if let Some(e) = unsafe { self.get_mut_internal(idx) } {
+			match e.0.get() {
+				None => Some(&mut e.1),
 				Some(_) => None,
 			}
 		} else {
@@ -273,64 +308,73 @@ impl<T> Arena<T> {
 		self.len.load(Ordering::Relaxed)
 	}
 	pub fn internal_len(&self) -> usize {
-		self.internal.len()
+		unsafe { self.internal.get().as_ref() }.unwrap().len() * Self::SLICE_SIZE
 	}
-	fn slow_push(&mut self, value: T) -> usize {
-		self.internal.push((Index::invalid(), value));
-		self.len.store(self.internal.len(), Ordering::Relaxed);
-		self.internal.len() - 1
+	fn full(&self) -> bool {
+		let internal = unsafe { self.internal.get().as_ref() }.unwrap();
+		internal.len() == internal.capacity()
 	}
-	pub fn push_with(&mut self, f: impl FnOnce() -> T, g: impl FnOnce(&mut T)) -> usize {
+	unsafe fn extend_push(&self, f: impl FnOnce(&mut T)) -> usize {
+		if self.full() {
+			panic!("Arena's been filled! No good!")
+		}
+		let cur_max = self.internal_len();
+		let new_slice = (0..Self::SLICE_SIZE)
+			.map(|i| (Index(AtomicUsize::new(i + cur_max + 1)), Default::default()))
+			.collect::<Vec<_>>()
+			.into_boxed_slice();
+		new_slice.get(new_slice.len() - 1).unwrap().0.invalidate();
+		let mut_internal = &mut *self.internal.get();
+		mut_internal.push(new_slice);
+		self.first_free_idx.set(cur_max);
+		self.try_push(f).unwrap()
+	}
+	pub fn try_push(&self, g: impl FnOnce(&mut T)) -> Option<usize> {
 		if let Some(idx) = self.first_free_idx.get() {
-			let entry = unsafe { self.internal.get_unchecked_mut(idx) };
+			let entry = unsafe { self.get_mut_internal(idx).unwrap() };
 			self.first_free_idx.copy(&entry.0);
+			entry.0.invalidate();
 			g(&mut entry.1);
 			self.len.fetch_add(1, Ordering::Relaxed);
-			idx
-		} else {
-			self.slow_push(f())
-		}
-	}
-	// technically does not require mut, but absolutely should use mut unless you can guarantee the thing being
-	// removed has only one reference to it
-	pub unsafe fn remove_unsafe(&self, idx: usize) {
-		if let Some(entry) = self.internal.get(idx) {
-			entry.0.copy(&self.first_free_idx);
-			self.first_free_idx.set(idx);
-			self.len.fetch_sub(1, Ordering::Relaxed);
-		}
-	}
-	pub fn remove(&mut self, idx: usize) {
-		unsafe {
-			self.remove_unsafe(idx);
-		}
-	}
-	pub fn clear(&mut self) {
-		for (i, entry) in self.internal.iter_mut().enumerate().rev().skip(1) {
-			entry.0.set(i + 1);
-		}
-		self.len.store(0, Ordering::Relaxed);
-		self.first_free_idx.set(0);
-	}
-	pub fn iter(&self) -> impl Iterator<Item = &T> + '_ {
-		self.internal.iter().map(|e| &e.1)
-	}
-}
-
-impl<V> Arena<RwLock<V>> {
-	pub fn try_push(&self, f: impl FnOnce(&mut V)) -> Option<usize> {
-		if let Some(idx) = self.first_free_idx.get() {
-			let entry = unsafe { self.internal.get_unchecked(idx) };
-			self.first_free_idx.copy(&entry.0);
-			f(&mut entry.1.write());
 			Some(idx)
 		} else {
 			None
 		}
 	}
-	pub fn proper_push(&mut self, f: impl FnOnce() -> V) -> usize {
-		self.slow_push(RwLock::new(f()))
+	pub fn push_with(&self, f: impl FnOnce(&mut T) + Copy) -> usize {
+		self.try_push(f)
+			.unwrap_or_else(|| unsafe { self.extend_push(f) })
 	}
+	pub fn remove(&self, idx: usize) {
+		if let Some(entry) = unsafe { self.get_internal(idx) } {
+			entry.0.copy(&self.first_free_idx);
+			self.first_free_idx.set(idx);
+			self.len.fetch_sub(1, Ordering::Relaxed);
+		}
+	}
+	pub fn clear(&self) {
+		for i in 0..self.internal_len() - 1 {
+			unsafe { self.get_internal(i) }.unwrap().0.set(i + 1);
+		}
+		unsafe { self.get_internal(self.internal_len() - 1) }
+			.unwrap()
+			.0
+			.invalidate();
+		self.len.store(0, Ordering::Relaxed);
+		self.first_free_idx.set(0);
+	}
+}
+
+enum GasMixtureOp {
+	One(
+		usize,
+		Box<dyn FnMut(&mut GasMixture) -> DMResult + Send + Sync + 'static>,
+	),
+	Two(
+		usize,
+		usize,
+		Box<dyn FnMut(&mut GasMixture, &mut GasMixture) -> DMResult + Send + Sync + 'static>,
+	),
 }
 
 /*
@@ -341,52 +385,46 @@ impl<V> Arena<RwLock<V>> {
 	vector directly. Seriously, please don't. I have the wrapper functions for a reason.
 */
 lazy_static! {
-	static ref GAS_MIXTURES: RwLock<Arena<RwLock<GasMixture>>> =
-		RwLock::new(Arena::with_capacity(100000));
+	static ref GAS_MIXTURES: Arena<GasMixture> = Arena::new();
+	static ref DEFERRED_OPS: (flume::Sender<GasMixtureOp>, flume::Receiver<GasMixtureOp>) =
+		flume::unbounded();
 }
 
 impl GasMixtures {
 	pub fn with_all_mixtures<T, F>(mut f: F) -> T
 	where
-		F: FnMut(&Arena<RwLock<GasMixture>>) -> T,
+		F: FnMut(&Arena<GasMixture>) -> T,
 	{
-		f(&GAS_MIXTURES.read())
+		f(&GAS_MIXTURES)
 	}
 	fn with_gas_mixture<T, F>(id: f32, mut f: F) -> Result<T, Runtime>
 	where
 		F: FnMut(&GasMixture) -> Result<T, Runtime>,
 	{
-		let mixtures = GAS_MIXTURES.read();
-		let mix = mixtures
+		let mix = GAS_MIXTURES
 			.get(id.to_bits() as usize)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?
-			.read();
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?;
 		f(&mix)
 	}
 	fn with_gas_mixture_mut<T, F>(id: f32, mut f: F) -> Result<T, Runtime>
 	where
 		F: FnMut(&mut GasMixture) -> Result<T, Runtime>,
 	{
-		let gas_mixtures = GAS_MIXTURES.read();
-		let mut mix = gas_mixtures
-			.get(id.to_bits() as usize)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?
-			.write();
+		let mut mix = GAS_MIXTURES
+			.get_mut(id.to_bits() as usize)
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?;
 		f(&mut mix)
 	}
 	fn with_gas_mixtures<T, F>(src: f32, arg: f32, mut f: F) -> Result<T, Runtime>
 	where
 		F: FnMut(&GasMixture, &GasMixture) -> Result<T, Runtime>,
 	{
-		let gas_mixtures = GAS_MIXTURES.read();
-		let src_gas = gas_mixtures
+		let src_gas = GAS_MIXTURES
 			.get(src.to_bits() as usize)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src.to_bits()))?
-			.read();
-		let arg_gas = gas_mixtures
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src.to_bits()))?;
+		let arg_gas = GAS_MIXTURES
 			.get(arg.to_bits() as usize)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg.to_bits()))?
-			.read();
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg.to_bits()))?;
 		f(&src_gas, &arg_gas)
 	}
 	fn with_gas_mixtures_mut<T, F>(src: f32, arg: f32, mut f: F) -> Result<T, Runtime>
@@ -395,47 +433,20 @@ impl GasMixtures {
 	{
 		let src = src.to_bits() as usize;
 		let arg = arg.to_bits() as usize;
-		let gas_mixtures = GAS_MIXTURES.read();
 		if src == arg {
-			let mut entry = gas_mixtures
-				.get(src)
-				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?
-				.write();
+			let mut entry = GAS_MIXTURES
+				.get_mut(src)
+				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?;
 			let mix = &mut entry;
 			let mut copied = mix.clone();
 			f(mix, &mut copied)
 		} else {
 			f(
-				&mut gas_mixtures
-					.get(src)
-					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?
-					.write(),
-				&mut gas_mixtures
-					.get(arg)
-					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?
-					.write(),
-			)
-		}
-	}
-	fn with_gas_mixtures_custom<T, F>(src: f32, arg: f32, mut f: F) -> Result<T, Runtime>
-	where
-		F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
-	{
-		let src = src.to_bits() as usize;
-		let arg = arg.to_bits() as usize;
-		let gas_mixtures = GAS_MIXTURES.read();
-		if src == arg {
-			let entry = gas_mixtures
-				.get(src)
-				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?;
-			f(entry, entry.clone())
-		} else {
-			f(
-				gas_mixtures
-					.get(src)
+				GAS_MIXTURES
+					.get_mut(src)
 					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?,
-				gas_mixtures
-					.get(arg)
+				GAS_MIXTURES
+					.get_mut(arg)
 					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?,
 			)
 		}
@@ -443,48 +454,49 @@ impl GasMixtures {
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
 	pub fn register_gasmix(mix: &Value) -> DMResult {
 		let vol = mix.get_number(byond_string!("initial_volume"))?;
-		if let Some(idx) = {
-			let lock = GAS_MIXTURES.read();
-			lock.try_push(|g| g.clear_with_vol(vol))
-		} {
-			mix.set(
-				byond_string!("_extools_pointer_gasmixture"),
-				f32::from_bits(idx as u32),
-			)?;
-		} else {
-			loop {
-				if let Some(mut lock) =
-					GAS_MIXTURES.try_write_for(std::time::Duration::from_micros(500))
-				{
-					mix.set(
-						byond_string!("_extools_pointer_gasmixture"),
-						f32::from_bits(lock.proper_push(|| GasMixture::from_vol(vol)) as u32),
-					)?;
-					break;
-				}
-			}
-		}
+		mix.set(
+			byond_string!("_extools_pointer_gasmixture"),
+			f32::from_bits(GAS_MIXTURES.push_with(|mix| mix.clear_with_vol(vol)) as u32),
+		)?;
 		Ok(Value::null())
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
 	pub fn unregister_gasmix(mix: &Value) -> DMResult {
 		if let Ok(float_bits) = mix.get_number(byond_string!("_extools_pointer_gasmixture")) {
 			let idx = float_bits.to_bits();
-			loop {
-				if let Some(mut lock) = GAS_MIXTURES.try_write_for(std::time::Duration::from_micros(500)) {
-					lock.remove(idx as usize);
-					break;
-				};
-			}
+			GAS_MIXTURES.remove(idx as usize);
 			mix.set(byond_string!("_extools_pointer_gasmixture"), &Value::null())?;
 		}
 		Ok(Value::null())
+	}
+	/// Goes through all the deferred turf operations. This should probably be done often.
+	pub fn do_deferred() -> Result<(), Runtime> {
+		for op in DEFERRED_OPS.1.try_iter() {
+			match op {
+				GasMixtureOp::One(id, mut f) => {
+					f(GAS_MIXTURES
+						.get_mut(id)
+						.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id))?)?;
+				}
+				GasMixtureOp::Two(a, b, mut f) => {
+					f(
+						GAS_MIXTURES
+							.get_mut(a)
+							.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", a))?,
+						GAS_MIXTURES
+							.get_mut(b)
+							.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", b))?,
+					)?;
+				}
+			}
+		}
+		Ok(())
 	}
 }
 
 #[shutdown]
 fn _shut_down_gases() {
-	GAS_MIXTURES.write().clear();
+	GAS_MIXTURES.clear();
 }
 
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.
@@ -499,14 +511,23 @@ where
 }
 
 /// As with_mix, but mutable.
-pub fn with_mix_mut<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
+pub fn with_mix_mut<F>(mix: &Value, f: F) -> DMResult
 where
-	F: FnMut(&mut GasMixture) -> Result<T, Runtime>,
+	F: FnMut(&mut GasMixture) -> DMResult + Send + Sync + 'static,
 {
-	GasMixtures::with_gas_mixture_mut(
-		mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
-		f,
-	)
+	if super::turfs::processing::thread_running() && mix.is_exact_type("/datum/gas_mixture/turf") {
+		let _ = DEFERRED_OPS.0.send(GasMixtureOp::One(
+			mix.get_number(byond_string!("_extools_pointer_gasmixture"))?
+				.to_bits() as usize,
+			Box::new(f),
+		));
+		Ok(Value::null())
+	} else {
+		GasMixtures::with_gas_mixture_mut(
+			mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
+			f,
+		)
+	}
 }
 
 /// As with_mix, but with two mixes.
@@ -522,49 +543,37 @@ where
 }
 
 /// As with_mix_mut, but with two mixes.
-pub fn with_mixes_mut<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
+pub fn with_mixes_mut<F>(src_mix: &Value, arg_mix: &Value, f: F) -> DMResult
 where
-	F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<T, Runtime>,
+	F: FnMut(&mut GasMixture, &mut GasMixture) -> DMResult + Send + Sync + 'static,
 {
-	GasMixtures::with_gas_mixtures_mut(
-		src_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
-		arg_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
-		f,
-	)
-}
-
-/// Allows different lock levels for each gas. Instead of relevant refs to the gases, returns the RWLock object.
-pub fn with_mixes_custom<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
-where
-	F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
-{
-	GasMixtures::with_gas_mixtures_custom(
-		src_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
-		arg_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
-		f,
-	)
-}
-
-#[hook("/proc/fix_corrupted_atmos")]
-fn _fix_corrupted_atmos() {
-	rayon::spawn(|| {
-		for lock in GAS_MIXTURES.read().iter().filter(|lock| {
-			if let Some(gas) = lock.try_read() {
-				gas.is_corrupt()
-			} else {
-				false
-			}
-		}) {
-			lock.write().fix_corruption();
-		}
-	});
-	Ok(Value::null())
+	if super::turfs::processing::thread_running()
+		&& (src_mix.is_exact_type("/datum/gas_mixture/turf")
+			|| arg_mix.is_exact_type("/datum/gas_mixture/turf"))
+	{
+		let _ = DEFERRED_OPS.0.send(GasMixtureOp::Two(
+			src_mix
+				.get_number(byond_string!("_extools_pointer_gasmixture"))?
+				.to_bits() as usize,
+			arg_mix
+				.get_number(byond_string!("_extools_pointer_gasmixture"))?
+				.to_bits() as usize,
+			Box::new(f),
+		));
+		Ok(Value::null())
+	} else {
+		GasMixtures::with_gas_mixtures_mut(
+			src_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
+			arg_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
+			f,
+		)
+	}
 }
 
 pub(crate) fn amt_gases() -> usize {
-	GAS_MIXTURES.read().len()
+	GAS_MIXTURES.len()
 }
 
 pub(crate) fn tot_gases() -> usize {
-	GAS_MIXTURES.read().internal_len()
+	GAS_MIXTURES.internal_len()
 }

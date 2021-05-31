@@ -22,11 +22,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 
 static WAITING_FOR_THREAD: AtomicBool = AtomicBool::new(false);
 
+pub fn thread_running() -> bool {
+	PROCESSING_TURF_STEP.load(Ordering::Relaxed) == PROCESS_PROCESSING
+		|| PROCESSING_HEAT.load(Ordering::Relaxed)
+}
+
 #[hook("/datum/controller/subsystem/air/proc/thread_running")]
 fn _thread_running_hook() {
-	Ok(Value::from(
-		PROCESSING_TURF_STEP.load(Ordering::Relaxed) == PROCESS_PROCESSING,
-	))
+	Ok(Value::from(thread_running()))
 }
 
 #[hook("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
@@ -37,6 +40,7 @@ fn _finish_process_turfs() {
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf finishing: 0"))?
 		.as_number()?;
 	let processing_callbacks_unfinished = process_callbacks_for_millis(arg_limit as u64);
+	GasMixtures::do_deferred()?;
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
 	let processing_turfs_unfinished = PROCESSING_TURF_STEP.compare_exchange(
 		PROCESS_DONE,
@@ -76,6 +80,7 @@ fn _process_turf_hook() {
 		rayon::spawn(move || {
 			PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
 			let sender = byond_callback_sender();
+			// FDM
 			let (low_pressure_turfs, high_pressure_turfs) = {
 				let start_time = Instant::now();
 				let (low_pressure_turfs, high_pressure_turfs) = fdm(max_x, max_y, fdm_max_steps);
@@ -97,6 +102,11 @@ fn _process_turf_hook() {
 				}));
 				(low_pressure_turfs, high_pressure_turfs)
 			};
+			if let Err(e) = GasMixtures::do_deferred() {
+				let message = e.message;
+				let _ = sender.try_send(Box::new(move || Err(runtime!(&message))));
+			}
+			// Excited groups
 			{
 				let start_time = Instant::now();
 				let processed_turfs =
@@ -116,6 +126,11 @@ fn _process_turf_hook() {
 					Ok(Value::null())
 				}));
 			}
+			if let Err(e) = GasMixtures::do_deferred() {
+				let message = e.message;
+				let _ = sender.try_send(Box::new(move || Err(runtime!(&message))));
+			}
+			// Equalization
 			if equalize_enabled {
 				let start_time = Instant::now();
 				let processed_turfs = {
@@ -159,6 +174,11 @@ fn _process_turf_hook() {
 					Ok(Value::null())
 				}));
 			}
+			if let Err(e) = GasMixtures::do_deferred() {
+				let message = e.message;
+				let _ = sender.try_send(Box::new(move || Err(runtime!(&message))));
+			}
+			// Post processing (update visuals, reactions)
 			{
 				let start_time = Instant::now();
 				post_process();
@@ -172,6 +192,10 @@ fn _process_turf_hook() {
 					)?;
 					Ok(Value::null())
 				}));
+			}
+			if let Err(e) = GasMixtures::do_deferred() {
+				let message = e.message;
+				let _ = sender.try_send(Box::new(move || Err(runtime!(&message))));
 			}
 			PROCESSING_TURF_STEP.store(PROCESS_DONE, Ordering::SeqCst);
 		});
@@ -229,7 +253,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 							{
 								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 								let mut adj_amount = 0;
-								if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
+								if let Some(gas) = all_mixtures.get(m.mix) {
 									/*
 										Getting write locks is potential danger zone,
 										so we make sure we don't do that unless we
@@ -238,7 +262,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 									if gas.is_corrupt() {
 										return None;
 									}
-									let mut end_gas_alloc = GasMixture::new_from_arena(2500.0);
+									let mut end_gas = GasMixture::from_vol(2500.0);
 									let mut pressure_diffs: [(TurfID, f32); 6] = Default::default();
 									/*
 										The pressure here is negative
@@ -250,82 +274,76 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 										due to the pressure gradient.
 										Technically that's ρν², but, like, video games.
 									*/
-									if end_gas_alloc.with_borrowed_arena_mut(
-										all_mixtures,
-										|end_gas| {
-											let mut should_share = false;
-											for (j, loc) in adj_tiles {
-												if let Some(turf) = TURF_GASES.get(&loc) {
-													if turf.simulation_level
-														& SIMULATION_LEVEL_DISABLED
-														!= SIMULATION_LEVEL_DISABLED
-													{
-														if let Some(entry) =
-															all_mixtures.get(turf.mix)
-														{
-															if let Some(mix) = entry.try_read() {
-																if mix.is_corrupt() {
-																	continue;
-																}
-																end_gas.merge(&mix);
-																adj_amount += 1;
-																pressure_diffs[j as usize] = (
-																	loc,
-																	-mix.return_pressure()
-																		* GAS_DIFFUSION_CONSTANT,
-																);
-																if !should_share
-																&& gas.temperature_compare(&mix)
-																|| gas.compare(&mix)
-																	> MINIMUM_MOLES_DELTA_TO_MOVE
-															{
-																should_share = true;
-															}
-															} else {
-																return false;
-															}
-														}
-													}
-												}
-											}
-											// Obviously planetary atmos needs love too.
-											if let Some(planet_atmos_id) = m.planetary_atmos {
-												if let Some(planet_atmos_entry) =
-													PLANETARY_ATMOS.get(planet_atmos_id)
+									if {
+										let mut should_share = false;
+										for (j, loc) in adj_tiles {
+											if let Some(turf) = TURF_GASES.get(&loc) {
+												if turf.simulation_level & SIMULATION_LEVEL_DISABLED
+													!= SIMULATION_LEVEL_DISABLED
 												{
-													let planet_atmos = planet_atmos_entry.value();
-													if should_share
-														|| gas.temperature_compare(&planet_atmos)
-														|| gas.compare(&planet_atmos)
-															> MINIMUM_MOLES_DELTA_TO_MOVE
-													{
-														end_gas.merge(&planet_atmos);
+													if let Some(mix) = all_mixtures.get(turf.mix) {
+														if mix.is_corrupt() {
+															should_share = false;
+															break;
+														}
+														end_gas.merge(mix);
 														adj_amount += 1;
-														should_share = true;
+														pressure_diffs[j as usize] = (
+															loc,
+															-mix.return_pressure()
+																* GAS_DIFFUSION_CONSTANT,
+														);
+														if !should_share
+															&& gas.temperature_compare(mix) || gas
+															.compare(mix)
+															> MINIMUM_MOLES_DELTA_TO_MOVE
+														{
+															should_share = true;
+														}
+													} else {
+														should_share = false;
+														break;
 													}
 												}
 											}
-											/*
-												This method of simulating diffusion
-												diverges at coefficients that are
-												larger than the inverse of the number
-												of adjacent finite elements.
-												As such, we must multiply it
-												by a coefficient that is at most
-												as big as this coefficient. The
-												GAS_DIFFUSION_CONSTANT chosen here
-												is 1/8, chosen both because it is
-												smaller than 1/7 and because, in
-												floats, 1/8 is exact and so are
-												all multiples of it up to 1.
-												(Technically up to 2,097,152,
-												but I digress.)
-											*/
-											end_gas.multiply(GAS_DIFFUSION_CONSTANT);
-											should_share
-										},
-									) {
-										Some((i, m, end_gas_alloc, pressure_diffs, adj_amount))
+										}
+										// Obviously planetary atmos needs love too.
+										if let Some(planet_atmos_id) = m.planetary_atmos {
+											if let Some(planet_atmos_entry) =
+												PLANETARY_ATMOS.get(&planet_atmos_id)
+											{
+												let planet_atmos = planet_atmos_entry.value();
+												if should_share
+													|| gas.temperature_compare(&planet_atmos) || gas
+													.compare(&planet_atmos)
+													> MINIMUM_MOLES_DELTA_TO_MOVE
+												{
+													end_gas.merge(&planet_atmos);
+													adj_amount += 1;
+													should_share = true;
+												}
+											}
+										}
+										/*
+											This method of simulating diffusion
+											diverges at coefficients that are
+											larger than the inverse of the number
+											of adjacent finite elements.
+											As such, we must multiply it
+											by a coefficient that is at most
+											as big as this coefficient. The
+											GAS_DIFFUSION_CONSTANT chosen here
+											is 1/8, chosen both because it is
+											smaller than 1/7 and because, in
+											floats, 1/8 is exact and so are
+											all multiples of it up to 1.
+											(Technically up to 2,097,152,
+											but I digress.)
+										*/
+										end_gas.multiply(GAS_DIFFUSION_CONSTANT);
+										should_share
+									} {
+										Some((i, m, end_gas, pressure_diffs, adj_amount))
 									} else {
 										None
 									}
@@ -350,13 +368,10 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 			*/
 			let (low_pressure, high_pressure): (Vec<_>, Vec<_>) = turfs_to_save
 				.par_iter()
-				.filter_map(|(i, m, end_gas_alloc, mut pressure_diffs, adj_amount)| {
-					if let Some(entry) = all_mixtures.get(m.mix) {
+				.filter_map(|(i, m, end_gas, mut pressure_diffs, adj_amount)| {
+					if let Some(gas) = all_mixtures.get_mut(m.mix) {
 						let mut max_diff = 0.0f32;
-						let moved_pressure = {
-							let gas = entry.read();
-							gas.return_pressure() * GAS_DIFFUSION_CONSTANT
-						};
+						let moved_pressure = gas.return_pressure() * GAS_DIFFUSION_CONSTANT;
 						for pressure_diff in pressure_diffs.iter_mut() {
 							// pressure_diff.1 here was set to a negative above, so we just add.
 							pressure_diff.1 += moved_pressure;
@@ -375,10 +390,8 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 							exactly the amount those gases "took" from this.
 						*/
 						{
-							let gas: &mut GasMixture = &mut entry.write();
 							gas.multiply(1.0 - (*adj_amount as f32 * GAS_DIFFUSION_CONSTANT));
-							end_gas_alloc
-								.with_borrowed_arena(all_mixtures, |end_gas| gas.merge(end_gas));
+							gas.merge(end_gas);
 						}
 						/*
 							If there is neither a major pressure difference
@@ -445,7 +458,7 @@ fn excited_group_processing(
 		}
 		if let Some(initial_mix_ref) = TURF_GASES.get(&initial_turf) {
 			let mut border_turfs: VecDeque<(TurfID, TurfMixture)> = VecDeque::with_capacity(40);
-			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
+			let mut turfs: BTreeSet<TurfMixture> = BTreeSet::new();
 			let mut min_pressure = initial_mix_ref.return_pressure();
 			let mut max_pressure = min_pressure;
 			let mut fully_mixed = GasMixture::merger();
@@ -453,12 +466,12 @@ fn excited_group_processing(
 			found_turfs.insert(initial_turf);
 			GasMixtures::with_all_mixtures(|all_mixtures| {
 				loop {
-					if turfs.len() >= 2500 {
+					if turfs.len() >= 200 {
 						break;
 					}
 					if let Some((i, turf)) = border_turfs.pop_front() {
 						let adj_tiles = adjacent_tile_ids(turf.adjacency, i, max_x, max_y);
-						let mix = all_mixtures.get(turf.mix).unwrap().read();
+						let mix = all_mixtures.get(turf.mix).unwrap();
 						let pressure = mix.return_pressure();
 						let this_max = max_pressure.max(pressure);
 						let this_min = min_pressure.min(pressure);
@@ -467,7 +480,7 @@ fn excited_group_processing(
 						}
 						min_pressure = this_min;
 						max_pressure = this_max;
-						turfs.push(turf);
+						turfs.insert(turf);
 						fully_mixed.merge(&mix);
 						for (_, loc) in adj_tiles {
 							if found_turfs.contains(&loc) {
@@ -490,7 +503,7 @@ fn excited_group_processing(
 					let final_gas = fully_mixed.copy_with_vol(2500.0);
 					if !final_gas.is_corrupt() {
 						turfs.par_iter().for_each(|turf| {
-							let mut mix = all_mixtures.get(turf.mix).unwrap().write();
+							let mix = all_mixtures.get_mut(turf.mix).unwrap();
 							mix.copy_from_mutable(&final_gas);
 						});
 					}
@@ -517,29 +530,24 @@ fn post_process() {
 							!= SIMULATION_LEVEL_DISABLED
 					{
 						if let Some(planet_atmos_id) = m.planetary_atmos {
-							if let Some(planet_atmos_entry) = PLANETARY_ATMOS.get(planet_atmos_id) {
+							if let Some(planet_atmos_entry) = PLANETARY_ATMOS.get(&planet_atmos_id)
+							{
 								let planet_atmos = planet_atmos_entry.value();
-								if let Some(gas_entry) = all_mixtures.get(m.mix) {
+								if let Some(gas) = all_mixtures.get_mut(m.mix) {
 									if {
-										if let Some(gas) = gas_entry.try_read() {
-											let comparison = gas.compare(planet_atmos);
-											comparison < 1.0 && comparison > 0.0
-										} else {
-											false
-										}
+										let comparison = gas.compare(planet_atmos);
+										comparison < 1.0 && comparison > 0.0
 									} {
-										if let Some(mut gas) = gas_entry.try_write() {
-											gas.copy_from_mutable(planet_atmos);
-										}
+										gas.copy_from_mutable(planet_atmos);
 									}
 								}
 							}
 						}
-						if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
+						if let Some(gas) = all_mixtures.get(m.mix) {
 							let visibility = gas.visibility_hash();
 							let should_update_visuals = check_and_update_vis_hash(i, visibility);
 							let reactable = gas.can_react();
-							let corrupt = gas.is_corrupt();
+							let corrupt = false;
 							if should_update_visuals || reactable || corrupt {
 								return Some((i, should_update_visuals, reactable, corrupt));
 							}
@@ -665,13 +673,11 @@ fn _process_heat_hook() {
 								if let Some(m) = TURF_GASES.get(&i) {
 									if m.simulation_level & SIMULATION_LEVEL_ANY > 0 {
 										GasMixtures::with_all_mixtures(|all_mixtures| {
-											if let Some(entry) = all_mixtures.get(m.mix) {
-												if let Some(gas) = entry.try_read() {
-													if (t.temperature - gas.get_temperature()).abs()
-														> 1.0
-													{
-														is_temp_delta_with_air = true;
-													}
+											if let Some(gas) = all_mixtures.get(m.mix) {
+												if (t.temperature - gas.get_temperature()).abs()
+													> 1.0
+												{
+													is_temp_delta_with_air = true;
 												}
 											}
 										});
@@ -728,8 +734,7 @@ fn _process_heat_hook() {
 								!= SIMULATION_LEVEL_DISABLED
 						{
 							GasMixtures::with_all_mixtures(|all_mixtures| {
-								if let Some(entry) = all_mixtures.get(m.mix) {
-									let gas: &mut GasMixture = &mut entry.write();
+								if let Some(gas) = all_mixtures.get_mut(m.mix) {
 									t.temperature = gas.temperature_share_non_gas(
 										/*
 											This value should be lower than the

@@ -33,6 +33,7 @@ flume = "0.9.1"
 coarsetime = "0.1.16"
 parking_lot = "0.11.1"
 bitvec = "0.22.3"
+fxhash = "0.2.1"
 
 [dependencies.dashmap]
 version = "4.0.2"
@@ -48,7 +49,4 @@ lto = 'thin'
 codegen-units = 1
 incremental = true
 debug = true
-panic = "abort"
-
-[profile.dev]
 panic = "abort"

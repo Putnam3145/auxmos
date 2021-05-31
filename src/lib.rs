@@ -35,16 +35,15 @@ fn _heat_cap_hook() {
 
 #[hook("/datum/gas_mixture/proc/set_min_heat_capacity")]
 fn _min_heat_cap_hook() {
-	if args.is_empty() {
-		Err(runtime!(
-			"attempted to set min heat capacity with no argument"
-		))
-	} else {
-		with_mix_mut(src, |mix| {
-			mix.set_min_heat_capacity(args[0].as_number().unwrap_or_default());
-			Ok(Value::null())
-		})
-	}
+	let cap = args
+		.get(0)
+		.ok_or_else(|| runtime!("attempted to set min heat capacity with no argument"))?
+		.as_number()
+		.unwrap_or_default();
+	with_mix_mut(src, move |mix| {
+		mix.set_min_heat_capacity(cap);
+		Ok(Value::null())
+	})
 }
 
 #[hook("/datum/gas_mixture/proc/total_moles")]
@@ -73,70 +72,70 @@ fn _thermal_energy_hook() {
 }
 
 #[hook("/datum/gas_mixture/proc/merge")]
-fn _merge_hook() {
-	if args.is_empty() {
-		Err(runtime!("Tried merging nothing into a gas mixture"))
-	} else {
-		with_mixes_mut(src, &args[0], |src_mix, giver_mix| {
-			src_mix.merge(giver_mix);
-			Ok(Value::null())
-		})
-	}
+fn _merge_hook(mix: Value) {
+	with_mixes_mut(src, &mix, move |src_mix, giver_mix| {
+		src_mix.merge(giver_mix);
+		Ok(Value::null())
+	})
 }
 
 #[hook("/datum/gas_mixture/proc/__remove_ratio")]
-fn _remove_ratio_hook() {
-	if args.len() < 2 {
-		Err(runtime!("remove_ratio called with fewer than 2 arguments"))
-	} else {
-		with_mixes_mut(src, &args[0], |src_mix, into_mix| {
-			&src_mix.remove_ratio(args[1].as_number().unwrap_or_default(), into_mix);
-			Ok(Value::null())
-		})
-	}
+fn _remove_ratio_hook(mix: Value, ratio_val: Value) {
+	let ratio = ratio_val.as_number().unwrap_or_default();
+	with_mixes_mut(src, &mix, move |src_mix, into_mix| {
+		&src_mix.remove_ratio(ratio, into_mix);
+		Ok(Value::null())
+	})
 }
 
 #[hook("/datum/gas_mixture/proc/__remove")]
-fn _remove_hook() {
-	if args.len() < 2 {
-		Err(runtime!("remove called with fewer than 2 arguments"))
-	} else {
-		with_mixes_mut(src, &args[0], |src_mix, into_mix| {
-			&src_mix.remove(args[1].as_number().unwrap_or_default(), into_mix);
-			Ok(Value::null())
-		})
-	}
+fn _remove_hook(mix: Value, amt_val: Value) {
+	let amt = amt_val.as_number().unwrap_or_default();
+	with_mixes_mut(src, &mix, move |src_mix, into_mix| {
+		&src_mix.remove(amt, into_mix);
+		Ok(Value::null())
+	})
 }
 
 #[hook("/datum/gas_mixture/proc/copy_from")]
-fn _copy_from_hook() {
-	if args.is_empty() {
-		Err(runtime!("Tried copying a gas mix from nothing"))
-	} else {
-		with_mixes_mut(src, &args[0], |src_mix, giver_mix| {
-			src_mix.copy_from_mutable(giver_mix);
-			Ok(Value::null())
-		})
-	}
+fn _copy_from_hook(mix: Value) {
+	with_mixes_mut(src, &mix, move |src_mix, giver_mix| {
+		src_mix.copy_from_mutable(giver_mix);
+		Ok(Value::null())
+	})
 }
 
 #[hook("/datum/gas_mixture/proc/temperature_share")]
 fn _temperature_share_hook() {
 	let arg_num = args.len();
 	match arg_num {
-		2 => with_mixes_mut(src, &args[0], |src_mix, share_mix| {
-			Ok(Value::from(src_mix.temperature_share(
-				share_mix,
-				args[1].as_number().unwrap_or_default(),
-			)))
-		}),
-		4 => with_mix_mut(src, |mix| {
-			Ok(Value::from(mix.temperature_share_non_gas(
-				args[0].as_number().unwrap_or_default(),
-				args[1].as_number().unwrap_or_default(),
-				args[2].as_number().unwrap_or_default(),
-			)))
-		}),
+		2 => {
+			let coefficient = args[1].as_number().unwrap_or_default();
+			with_mixes_mut(src, &args[0], move |src_mix, share_mix| {
+				Ok(Value::from(
+					src_mix.temperature_share(share_mix, coefficient),
+				))
+			})
+		}
+		4 => {
+			let other_temp = args[0].as_number().unwrap_or_default();
+			let other_cap = args[1].as_number().unwrap_or_default();
+			let coefficient = args[2].as_number().unwrap_or_default();
+			with_mix_mut(src, move |mix| {
+				Ok(Value::from(mix.temperature_share_non_gas(
+					other_temp,
+					other_cap,
+					coefficient,
+				)))
+				.map(|ret| {
+					if ret == Value::null() {
+						Value::from(other_temp)
+					} else {
+						ret
+					}
+				})
+			})
+		}
 		_ => Err(runtime!("Invalid args for temperature_share")),
 	}
 }
@@ -153,18 +152,15 @@ fn _get_gases_hook() {
 }
 
 #[hook("/datum/gas_mixture/proc/set_temperature")]
-fn _set_temperature_hook() {
-	let v = args
-		.get(0)
-		.ok_or_else(|| runtime!("Wrong amount of arguments for set_temperature: 0!"))?
-		.as_number()?;
-	if !v.is_finite() {
+fn _set_temperature_hook(v: Value) {
+	let temp = v.as_number()?;
+	if !temp.is_finite() {
 		Err(runtime!(
 			"Attempted to set a temperature to a number that is NaN or infinite."
 		))
 	} else {
-		with_mix_mut(src, |mix| {
-			mix.set_temperature(v.max(2.7));
+		with_mix_mut(src, move |mix| {
+			mix.set_temperature(temp.max(2.7));
 			Ok(Value::null())
 		})
 	}
@@ -184,15 +180,12 @@ fn _partial_heat_capacity() {
 }
 
 #[hook("/datum/gas_mixture/proc/set_volume")]
-fn _set_volume_hook() {
-	if args.is_empty() {
-		Err(runtime!("Attempted to set volume to nothing."))
-	} else {
-		with_mix_mut(src, |mix| {
-			mix.volume = args[0].as_number()?;
-			Ok(Value::null())
-		})
-	}
+fn _set_volume_hook(vol_val: Value) {
+	let vol = vol_val.as_number()?;
+	with_mix_mut(src, move |mix| {
+		mix.volume = vol;
+		Ok(Value::null())
+	})
 }
 
 #[hook("/datum/gas_mixture/proc/get_moles")]
@@ -207,59 +200,58 @@ fn _get_moles_hook() {
 }
 
 #[hook("/datum/gas_mixture/proc/set_moles")]
-fn _set_moles_hook() {
-	if args.len() < 2 {
-		return Err(runtime!("Incorrect arg len for set_moles (less than 2)."));
-	}
-	let vf = args[1].as_number().unwrap_or_default();
-	if !vf.is_finite() {
+fn _set_moles_hook(gas_type: Value, vf: Value) {
+	let amt = vf.as_number().unwrap_or_default();
+	if !amt.is_finite() {
 		return Err(runtime!("Attempted to set moles to NaN or infinity."));
 	}
-	if vf < 0.0 {
+	if amt < 0.0 {
 		return Err(runtime!("Attempted to set moles to a negative number."));
 	}
-	with_mix_mut(src, |mix| {
-		mix.set_moles(gas_id_from_type(&args[0])?, vf);
+	let gas_id = gas_id_from_type(&gas_type)?;
+	with_mix_mut(src, move |mix| {
+		mix.set_moles(gas_id, amt);
 		Ok(Value::null())
 	})
 }
 
 #[hook("/datum/gas_mixture/proc/adjust_moles")]
-fn _adjust_moles_hook(gas_type: Value, amt: Value) {
-	let vf = amt.as_number().unwrap_or_default();
-	with_mix_mut(src, |mix| {
-		mix.adjust_moles(gas_id_from_type(&gas_type)?, vf);
+fn _adjust_moles_hook(gas_type: Value, vf: Value) {
+	let amt = vf.as_number().unwrap_or_default();
+	if !amt.is_finite() {
+		return Err(runtime!("Attempted to adjust moles by NaN or infinity."));
+	}
+	let gas_id = gas_id_from_type(&gas_type)?;
+	with_mix_mut(src, move |mix| {
+		mix.adjust_moles(gas_id, amt);
 		Ok(Value::null())
 	})
 }
 
 #[hook("/datum/gas_mixture/proc/scrub_into")]
-fn _scrub_into_hook() {
-	if args.len() < 2 {
-		Err(runtime!("Incorrect arg len for scrub_into (less than 2)."))
-	} else {
-		with_mixes_mut(src, &args[0], |src_gas, dest_gas| {
-			let gases_to_scrub = args[1].as_list()?;
-			let mut buffer_alloc =
-				gas::gas_mixture::GasMixture::new_from_arena(gas::constants::CELL_VOLUME);
-			buffer_alloc.with_mut(|buffer| {
-				buffer.set_temperature(src_gas.get_temperature());
-				for idx in 1..gases_to_scrub.len() + 1 {
-					if let Ok(gas_id) = gas_id_from_type(&gases_to_scrub.get(idx).unwrap()) {
-						buffer.set_moles(gas_id, src_gas.get_moles(gas_id));
-						src_gas.set_moles(gas_id, 0.0);
-					}
-				}
-				dest_gas.merge(&buffer);
-			});
-			Ok(Value::from(true))
-		})
-	}
+fn _scrub_into_hook(into_mix: Value, gas_list: Value) {
+	let gases_to_scrub = gas_list.as_list()?;
+	let gas_ids: Vec<usize> = (1..gases_to_scrub.len() + 1)
+		.map(|i| gas_id_from_type(&gases_to_scrub.get(i).unwrap()).unwrap())
+		.collect();
+	with_mixes_mut(src, into_mix, move |src_gas, dest_gas| {
+		let mut buffer_alloc =
+			gas::gas_mixture::GasMixture::new_from_arena(gas::constants::CELL_VOLUME);
+		buffer_alloc.with_mut(|buffer| {
+			buffer.set_temperature(src_gas.get_temperature());
+			for &gas_id in &gas_ids {
+				buffer.set_moles(gas_id, src_gas.get_moles(gas_id));
+				src_gas.set_moles(gas_id, 0.0);
+			}
+			dest_gas.merge(&buffer);
+		});
+		Ok(Value::from(true))
+	})
 }
 
 #[hook("/datum/gas_mixture/proc/mark_immutable")]
 fn _mark_immutable_hook() {
-	with_mix_mut(src, |mix| {
+	with_mix_mut(src, move |mix| {
 		mix.mark_immutable();
 		Ok(Value::null())
 	})
@@ -267,7 +259,7 @@ fn _mark_immutable_hook() {
 
 #[hook("/datum/gas_mixture/proc/clear")]
 fn _clear_hook() {
-	with_mix_mut(src, |mix| {
+	with_mix_mut(src, move |mix| {
 		mix.clear();
 		Ok(Value::null())
 	})
@@ -291,13 +283,10 @@ fn _compare_hook() {
 }
 
 #[hook("/datum/gas_mixture/proc/multiply")]
-fn _multiply_hook() {
-	with_mix_mut(src, |mix| {
-		mix.multiply(if args.is_empty() {
-			1.0
-		} else {
-			args[0].as_number().unwrap_or(1.0)
-		});
+fn _multiply_hook(v: Value) {
+	let mult = v.as_number().unwrap_or(1.0);
+	with_mix_mut(src, move |mix| {
+		mix.multiply(mult);
 		Ok(Value::null())
 	})
 }
@@ -318,28 +307,23 @@ fn _react_hook() {
 }
 
 #[hook("/datum/gas_mixture/proc/adjust_heat")]
-fn _adjust_heat_hook() {
-	with_mix_mut(src, |mix| {
-		mix.adjust_heat(
-			args.get(0)
-				.ok_or_else(|| runtime!("Wrong number of args for adjust heat: 0"))?
-				.as_number()?,
-		);
+fn _adjust_heat_hook(v: Value) {
+	let heat = v.as_number()?;
+	with_mix_mut(src, move |mix| {
+		mix.adjust_heat(heat);
 		Ok(Value::null())
 	})
 }
 
 #[hook("/datum/gas_mixture/proc/equalize_with")]
 fn _equalize_with_hook() {
-	with_mixes_custom(
+	with_mixes_mut(
 		src,
 		args.get(0)
 			.ok_or_else(|| runtime!("Wrong number of args for equalize_with: 0"))?,
-		|src_lock, total_lock| {
-			let src_gas = &mut src_lock.write();
+		|src_gas, total_gas| {
 			let vol = src_gas.volume;
-			let total_gas = total_lock.read();
-			src_gas.copy_from_mutable(&total_gas);
+			src_gas.copy_from_mutable(total_gas);
 			src_gas.multiply(vol / total_gas.volume);
 			Ok(Value::null())
 		},
@@ -366,20 +350,18 @@ fn _equalize_all_hook() {
 	let mut tot_alloc = gas::gas_mixture::GasMixture::new_from_arena(1.0);
 	let mut tot_vol: f64 = 0.0;
 	GasMixtures::with_all_mixtures(move |all_mixtures| {
-		tot_alloc.with_borrowed_arena_mut(all_mixtures, |tot| {
+		tot_alloc.with_mut(|tot| {
 			for &id in gas_list.iter() {
-				if let Some(src_gas_lock) = all_mixtures.get(id) {
-					let src_gas = src_gas_lock.read();
+				if let Some(src_gas) = all_mixtures.get(id) {
 					tot.merge(&src_gas);
 					tot_vol += src_gas.volume as f64;
 				}
 			}
 		});
 		if tot_vol > 0.0 {
-			tot_alloc.with_borrowed_arena(all_mixtures, |tot| {
+			tot_alloc.with(|tot| {
 				for &id in gas_list.iter() {
-					if let Some(dest_gas_lock) = all_mixtures.get(id) {
-						let dest_gas = &mut dest_gas_lock.write();
+					if let Some(dest_gas) = all_mixtures.get_mut(id) {
 						let vol = dest_gas.volume; // don't wanna borrow it in the below
 						dest_gas.copy_from_mutable(&tot);
 						dest_gas.multiply((vol as f64 / tot_vol) as f32);
@@ -412,7 +394,7 @@ fn _release_gas_to(in_gas: Value, out_gas: Value, target_pressure_v: Value) {
 	})
 	.unwrap()
 	{
-		with_mixes_mut(&in_gas, &out_gas, |input_mix, output_mix| {
+		with_mixes_mut(&in_gas, &out_gas, move |input_mix, output_mix| {
 			let mut removed_gas_alloc =
 				gas::gas_mixture::GasMixture::new_from_arena(input_mix.volume);
 			removed_gas_alloc.with_mut(|removed_gas| {

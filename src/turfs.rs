@@ -16,6 +16,8 @@ use crate::constants::*;
 
 use crate::GasMixtures;
 
+use fxhash::FxBuildHasher;
+
 use dashmap::DashMap;
 
 use rayon;
@@ -37,7 +39,7 @@ struct TurfMixture {
 	pub mix: usize,
 	pub adjacency: u8,
 	pub simulation_level: u8,
-	pub planetary_atmos: Option<&'static str>,
+	pub planetary_atmos: Option<u32>,
 }
 
 #[allow(dead_code)]
@@ -48,7 +50,6 @@ impl TurfMixture {
 			res = all_mixtures
 				.get(self.mix)
 				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
-				.read()
 				.is_immutable()
 		});
 		res
@@ -59,7 +60,6 @@ impl TurfMixture {
 			res = all_mixtures
 				.get(self.mix)
 				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
-				.read()
 				.return_pressure()
 		});
 		res
@@ -70,7 +70,6 @@ impl TurfMixture {
 			res = all_mixtures
 				.get(self.mix)
 				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
-				.read()
 				.total_moles()
 		});
 		res
@@ -78,9 +77,8 @@ impl TurfMixture {
 	pub fn clear_air(&self) {
 		GasMixtures::with_all_mixtures(|all_mixtures| {
 			all_mixtures
-				.get(self.mix)
+				.get_mut(self.mix)
 				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
-				.write()
 				.clear();
 		});
 	}
@@ -89,14 +87,33 @@ impl TurfMixture {
 		GasMixtures::with_all_mixtures(|all_mixtures| {
 			let to_copy = all_mixtures
 				.get(self.mix)
-				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
-				.read();
+				.expect(&format!("Gas mixture not found for turf: {}", self.mix));
 			ret.copy_from_mutable(&to_copy);
 			ret.volume = to_copy.volume;
 		});
 		ret
 	}
 }
+
+impl Ord for TurfMixture {
+	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+		self.mix.cmp(&other.mix)
+	}
+}
+
+impl PartialOrd for TurfMixture {
+	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+		Some(self.cmp(other))
+	}
+}
+
+impl PartialEq for TurfMixture {
+	fn eq(&self, other: &Self) -> bool {
+		self.mix == other.mix
+	}
+}
+
+impl Eq for TurfMixture {}
 
 // all non-space turfs get these, not just ones with air--a lot of gas logic relies on all TurfMixtures having a valid mix
 #[derive(Clone, Copy, Default)]
@@ -110,13 +127,13 @@ struct ThermalInfo {
 
 lazy_static! {
 	// All the turfs that have gas mixtures.
-	static ref TURF_GASES: DashMap<TurfID, TurfMixture> = DashMap::new();
+	static ref TURF_GASES: DashMap<TurfID, TurfMixture, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
 	// Turfs with temperatures/heat capacities. This is distinct from the above.
-	static ref TURF_TEMPERATURES: DashMap<TurfID, ThermalInfo> = DashMap::new();
+	static ref TURF_TEMPERATURES: DashMap<TurfID, ThermalInfo, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
 	// We store planetary atmos by hash of the initial atmos string here for speed.
-	static ref PLANETARY_ATMOS: DashMap<&'static str, GasMixture> = DashMap::new();
+	static ref PLANETARY_ATMOS: DashMap<u32, GasMixture, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
 	// In a separate dashmap because if it isn't most of the post-process time is spent acquiring write locks
-	static ref TURF_VIS_HASH: DashMap<TurfID, AtomicU64> = DashMap::new();
+	static ref TURF_VIS_HASH: DashMap<TurfID, AtomicU64, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
 	// For monstermos or other hypothetical fast-process systems.
 	static ref HIGH_PRESSURE_TURFS: (
 		flume::Sender<Vec<TurfID>>,
@@ -158,11 +175,14 @@ fn _hook_register_turf() {
 		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
 			if is_planet != 0.0 {
 				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
-					to_insert.planetary_atmos = Some(Box::leak(at_str.into_boxed_str()));
-					let mut entry = PLANETARY_ATMOS
+					to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
+					PLANETARY_ATMOS
 						.entry(to_insert.planetary_atmos.unwrap())
-						.or_insert(to_insert.get_gas_copy());
-					entry.mark_immutable();
+						.or_insert_with(|| {
+							let mut copy = to_insert.get_gas_copy();
+							copy.mark_immutable();
+							copy
+						});
 				}
 			}
 		}

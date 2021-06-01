@@ -33,6 +33,8 @@ flume = "0.9.1"
 coarsetime = "0.1.16"
 parking_lot = "0.11.1"
 fxhash = "0.2.1"
+concread = "0.2.4"
+num_cpus = "1.13.0"
 
 [dependencies.dashmap]
 version = "4.0.2"

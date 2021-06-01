@@ -73,12 +73,16 @@ fn _process_turf_hook() {
 		let group_pressure_goal = src.get_number(byond_string!("excited_group_pressure_goal"))?;
 		let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
 		let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
+		let max_z = auxtools::Value::world().get_number(byond_string!("maxz"))? as i32;
 		rayon::spawn(move || {
 			PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
+			let max_recursion = num_cpus::get() as u8;
+			let turf_ids: Vec<TurfID> = TURF_GASES.read().keys().copied().collect();
 			let sender = byond_callback_sender();
 			let (low_pressure_turfs, high_pressure_turfs) = {
 				let start_time = Instant::now();
-				let (low_pressure_turfs, high_pressure_turfs) = fdm(max_x, max_y, fdm_max_steps);
+				let (low_pressure_turfs, high_pressure_turfs) =
+					fdm(max_x, max_y, &turf_ids, max_recursion, fdm_max_steps);
 				let bench = start_time.elapsed().as_millis();
 				let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
 				let _ = sender.try_send(Box::new(move || {
@@ -161,7 +165,7 @@ fn _process_turf_hook() {
 			}
 			{
 				let start_time = Instant::now();
-				post_process();
+				post_process(max_x, max_y, &turf_ids, max_recursion);
 				let bench = start_time.elapsed().as_millis();
 				let _ = sender.try_send(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
@@ -179,14 +183,141 @@ fn _process_turf_hook() {
 	Ok(Value::from(false))
 }
 
-fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSet<TurfID>) {
+type FDMMessage = (TurfID, TurfMixture, GasMixture, [(TurfID, f32); 6], usize);
+
+fn fdm_z(max_x: i32, max_y: i32, turf_ids: &[TurfID], max_recursion: u8) -> Vec<FDMMessage> {
+	if turf_ids.len() > 8192 && max_recursion > 1 {
+		let (left, right) = turf_ids.split_at(turf_ids.len() / 2);
+		let (mut a, b) = rayon::join(
+			|| fdm_z(max_x, max_y, left, max_recursion / 2),
+			|| fdm_z(max_x, max_y, right, max_recursion / 2),
+		);
+		a.extend_from_slice(&b);
+		a
+	} else {
+		let turf_gases = TURF_GASES.read();
+		GasMixtures::with_all_mixtures(|all_mixtures| {
+			turf_ids
+				.iter()
+				.filter_map(|&i| {
+					let &m = turf_gases.get(&i).unwrap();
+					let adj = m.adjacency;
+					/*
+						We don't want to simulate space turfs or other unsimulated turfs. They're
+						still valid for sharing to and from, they just shouldn't be considered
+						for this particular step.
+					*/
+					if m.simulation_level > SIMULATION_LEVEL_NONE
+						&& adj > 0 && (m.simulation_level & SIMULATION_LEVEL_DISABLED
+						!= SIMULATION_LEVEL_DISABLED)
+					{
+						let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
+						let mut adj_amount: usize = 0;
+						if let Some(our_gas_entry) = all_mixtures.get(m.mix) {
+							let gas = our_gas_entry.read();
+							let mut end_gas = GasMixture::from_vol(2500.0);
+							let mut pressure_diffs: [(TurfID, f32); 6] = Default::default();
+							/*
+								The pressure here is negative
+								because we're going to be adding it
+								to the base turf's pressure later on.
+								It's multiplied by the diffusion constant
+								because it's not representing the total
+								gas pressure difference but the force exerted
+								due to the pressure gradient.
+								Technically that's ρν², but, like, video games.
+							*/
+							let mut should_share = false;
+							for (j, loc) in adj_tiles {
+								if let Some(turf) = turf_gases.get(&loc) {
+									if turf.simulation_level & SIMULATION_LEVEL_DISABLED
+										!= SIMULATION_LEVEL_DISABLED
+									{
+										if let Some(entry) = all_mixtures.get(turf.mix) {
+											let mix = entry.read();
+											if mix.is_corrupt() {
+												continue;
+											}
+											end_gas.merge(&mix);
+											adj_amount += 1;
+											pressure_diffs[j as usize] = (
+												loc,
+												-mix.return_pressure() * GAS_DIFFUSION_CONSTANT,
+											);
+											if !should_share && gas.temperature_compare(&mix)
+												|| gas.compare(&mix) > MINIMUM_MOLES_DELTA_TO_MOVE
+											{
+												should_share = true;
+											}
+										} else {
+											return None;
+										}
+									}
+								}
+							}
+							// Obviously planetary atmos needs love too.
+							if let Some(planet_atmos_id) = m.planetary_atmos {
+								if let Some(planet_atmos_entry) =
+									PLANETARY_ATMOS.get(&planet_atmos_id)
+								{
+									let planet_atmos = planet_atmos_entry.value();
+									if should_share
+										|| gas.temperature_compare(&planet_atmos)
+										|| gas.compare(&planet_atmos) > MINIMUM_MOLES_DELTA_TO_MOVE
+									{
+										end_gas.merge(&planet_atmos);
+										adj_amount += 1;
+										should_share = true;
+									}
+								}
+							}
+							/*
+								This method of simulating diffusion
+								diverges at coefficients that are
+								larger than the inverse of the number
+								of adjacent finite elements.
+								As such, we must multiply it
+								by a coefficient that is at most
+								as big as this coefficient. The
+								GAS_DIFFUSION_CONSTANT chosen here
+								is 1/8, chosen both because it is
+								smaller than 1/7 and because, in
+								floats, 1/8 is exact and so are
+								all multiples of it up to 1.
+								(Technically up to 2,097,152,
+								but I digress.)
+							*/
+							if should_share {
+								end_gas.multiply(GAS_DIFFUSION_CONSTANT);
+								Some((i, m, end_gas, pressure_diffs, adj_amount))
+							} else {
+								None
+							}
+						} else {
+							None
+						}
+					} else {
+						None
+					}
+				})
+				.collect::<Vec<_>>()
+		})
+	}
+}
+
+fn fdm(
+	max_x: i32,
+	max_y: i32,
+	turf_ids: &[TurfID],
+	max_recursion: u8,
+	fdm_max_steps: i32,
+) -> (BTreeSet<TurfID>, BTreeSet<TurfID>) {
 	/*
 		This is the replacement system for LINDA. LINDA requires a lot of bookkeeping,
 		which, when coefficient-wise operations are this fast, is all just unnecessary overhead.
 		This is a much simpler FDM system, basically like LINDA but without its most important feature,
 		sleeping turfs, which is why I've renamed it to fdm.
 	*/
-	PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
 	let mut low_pressure_turfs: BTreeSet<TurfID> = BTreeSet::new();
 	let mut high_pressure_turfs: BTreeSet<TurfID> = BTreeSet::new();
 	let mut cur_count = 1;
@@ -194,144 +325,8 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 		if cur_count > fdm_max_steps || WAITING_FOR_THREAD.load(Ordering::SeqCst) {
 			break;
 		}
+		let turfs_to_save = fdm_z(max_x, max_y, turf_ids, max_recursion);
 		GasMixtures::with_all_mixtures(|all_mixtures| {
-			let turfs_to_save = TURF_GASES
-				/*
-					This uses the DashMap raw API to access the shards directly.
-					This allows for it to be parallelized much more efficiently
-					with rayon; the speedup gained from this is actually linear
-					with the amount of cores the CPU has, which, to be frank,
-					is way better than I was expecting, even though this operation
-					is technically embarassingly parallel. It'll probably reach
-					some maximum due to the global turf mixture lock access,
-					but it's already blazingly fast on my i7, so it should be fine.
-				*/
-				.shards()
-				.par_iter()
-				.map(|shard| {
-					shard
-						.read()
-						.iter()
-						.filter_map(|(&i, m_v)| {
-							// m_v is a SharedValue<TurfMixture>. Need to use get() on it to get the original.
-							// It's dereferenced to copy it. m_v is Copy, so this is reasonably fast.
-							// This is necessary because otherwise we're escaping a reference to the closure below.
-							let m = *m_v.get();
-							let adj = m.adjacency;
-							/*
-								We don't want to simulate space turfs or other unsimulated turfs. They're
-								still valid for sharing to and from, they just shouldn't be considered
-								for this particular step.
-							*/
-							if m.simulation_level > SIMULATION_LEVEL_NONE
-								&& adj > 0 && (m.simulation_level & SIMULATION_LEVEL_DISABLED
-								!= SIMULATION_LEVEL_DISABLED)
-							{
-								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
-								let mut adj_amount = 0;
-								if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
-									/*
-										Getting write locks is potential danger zone,
-										so we make sure we don't do that unless we
-										absolutely need to. Saving is fast enough.
-									*/
-									if gas.is_corrupt() {
-										return None;
-									}
-									let mut end_gas = GasMixture::from_vol(2500.0);
-									let mut pressure_diffs: [(TurfID, f32); 6] = Default::default();
-									/*
-										The pressure here is negative
-										because we're going to be adding it
-										to the base turf's pressure later on.
-										It's multiplied by the diffusion constant
-										because it's not representing the total
-										gas pressure difference but the force exerted
-										due to the pressure gradient.
-										Technically that's ρν², but, like, video games.
-									*/
-									let mut should_share = false;
-									for (j, loc) in adj_tiles {
-										if let Some(turf) = TURF_GASES.get(&loc) {
-											if turf.simulation_level & SIMULATION_LEVEL_DISABLED
-												!= SIMULATION_LEVEL_DISABLED
-											{
-												if let Some(entry) = all_mixtures.get(turf.mix) {
-													if let Some(mix) = entry.try_read() {
-														if mix.is_corrupt() {
-															continue;
-														}
-														end_gas.merge(&mix);
-														adj_amount += 1;
-														pressure_diffs[j as usize] = (
-															loc,
-															-mix.return_pressure()
-																* GAS_DIFFUSION_CONSTANT,
-														);
-														if !should_share
-															&& gas.temperature_compare(&mix) || gas
-															.compare(&mix)
-															> MINIMUM_MOLES_DELTA_TO_MOVE
-														{
-															should_share = true;
-														}
-													} else {
-														return None;
-													}
-												}
-											}
-										}
-									}
-									// Obviously planetary atmos needs love too.
-									if let Some(planet_atmos_id) = m.planetary_atmos {
-										if let Some(planet_atmos_entry) =
-											PLANETARY_ATMOS.get(&planet_atmos_id)
-										{
-											let planet_atmos = planet_atmos_entry.value();
-											if should_share
-												|| gas.temperature_compare(&planet_atmos) || gas
-												.compare(&planet_atmos)
-												> MINIMUM_MOLES_DELTA_TO_MOVE
-											{
-												end_gas.merge(&planet_atmos);
-												adj_amount += 1;
-												should_share = true;
-											}
-										}
-									}
-									/*
-										This method of simulating diffusion
-										diverges at coefficients that are
-										larger than the inverse of the number
-										of adjacent finite elements.
-										As such, we must multiply it
-										by a coefficient that is at most
-										as big as this coefficient. The
-										GAS_DIFFUSION_CONSTANT chosen here
-										is 1/8, chosen both because it is
-										smaller than 1/7 and because, in
-										floats, 1/8 is exact and so are
-										all multiples of it up to 1.
-										(Technically up to 2,097,152,
-										but I digress.)
-									*/
-									if should_share {
-										end_gas.multiply(GAS_DIFFUSION_CONSTANT);
-										Some((i, m, end_gas, pressure_diffs, adj_amount))
-									} else {
-										None
-									}
-								} else {
-									None
-								}
-							} else {
-								None
-							}
-						})
-						.collect::<Vec<_>>()
-				})
-				.flatten()
-				.collect::<Vec<_>>();
 			/*
 				For the optimization-heads reading this: this is not an unnecessary collect().
 				Saving all this to the turfs_to_save vector is, in fact, the reason
@@ -434,13 +429,14 @@ fn excited_group_processing(
 		if found_turfs.contains(&initial_turf) {
 			continue;
 		}
-		if let Some(initial_mix_ref) = TURF_GASES.get(&initial_turf) {
+		let turf_gases = TURF_GASES.read();
+		if let Some(initial_mix_ref) = turf_gases.get(&initial_turf) {
 			let mut border_turfs: VecDeque<(TurfID, TurfMixture)> = VecDeque::with_capacity(40);
 			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
 			let mut min_pressure = initial_mix_ref.return_pressure();
 			let mut max_pressure = min_pressure;
 			let mut fully_mixed = GasMixture::merger();
-			border_turfs.push_back((initial_turf, *initial_mix_ref.value()));
+			border_turfs.push_back((initial_turf, *initial_mix_ref));
 			found_turfs.insert(initial_turf);
 			GasMixtures::with_all_mixtures(|all_mixtures| {
 				loop {
@@ -465,7 +461,7 @@ fn excited_group_processing(
 								continue;
 							}
 							found_turfs.insert(loc);
-							if let Some(border_mix) = TURF_GASES.get(&loc) {
+							if let Some(border_mix) = turf_gases.get(&loc) {
 								if border_mix.simulation_level & SIMULATION_LEVEL_DISABLED
 									!= SIMULATION_LEVEL_DISABLED
 								{
@@ -490,23 +486,30 @@ fn excited_group_processing(
 	found_turfs.len()
 }
 
-fn post_process() {
-	TURF_GASES.shards().par_iter().for_each(|shard| {
+fn post_process(max_x: i32, max_y: i32, turf_ids: &[TurfID], max_recursion: u8) {
+	if turf_ids.len() > 8192 && max_recursion > 1 {
+		let (left, right) = turf_ids.split_at(turf_ids.len() / 2);
+		rayon::join(
+			|| post_process(max_x, max_y, left, max_recursion / 2),
+			|| post_process(max_x, max_y, right, max_recursion / 2),
+		);
+	} else {
+		let turf_gases = TURF_GASES.read();
 		let sender = byond_callback_sender();
 		GasMixtures::with_all_mixtures(|all_mixtures| {
-			let mut reacters = VecDeque::with_capacity(10);
-			let mut visual_updaters = VecDeque::with_capacity(10);
-			shard
-				.read()
+			let mut visual_updaters = VecDeque::with_capacity(20);
+			let mut reacters = VecDeque::with_capacity(20);
+			turf_ids
 				.iter()
-				.filter_map(|(&i, m_v)| {
-					let m = m_v.get();
+				.filter_map(|&i| {
+					let &m = turf_gases.get(&i).unwrap();
 					if m.simulation_level > 0
 						&& m.simulation_level & SIMULATION_LEVEL_DISABLED
 							!= SIMULATION_LEVEL_DISABLED
 					{
 						if let Some(planet_atmos_id) = m.planetary_atmos {
-							if let Some(planet_atmos_entry) = PLANETARY_ATMOS.get(&planet_atmos_id) {
+							if let Some(planet_atmos_entry) = PLANETARY_ATMOS.get(&planet_atmos_id)
+							{
 								let planet_atmos = planet_atmos_entry.value();
 								if {
 									if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
@@ -582,7 +585,7 @@ fn post_process() {
 				Ok(Value::null())
 			}));
 		});
-	});
+	}
 }
 
 static HEAT_PROCESS_TIME: AtomicU64 = AtomicU64::new(1000000);
@@ -599,6 +602,7 @@ static PROCESSING_HEAT: AtomicBool = AtomicBool::new(false);
 
 // Expected function call: process_turf_heat()
 // Returns: TRUE if thread not done, FALSE otherwise
+/*
 #[hook("/datum/controller/subsystem/air/proc/process_turf_heat")]
 fn _process_heat_hook() {
 	/*
@@ -766,7 +770,7 @@ fn _process_heat_hook() {
 		.as_number()?;
 	Ok(Value::from(process_callbacks_for_millis(arg_limit as u64)))
 }
-
+*/
 #[shutdown]
 fn reset_auxmos_processing() {
 	PROCESSING_TURF_STEP.store(PROCESS_NOT_STARTED, Ordering::SeqCst);

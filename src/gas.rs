@@ -13,6 +13,8 @@ use gas_mixture::GasMixture;
 
 use parking_lot::{const_rwlock, RwLock};
 
+use concread::ebrcell::EbrCell;
+
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use std::cell::RefCell;
@@ -211,7 +213,7 @@ pub struct GasMixtures {}
 	vector directly. Seriously, please don't. I have the wrapper functions for a reason.
 */
 lazy_static! {
-	static ref GAS_MIXTURES: RwLock<Vec<RwLock<GasMixture>>> =
+	static ref GAS_MIXTURES: RwLock<Vec<concread::ebrcell::EbrCell<GasMixture>>> =
 		RwLock::new(Vec::with_capacity(100000));
 }
 thread_local! {
@@ -221,7 +223,7 @@ thread_local! {
 impl GasMixtures {
 	pub fn with_all_mixtures<T, F>(mut f: F) -> T
 	where
-		F: FnMut(&Vec<RwLock<GasMixture>>) -> T,
+		F: FnMut(&Vec<EbrCell<GasMixture>>) -> T,
 	{
 		f(&GAS_MIXTURES.read())
 	}
@@ -292,7 +294,7 @@ impl GasMixtures {
 	}
 	fn with_gas_mixtures_custom<T, F>(src: f32, arg: f32, mut f: F) -> Result<T, Runtime>
 	where
-		F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
+		F: FnMut(&EbrCell<GasMixture>, &EbrCell<GasMixture>) -> Result<T, Runtime>,
 	{
 		let src = src.to_bits() as usize;
 		let arg = arg.to_bits() as usize;
@@ -319,7 +321,7 @@ impl GasMixtures {
 			if gas_ids.borrow().is_empty() {
 				let mut gas_mixtures = GAS_MIXTURES.write();
 				let next_idx = gas_mixtures.len();
-				gas_mixtures.push(RwLock::new(GasMixture::from_vol(
+				gas_mixtures.push(EbrCell::new(GasMixture::from_vol(
 					mix.get_number(byond_string!("initial_volume"))?,
 				)));
 				mix.set(
@@ -412,7 +414,7 @@ where
 /// Allows different lock levels for each gas. Instead of relevant refs to the gases, returns the RWLock object.
 pub fn with_mixes_custom<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
-	F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
+	F: FnMut(&EbrCell<GasMixture>, &EbrCell<GasMixture>) -> Result<T, Runtime>,
 {
 	GasMixtures::with_gas_mixtures_custom(
 		src_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
@@ -425,14 +427,10 @@ where
 fn _fix_corrupted_atmos() {
 	rayon::spawn(|| {
 		for lock in GAS_MIXTURES.read().iter() {
-			if {
-				if let Some(gas) = lock.try_read() {
-					gas.is_corrupt()
-				} else {
-					false
-				}
-			} {
-				lock.write().fix_corruption();
+			let writer = lock.write();
+			if writer.is_corrupt() {
+				writer.get_mut().fix_corruption();
+				writer.commit();
 			}
 		}
 	});

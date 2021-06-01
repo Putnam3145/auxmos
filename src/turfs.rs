@@ -110,11 +110,13 @@ struct ThermalInfo {
 	pub adjacent_to_space: bool,
 }
 
+use concread::bptree::BptreeMap;
+
 lazy_static! {
 	// All the turfs that have gas mixtures.
-	static ref TURF_GASES: DashMap<TurfID, TurfMixture, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
+	static ref TURF_GASES: BptreeMap<TurfID, TurfMixture> = BptreeMap::new();
 	// Turfs with temperatures/heat capacities. This is distinct from the above.
-	static ref TURF_TEMPERATURES: DashMap<TurfID, ThermalInfo, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
+	static ref TURF_TEMPERATURES: BptreeMap<TurfID, ThermalInfo> = BptreeMap::new();
 	// We store planetary atmos by hash of the initial atmos string here for speed.
 	static ref PLANETARY_ATMOS: DashMap<u32, GasMixture, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
 	// In a separate dashmap because if it isn't most of the post-process time is spent acquiring write locks
@@ -137,8 +139,17 @@ fn check_and_update_vis_hash(id: TurfID, hash: u64) -> bool {
 
 #[shutdown]
 fn _shutdown_turfs() {
-	TURF_GASES.clear();
-	TURF_TEMPERATURES.clear();
+	{
+		let mut write = TURF_GASES.write();
+		write.clear();
+		write.commit();
+	}
+	{
+		let mut write = TURF_TEMPERATURES.write();
+		write.clear();
+		write.commit();
+	}
+	TURF_TEMPERATURES.write().clear();
 	PLANETARY_ATMOS.clear();
 	TURF_VIS_HASH.clear();
 }
@@ -147,7 +158,9 @@ fn _shutdown_turfs() {
 fn _hook_register_turf() {
 	let simulation_level = args[0].as_number()?;
 	if simulation_level < 0.0 {
-		TURF_GASES.remove(&unsafe { src.raw.data.id });
+		let mut writer = TURF_GASES.write();
+		writer.remove(&unsafe { src.raw.data.id });
+		writer.commit();
 		Ok(Value::null())
 	} else {
 		let mut to_insert: TurfMixture = Default::default();
@@ -160,24 +173,26 @@ fn _hook_register_turf() {
 			if is_planet != 0.0 {
 				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
 					to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
-					let mut entry = PLANETARY_ATMOS
+					PLANETARY_ATMOS
 						.entry(to_insert.planetary_atmos.unwrap())
 						.or_insert_with(|| {
 							let mut gas = to_insert.get_gas_copy();
 							gas.mark_immutable();
 							gas
 						});
-					entry.mark_immutable();
 				}
 			}
 		}
-		TURF_GASES.insert(unsafe { src.raw.data.id }, to_insert);
+		let mut writer = TURF_GASES.write();
+		writer.insert(unsafe { src.raw.data.id }, to_insert);
+		writer.commit();
 		Ok(Value::null())
 	}
 }
 
 #[hook("/turf/proc/__auxtools_update_turf_temp_info")]
 fn _hook_turf_update_temp() {
+	let mut writer = TURF_TEMPERATURES.write();
 	if src
 		.get_number(byond_string!("thermal_conductivity"))
 		.unwrap_or_default()
@@ -186,23 +201,20 @@ fn _hook_turf_update_temp() {
 		.unwrap_or_default()
 		> 0.0
 	{
-		let mut entry = TURF_TEMPERATURES
-			.entry(unsafe { src.raw.data.id })
-			.or_insert_with(|| ThermalInfo {
-				temperature: 293.15,
-				thermal_conductivity: 0.0,
-				heat_capacity: 0.0,
+		writer.insert(
+			unsafe { src.raw.data.id },
+			ThermalInfo {
+				thermal_conductivity: src.get_number(byond_string!("thermal_conductivity"))?,
+				heat_capacity: src.get_number(byond_string!("heat_capacity"))?,
 				adjacency: NORTH | SOUTH | WEST | EAST,
-				adjacent_to_space: false,
-			});
-		entry.thermal_conductivity = src.get_number(byond_string!("thermal_conductivity"))?;
-		entry.heat_capacity = src.get_number(byond_string!("heat_capacity"))?;
-		entry.adjacency = NORTH | SOUTH | WEST | EAST;
-		entry.adjacent_to_space = args[0].as_number()? != 0.0;
-		entry.temperature = src.get_number(byond_string!("initial_temperature"))?;
+				adjacent_to_space: args[0].as_number()? != 0.0,
+				temperature: src.get_number(byond_string!("initial_temperature"))?,
+			},
+		);
 	} else {
-		TURF_TEMPERATURES.remove(&unsafe { src.raw.data.id });
+		writer.remove(&unsafe { src.raw.data.id });
 	}
+	writer.commit();
 	Ok(Value::null())
 }
 
@@ -214,68 +226,69 @@ fn _hook_sleep() {
 	} else {
 		0.0
 	};
+	let mut writer = TURF_GASES.write();
 	if arg == 0.0 {
-		TURF_GASES
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
-				turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
-			});
+		if let Some(turf) = writer.get_mut(&unsafe { src.raw.data.id }) {
+			turf.simulation_level &= !SIMULATION_LEVEL_DISABLED
+		}
 	} else {
-		TURF_GASES
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
-				turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
-			});
+		if let Some(turf) = writer.get_mut(&unsafe { src.raw.data.id }) {
+			turf.simulation_level |= !SIMULATION_LEVEL_DISABLED
+		}
 	}
+	writer.commit();
 	Ok(Value::from(true))
 }
 
 #[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn _hook_adjacent_turfs() {
-	if let Ok(adjacent_list) = src.get_list(byond_string!("atmos_adjacent_turfs")) {
-		let mut adjacency = 0;
-		for i in 1..adjacent_list.len() + 1 {
-			adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
-		}
-		TURF_GASES
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
+	{
+		let mut writer = TURF_GASES.write();
+		if let Ok(adjacent_list) = src.get_list(byond_string!("atmos_adjacent_turfs")) {
+			let mut adjacency = 0;
+			for i in 1..adjacent_list.len() + 1 {
+				adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
+			}
+			if let Some(turf) = writer.get_mut(&unsafe { src.raw.data.id }) {
 				turf.adjacency = adjacency as u8;
-			});
-	} else {
-		TURF_GASES
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
+			}
+		} else {
+			if let Some(turf) = writer.get_mut(&unsafe { src.raw.data.id }) {
 				turf.adjacency = 0;
-			});
+			}
+		}
 	}
 	if let Ok(atmos_blocked_directions) =
 		src.get_number(byond_string!("conductivity_blocked_directions"))
 	{
 		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);
-		TURF_TEMPERATURES
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|entry| {
-				entry.adjacency = adjacency;
-			})
-			.or_insert_with(|| ThermalInfo {
-				temperature: src
-					.get_number(byond_string!("initial_temperature"))
-					.unwrap(),
-				thermal_conductivity: src
-					.get_number(byond_string!("thermal_conductivity"))
-					.unwrap(),
-				heat_capacity: src.get_number(byond_string!("heat_capacity")).unwrap(),
-				adjacency: adjacency,
-				adjacent_to_space: args[0].as_number().unwrap() != 0.0,
-			});
+		let mut writer = TURF_TEMPERATURES.write();
+		if let Some(temp) = writer.get_mut(&unsafe { src.raw.data.id }) {
+			temp.adjacency = adjacency;
+		} else {
+			writer.insert(
+				unsafe { src.raw.data.id },
+				ThermalInfo {
+					temperature: src
+						.get_number(byond_string!("initial_temperature"))
+						.unwrap(),
+					thermal_conductivity: src
+						.get_number(byond_string!("thermal_conductivity"))
+						.unwrap(),
+					heat_capacity: src.get_number(byond_string!("heat_capacity")).unwrap(),
+					adjacency: adjacency,
+					adjacent_to_space: args[0].as_number().unwrap() != 0.0,
+				},
+			);
+		}
+		writer.commit();
 	}
 	Ok(Value::null())
 }
 
 #[hook("/turf/proc/return_temperature")]
 fn _hook_turf_temperature() {
-	if let Some(temp_info) = TURF_TEMPERATURES.get(&unsafe { src.raw.data.id }) {
+	if let Some(temp_info) = TURF_TEMPERATURES.read().get(&unsafe { src.raw.data.id }) {
 		if temp_info.temperature.is_normal() {
 			Ok(Value::from(temp_info.temperature))
 		} else {
@@ -292,20 +305,24 @@ fn _hook_set_temperature() {
 		.get(0)
 		.ok_or_else(|| runtime!("Invalid argument count to turf temperature set: 0"))?
 		.as_number()?;
-	TURF_TEMPERATURES
-		.entry(unsafe { src.raw.data.id })
-		.and_modify(|turf| {
-			turf.temperature = argument;
-		})
-		.or_insert_with(|| ThermalInfo {
-			temperature: argument,
-			thermal_conductivity: src
-				.get_number(byond_string!("thermal_conductivity"))
-				.unwrap(),
-			heat_capacity: src.get_number(byond_string!("heat_capacity")).unwrap(),
-			adjacency: 0,
-			adjacent_to_space: false,
-		});
+	let mut writer = TURF_TEMPERATURES.write();
+	if let Some(temp) = writer.get_mut(&unsafe { src.raw.data.id }) {
+		temp.temperature = argument;
+	} else {
+		writer.insert(
+			unsafe { src.raw.data.id },
+			ThermalInfo {
+				temperature: argument,
+				thermal_conductivity: src
+					.get_number(byond_string!("thermal_conductivity"))
+					.unwrap(),
+				heat_capacity: src.get_number(byond_string!("heat_capacity")).unwrap(),
+				adjacency: 0,
+				adjacent_to_space: false,
+			},
+		);
+	}
+	writer.commit();
 	Ok(Value::null())
 }
 

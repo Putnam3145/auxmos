@@ -528,15 +528,14 @@ fn post_process() {
 							let visibility = gas.visibility_hash();
 							let should_update_visuals = check_and_update_vis_hash(i, visibility);
 							let reactable = gas.can_react();
-							let corrupt = gas.is_corrupt();
 							if should_update_visuals || reactable {
-								return Some((i, should_update_visuals, reactable, corrupt));
+								return Some((i, should_update_visuals, reactable));
 							}
 						}
 					}
 					return None;
 				})
-				.for_each(|(i, should_update_visuals, reactable, corrupt)| {
+				.for_each(|(i, should_update_visuals, reactable)| {
 					if should_update_visuals {
 						visual_updaters.push_back(i);
 						if reacters.len() >= 10 {
@@ -562,12 +561,6 @@ fn post_process() {
 								Ok(Value::null())
 							}));
 						}
-					}
-					if corrupt {
-						let _ = sender.try_send(Box::new(move || {
-							let turf = unsafe { Value::turf_by_id_unchecked(i) };
-							turf.call("force_air_reset", &[])
-						}));
 					}
 				});
 			let _ = sender.try_send(Box::new(move || {

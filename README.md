@@ -9,3 +9,6 @@ Duping gases was actually a race condition of sorts. It was supposed to do all t
 
 TODO:
 Certain air refs, always in lavaland, get replaced by the first datums created after initialization of the atmospherics subsystem, only after a server restart. I suspect this is a problem on the auxtools end at this point, I cannot figure out what's going on here.
+On restart, sometimes some air tanks get initialized with invalid gas mixtures.
+
+Both of these problems, I suspect, have to do with #[shutdown] not working. Like, maybe at all? Gas mixtures list does shrink properly, but the fact that these things happen only on restart suggests that it's dying due to improper cleanup, even though I do not have improper cleanup.

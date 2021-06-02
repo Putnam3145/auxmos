@@ -8,4 +8,4 @@ FIXED:
 Duping gases was actually a race condition of sorts. It was supposed to do all the gas checks before even starting with setting the gases, but it wasn't. Fixed. Massive amounts of gases being lost was probably this or putnamos just being bad.
 
 TODO:
-I broke reactions. Most likely fix is just sorting them by priority instead of by string.
+Certain air refs, always in lavaland, get replaced by the first datums created after initialization of the atmospherics subsystem, only after a server restart. I suspect this is a problem on the auxtools end at this point, I cannot figure out what's going on here.

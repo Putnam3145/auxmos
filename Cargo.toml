@@ -43,9 +43,6 @@ version = "1.1.0"
 features = ["rustc_1_40", "alloc"]
 
 [profile.release]
-opt-level = 3
 lto = 'thin'
-codegen-units = 1
-incremental = true
 debug = true
 panic = 'abort'

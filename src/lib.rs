@@ -226,24 +226,23 @@ fn _set_moles_hook() {
 }
 
 #[hook("/datum/gas_mixture/proc/scrub_into")]
-fn _scrub_into_hook() {
-	if args.len() < 2 {
-		Err(runtime!("Incorrect arg len for scrub_into (less than 2)."))
-	} else {
-		with_mixes_mut(src, &args[0], |src_gas, dest_gas| {
-			let gases_to_scrub = args[1].as_list()?;
-			let mut buffer = gas::gas_mixture::GasMixture::from_vol(gas::constants::CELL_VOLUME);
-			buffer.set_temperature(src_gas.get_temperature());
-			for idx in 1..gases_to_scrub.len() + 1 {
-				if let Ok(gas_id) = gas_id_from_type(&gases_to_scrub.get(idx).unwrap()) {
-					buffer.set_moles(gas_id, src_gas.get_moles(gas_id));
-					src_gas.set_moles(gas_id, 0.0);
-				}
+fn _scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
+	let ratio = ratio_v.as_number()?;
+	with_mixes_mut(src, into, |src_gas, dest_gas| {
+		let mut removed = src_gas.remove_ratio(ratio);
+		let gases_to_scrub = gas_list.as_list()?;
+		let mut buffer = gas::gas_mixture::GasMixture::from_vol(gas::constants::CELL_VOLUME);
+		buffer.set_temperature(src_gas.get_temperature());
+		for idx in 1..gases_to_scrub.len() + 1 {
+			if let Ok(gas_id) = gas_id_from_type(&gases_to_scrub.get(idx).unwrap()) {
+				buffer.set_moles(gas_id, removed.get_moles(gas_id));
+				removed.set_moles(gas_id, 0.0);
 			}
-			dest_gas.merge(&buffer);
-			Ok(Value::from(true))
-		})
-	}
+		}
+		dest_gas.merge(&buffer);
+		src_gas.merge(&removed);
+		Ok(Value::from(true))
+	})
 }
 
 #[hook("/datum/gas_mixture/proc/mark_immutable")]
@@ -314,6 +313,22 @@ fn _adjust_heat_hook() {
 				.ok_or_else(|| runtime!("Wrong number of args for adjust heat: 0"))?
 				.as_number()?,
 		);
+		Ok(Value::null())
+	})
+}
+
+#[hook("/datum/gas_mixture/proc/transfer_to")]
+fn _transfer_hook(other: Value, moles: Value) {
+	with_mixes_mut(src, other, |our_mix, other_mix| {
+		other_mix.merge(&our_mix.remove(moles.as_number()?));
+		Ok(Value::null())
+	})
+}
+
+#[hook("/datum/gas_mixture/proc/transfer_ratio_to")]
+fn _transfer_ratio_hook(other: Value, ratio: Value) {
+	with_mixes_mut(src, other, |our_mix, other_mix| {
+		other_mix.merge(&our_mix.remove_ratio(ratio.as_number()?));
 		Ok(Value::null())
 	})
 }

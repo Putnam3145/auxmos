@@ -354,9 +354,7 @@ impl GasMixtures {
 }
 
 #[shutdown]
-fn _shut_down_gases()
-// these are each called literally once per game so i can have as many as i want, neener neener
-{
+fn _shut_down_gases() {
 	GAS_MIXTURES.write().clear();
 	NEXT_GAS_IDS.with(|gas_ids| {
 		gas_ids.borrow_mut().clear();

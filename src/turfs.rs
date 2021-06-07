@@ -12,6 +12,8 @@ use auxtools::*;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use std::collections::HashMap;
+
 use crate::constants::*;
 
 use crate::GasMixtures;
@@ -135,24 +137,36 @@ fn check_and_update_vis_hash(id: TurfID, hash: u64) -> bool {
 	}
 }
 
+
+thread_local! {
+	static PLEASE_KEEP_REFCOUNTS: std::cell::RefCell<HashMap<TurfID, Value>> = std::cell::RefCell::new(HashMap::new());
+}
+
 #[shutdown]
 fn _shutdown_turfs() {
 	TURF_GASES.clear();
 	TURF_TEMPERATURES.clear();
 	PLANETARY_ATMOS.clear();
 	TURF_VIS_HASH.clear();
+	PLEASE_KEEP_REFCOUNTS.with(|pls| {
+		pls.borrow_mut().clear();
+	});
 }
 
 #[hook("/turf/proc/update_air_ref")]
 fn _hook_register_turf() {
 	let simulation_level = args[0].as_number()?;
 	if simulation_level < 0.0 {
-		TURF_GASES.remove(&unsafe { src.raw.data.id });
+		let id = unsafe { src.raw.data.id };
+		TURF_GASES.remove(&id);
+		PLEASE_KEEP_REFCOUNTS.with(|pls| {
+			pls.borrow_mut().remove(&id);
+		});
 		Ok(Value::null())
 	} else {
 		let mut to_insert: TurfMixture = Default::default();
-		to_insert.mix = src
-			.get(byond_string!("air"))?
+		let air = src.get(byond_string!("air"))?;
+		to_insert.mix = air
 			.get_number(byond_string!("_extools_pointer_gasmixture"))?
 			.to_bits() as usize;
 		to_insert.simulation_level = args[0].as_number()? as u8;
@@ -171,7 +185,11 @@ fn _hook_register_turf() {
 				}
 			}
 		}
-		TURF_GASES.insert(unsafe { src.raw.data.id }, to_insert);
+		let id = unsafe { src.raw.data.id };
+		TURF_GASES.insert(id, to_insert);
+		PLEASE_KEEP_REFCOUNTS.with(|pls| {
+			pls.borrow_mut().insert(id, air);
+		});
 		Ok(Value::null())
 	}
 }

@@ -46,13 +46,6 @@ mod tests {
 	}
 }
 
-lazy_static! {
-	static ref MONSTERMOS_TURF_CHANNEL: (
-		flume::Sender<BTreeMap<TurfID, (TurfMixture, Cell<TransferInfo>)>>,
-		flume::Receiver<BTreeMap<TurfID, (TurfMixture, Cell<TransferInfo>)>>
-	) = flume::unbounded();
-}
-
 fn finalize_eq(
 	i: TurfID,
 	turf: &TurfMixture,

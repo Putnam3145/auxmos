@@ -24,7 +24,6 @@ crate-type = ["cdylib"]
 [dependencies]
 auxtools = { git = "https://github.com/willox/auxtools"}
 auxcallback = { git = "https://github.com/Putnam3145/auxcallback" }
-lazy_static = "1.4.0"
 itertools = "0.9.0"
 rayon = "1.5.0"
 float-ord = "0.2.0"

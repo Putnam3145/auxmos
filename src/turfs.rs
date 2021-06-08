@@ -110,45 +110,68 @@ struct ThermalInfo {
 	pub adjacent_to_space: bool,
 }
 
-lazy_static! {
-	// All the turfs that have gas mixtures.
-	static ref TURF_GASES: DashMap<TurfID, TurfMixture, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
-	// Turfs with temperatures/heat capacities. This is distinct from the above.
-	static ref TURF_TEMPERATURES: DashMap<TurfID, ThermalInfo, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
-	// We store planetary atmos by hash of the initial atmos string here for speed.
-	static ref PLANETARY_ATMOS: DashMap<u32, GasMixture, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
-	// In a separate dashmap because if it isn't most of the post-process time is spent acquiring write locks
-	static ref TURF_VIS_HASH: DashMap<TurfID, AtomicU64, FxBuildHasher> = DashMap::with_hasher(FxBuildHasher::default());
-	// For monstermos or other hypothetical fast-process systems.
-	static ref HIGH_PRESSURE_TURFS: (
-		flume::Sender<Vec<TurfID>>,
-		flume::Receiver<Vec<TurfID>>
-	) = flume::unbounded();
-}
+// All the turfs that have gas mixtures.
+static mut TURF_GASES: Option<DashMap<TurfID, TurfMixture, FxBuildHasher>> = None;
+// Turfs with temperatures/heat capacities. This is distinct from the above.
+static mut TURF_TEMPERATURES: Option<DashMap<TurfID, ThermalInfo, FxBuildHasher>> = None;
+// We store planetary atmos by hash of the initial atmos string here for speed.
+static mut PLANETARY_ATMOS: Option<DashMap<u32, GasMixture, FxBuildHasher>> = None;
+// In a separate dashmap because if it isn't most of the post-process time is spent acquiring write locks
+static mut TURF_VIS_HASH: Option<DashMap<TurfID, AtomicU64, FxBuildHasher>> = None;
+// For monstermos or other hypothetical fast-process systems.
+static mut HIGH_PRESSURE_TURFS: Option<(flume::Sender<Vec<TurfID>>, flume::Receiver<Vec<TurfID>>)> =
+	None;
 
-fn check_and_update_vis_hash(id: TurfID, hash: u64) -> bool {
-	if let Some(existing_hash) = TURF_VIS_HASH.get(&id) {
-		existing_hash.swap(hash, Ordering::Relaxed) != hash
-	} else {
-		TURF_VIS_HASH.insert(id, AtomicU64::new(hash));
-		true
-	}
+#[init(partial)]
+fn _initialize_turf_statics() -> Result<(), String> {
+	unsafe {
+		TURF_GASES = Some(DashMap::with_hasher(FxBuildHasher::default()));
+		TURF_TEMPERATURES = Some(DashMap::with_hasher(FxBuildHasher::default()));
+		PLANETARY_ATMOS = Some(DashMap::with_hasher(FxBuildHasher::default()));
+		TURF_VIS_HASH = Some(DashMap::with_hasher(FxBuildHasher::default()));
+		HIGH_PRESSURE_TURFS = Some(flume::unbounded());
+	};
+	Ok(())
 }
 
 #[shutdown]
 fn _shutdown_turfs() {
-	TURF_GASES.clear();
-	TURF_TEMPERATURES.clear();
-	PLANETARY_ATMOS.clear();
-	TURF_VIS_HASH.clear();
+	unsafe {
+		TURF_GASES = None;
+		TURF_TEMPERATURES = None;
+		PLANETARY_ATMOS = None;
+		TURF_VIS_HASH = None;
+		HIGH_PRESSURE_TURFS = None
+	};
+}
+// this would lead to undefined info if it were possible for something to put a None on it during operation, but nothing's going to do that
+fn turf_gases() -> &'static DashMap<TurfID, TurfMixture, FxBuildHasher> {
+	unsafe { TURF_GASES.as_ref().unwrap() }
+}
+
+fn planetary_atmos() -> &'static DashMap<u32, GasMixture, FxBuildHasher> {
+	unsafe { PLANETARY_ATMOS.as_ref().unwrap() }
+}
+
+fn turf_temperatures() -> &'static DashMap<TurfID, ThermalInfo, FxBuildHasher> {
+	unsafe { TURF_TEMPERATURES.as_ref().unwrap() }
+}
+
+fn check_and_update_vis_hash(id: TurfID, hash: u64) -> bool {
+	let turf_vis_hash = unsafe { TURF_VIS_HASH.as_ref() }.unwrap();
+	if let Some(existing_hash) = turf_vis_hash.get(&id) {
+		existing_hash.swap(hash, Ordering::Relaxed) != hash
+	} else {
+		turf_vis_hash.insert(id, AtomicU64::new(hash));
+		true
+	}
 }
 
 #[hook("/turf/proc/update_air_ref")]
 fn _hook_register_turf() {
 	let simulation_level = args[0].as_number()?;
 	if simulation_level < 0.0 {
-		let id = unsafe { src.raw.data.id };
-		TURF_GASES.remove(&id);
+		turf_gases().remove(&unsafe { src.raw.data.id });
 		Ok(Value::null())
 	} else {
 		let mut to_insert: TurfMixture = Default::default();
@@ -161,7 +184,7 @@ fn _hook_register_turf() {
 			if is_planet != 0.0 {
 				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
 					to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
-					let mut entry = PLANETARY_ATMOS
+					let mut entry = planetary_atmos()
 						.entry(to_insert.planetary_atmos.unwrap())
 						.or_insert_with(|| {
 							let mut gas = to_insert.get_gas_copy();
@@ -173,7 +196,7 @@ fn _hook_register_turf() {
 			}
 		}
 		let id = unsafe { src.raw.data.id };
-		TURF_GASES.insert(id, to_insert);
+		turf_gases().insert(id, to_insert);
 		Ok(Value::null())
 	}
 }
@@ -188,7 +211,7 @@ fn _hook_turf_update_temp() {
 		.unwrap_or_default()
 		> 0.0
 	{
-		let mut entry = TURF_TEMPERATURES
+		let mut entry = turf_temperatures()
 			.entry(unsafe { src.raw.data.id })
 			.or_insert_with(|| ThermalInfo {
 				temperature: 293.15,
@@ -203,7 +226,7 @@ fn _hook_turf_update_temp() {
 		entry.adjacent_to_space = args[0].as_number()? != 0.0;
 		entry.temperature = src.get_number(byond_string!("initial_temperature"))?;
 	} else {
-		TURF_TEMPERATURES.remove(&unsafe { src.raw.data.id });
+		turf_temperatures().remove(&unsafe { src.raw.data.id });
 	}
 	Ok(Value::null())
 }
@@ -217,13 +240,13 @@ fn _hook_sleep() {
 		0.0
 	};
 	if arg == 0.0 {
-		TURF_GASES
+		turf_gases()
 			.entry(unsafe { src.raw.data.id })
 			.and_modify(|turf| {
 				turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
 			});
 	} else {
-		TURF_GASES
+		turf_gases()
 			.entry(unsafe { src.raw.data.id })
 			.and_modify(|turf| {
 				turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
@@ -239,13 +262,13 @@ fn _hook_adjacent_turfs() {
 		for i in 1..adjacent_list.len() + 1 {
 			adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
 		}
-		TURF_GASES
+		turf_gases()
 			.entry(unsafe { src.raw.data.id })
 			.and_modify(|turf| {
 				turf.adjacency = adjacency as u8;
 			});
 	} else {
-		TURF_GASES
+		turf_gases()
 			.entry(unsafe { src.raw.data.id })
 			.and_modify(|turf| {
 				turf.adjacency = 0;
@@ -255,7 +278,7 @@ fn _hook_adjacent_turfs() {
 		src.get_number(byond_string!("conductivity_blocked_directions"))
 	{
 		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);
-		TURF_TEMPERATURES
+		turf_temperatures()
 			.entry(unsafe { src.raw.data.id })
 			.and_modify(|entry| {
 				entry.adjacency = adjacency;
@@ -277,7 +300,7 @@ fn _hook_adjacent_turfs() {
 
 #[hook("/turf/proc/return_temperature")]
 fn _hook_turf_temperature() {
-	if let Some(temp_info) = TURF_TEMPERATURES.get(&unsafe { src.raw.data.id }) {
+	if let Some(temp_info) = turf_temperatures().get(&unsafe { src.raw.data.id }) {
 		if temp_info.temperature.is_normal() {
 			Ok(Value::from(temp_info.temperature))
 		} else {
@@ -294,7 +317,7 @@ fn _hook_set_temperature() {
 		.get(0)
 		.ok_or_else(|| runtime!("Invalid argument count to turf temperature set: 0"))?
 		.as_number()?;
-	TURF_TEMPERATURES
+	turf_temperatures()
 		.entry(unsafe { src.raw.data.id })
 		.and_modify(|turf| {
 			turf.temperature = argument;
@@ -332,7 +355,7 @@ fn _hook_update_visuals() {
 				if let Some(amt) = gas::gas_visibility(i) {
 					if n > amt {
 						if let Ok(this_gas_overlays_v) =
-							gas_overlays.get(gas::gas_id_to_type(i).unwrap().as_ref())
+							gas_overlays.get(gas::gas_idx_to_id(i).unwrap().as_ref())
 						{
 							if let Ok(this_gas_overlays) = this_gas_overlays_v.as_list() {
 								let this_idx = FACTOR_GAS_VISIBLE_MAX

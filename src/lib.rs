@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate lazy_static;
-
 pub mod gas;
 
 pub mod turfs;
@@ -147,7 +144,7 @@ fn _get_gases_hook() {
 	with_mix(src, |mix| {
 		let gases_list: List = List::new();
 		for gas in mix.get_gases() {
-			gases_list.append(&gas_id_to_type(*gas)?);
+			gases_list.append(Value::from_string(&gas_idx_to_id(*gas)?)?);
 		}
 		Ok(Value::from(gases_list))
 	})
@@ -178,7 +175,7 @@ fn _partial_heat_capacity() {
 	} else {
 		with_mix(src, |mix| {
 			Ok(Value::from(
-				mix.partial_heat_capacity(gas_id_from_type(&args[0])?),
+				mix.partial_heat_capacity(gas_idx_from_value(&args[0])?),
 			))
 		})
 	}
@@ -202,7 +199,7 @@ fn _get_moles_hook() {
 		Err(runtime!("Incorrect arg len for get_moles (0)."))
 	} else {
 		with_mix(src, |mix| {
-			Ok(Value::from(mix.get_moles(gas_id_from_type(&args[0])?)))
+			Ok(Value::from(mix.get_moles(gas_idx_from_value(&args[0])?)))
 		})
 	}
 }
@@ -220,7 +217,7 @@ fn _set_moles_hook() {
 		return Err(runtime!("Attempted to set moles to a negative number."));
 	}
 	with_mix_mut(src, |mix| {
-		mix.set_moles(gas_id_from_type(&args[0])?, vf);
+		mix.set_moles(gas_idx_from_value(&args[0])?, vf);
 		Ok(Value::null())
 	})
 }
@@ -234,7 +231,7 @@ fn _scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
 		let mut buffer = gas::gas_mixture::GasMixture::from_vol(gas::constants::CELL_VOLUME);
 		buffer.set_temperature(src_gas.get_temperature());
 		for idx in 1..gases_to_scrub.len() + 1 {
-			if let Ok(gas_id) = gas_id_from_type(&gases_to_scrub.get(idx).unwrap()) {
+			if let Ok(gas_id) = gas_idx_from_value(&gases_to_scrub.get(idx).unwrap()) {
 				buffer.set_moles(gas_id, removed.get_moles(gas_id));
 				removed.set_moles(gas_id, 0.0);
 			}

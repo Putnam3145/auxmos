@@ -39,7 +39,6 @@ dependencies = [
  "flume 0.9.2",
  "fxhash",
  "itertools",
- "lazy_static",
  "parking_lot",
  "rayon",
  "tinyvec",

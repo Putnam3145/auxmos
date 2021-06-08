@@ -195,7 +195,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 			break;
 		}
 		GasMixtures::with_all_mixtures(|all_mixtures| {
-			let turfs_to_save = TURF_GASES
+			let turfs_to_save = turf_gases()
 				/*
 					This uses the DashMap raw API to access the shards directly.
 					This allows for it to be parallelized much more efficiently
@@ -252,7 +252,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 									*/
 									let mut should_share = false;
 									for (j, loc) in adj_tiles {
-										if let Some(turf) = TURF_GASES.get(&loc) {
+										if let Some(turf) = turf_gases().get(&loc) {
 											if turf.simulation_level & SIMULATION_LEVEL_DISABLED
 												!= SIMULATION_LEVEL_DISABLED
 											{
@@ -285,7 +285,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 									// Obviously planetary atmos needs love too.
 									if let Some(planet_atmos_id) = m.planetary_atmos {
 										if let Some(planet_atmos_entry) =
-											PLANETARY_ATMOS.get(&planet_atmos_id)
+											planetary_atmos().get(&planet_atmos_id)
 										{
 											let planet_atmos = planet_atmos_entry.value();
 											if should_share
@@ -434,7 +434,7 @@ fn excited_group_processing(
 		if found_turfs.contains(&initial_turf) {
 			continue;
 		}
-		if let Some(initial_mix_ref) = TURF_GASES.get(&initial_turf) {
+		if let Some(initial_mix_ref) = turf_gases().get(&initial_turf) {
 			let mut border_turfs: VecDeque<(TurfID, TurfMixture)> = VecDeque::with_capacity(40);
 			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
 			let mut min_pressure = initial_mix_ref.return_pressure();
@@ -465,7 +465,7 @@ fn excited_group_processing(
 								continue;
 							}
 							found_turfs.insert(loc);
-							if let Some(border_mix) = TURF_GASES.get(&loc) {
+							if let Some(border_mix) = turf_gases().get(&loc) {
 								if border_mix.simulation_level & SIMULATION_LEVEL_DISABLED
 									!= SIMULATION_LEVEL_DISABLED
 								{
@@ -491,7 +491,7 @@ fn excited_group_processing(
 }
 
 fn post_process() {
-	TURF_GASES.shards().par_iter().for_each(|shard| {
+	turf_gases().shards().par_iter().for_each(|shard| {
 		let sender = byond_callback_sender();
 		GasMixtures::with_all_mixtures(|all_mixtures| {
 			let mut reacters = VecDeque::with_capacity(10);
@@ -506,7 +506,8 @@ fn post_process() {
 							!= SIMULATION_LEVEL_DISABLED
 					{
 						if let Some(planet_atmos_id) = m.planetary_atmos {
-							if let Some(planet_atmos_entry) = PLANETARY_ATMOS.get(&planet_atmos_id)
+							if let Some(planet_atmos_entry) =
+								planetary_atmos().get(&planet_atmos_id)
 							{
 								let planet_atmos = planet_atmos_entry.value();
 								if {
@@ -624,7 +625,7 @@ fn _process_heat_hook() {
 			let sender = byond_callback_sender();
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * time_delta;
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * time_delta;
-			TURF_TEMPERATURES
+			turf_temperatures()
 				/*
 					Same weird shard trick as above.
 				*/
@@ -645,7 +646,7 @@ fn _process_heat_hook() {
 								let mut heat_delta = 0.0;
 								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 								let mut is_temp_delta_with_air = false;
-								if let Some(m) = TURF_GASES.get(&i) {
+								if let Some(m) = turf_gases().get(&i) {
 									if m.simulation_level & SIMULATION_LEVEL_ANY > 0 {
 										GasMixtures::with_all_mixtures(|all_mixtures| {
 											if let Some(entry) = all_mixtures.get(m.mix) {
@@ -661,7 +662,7 @@ fn _process_heat_hook() {
 									}
 								}
 								for (_, loc) in adj_tiles {
-									if let Some(other) = TURF_TEMPERATURES.get(&loc) {
+									if let Some(other) = turf_temperatures().get(&loc) {
 										heat_delta +=
 											t.thermal_conductivity.min(other.thermal_conductivity)
 												* (other.temperature - t.temperature) * (t
@@ -704,8 +705,8 @@ fn _process_heat_hook() {
 				.collect::<Vec<_>>() // for consistency, unfortunately
 				.iter()
 				.for_each(|&(i, new_temp)| {
-					let t: &mut ThermalInfo = &mut TURF_TEMPERATURES.get_mut(&i).unwrap();
-					if let Some(m) = TURF_GASES.get(&i) {
+					let t: &mut ThermalInfo = &mut turf_temperatures().get_mut(&i).unwrap();
+					if let Some(m) = turf_gases().get(&i) {
 						if m.simulation_level != SIMULATION_LEVEL_NONE
 							&& m.simulation_level & SIMULATION_LEVEL_DISABLED
 								!= SIMULATION_LEVEL_DISABLED

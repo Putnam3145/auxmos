@@ -4,7 +4,7 @@ use std::cell::RefCell;
 
 use super::gas_mixture::GasMixture;
 
-use super::{gas_id_to_type, total_num_gases};
+use super::{gas_idx_to_id, total_num_gases};
 
 use core::cmp::Ordering;
 
@@ -102,7 +102,9 @@ impl Reaction {
 			.unwrap();
 		let mut min_gas_reqs: Vec<(u8, f32)> = Vec::new();
 		for i in 0..total_num_gases() {
-			if let Ok(gas_req) = min_reqs.get(&gas_id_to_type(i).unwrap()) {
+			if let Ok(gas_req) =
+				min_reqs.get(Value::from_string(&gas_idx_to_id(i).unwrap()).unwrap())
+			{
 				if let Ok(req_amount) = gas_req.as_number() {
 					min_gas_reqs.push((i, req_amount));
 				}
@@ -124,10 +126,8 @@ impl Reaction {
 			.as_number()
 			.ok();
 		let priority = reaction.get_number(byond_string!("priority")).unwrap();
-		use std::hash::Hasher;
-		let mut hasher = std::collections::hash_map::DefaultHasher::new();
-		hasher.write(reaction.get_string(byond_string!("id")).unwrap().as_bytes());
-		let string_id_hash = hasher.finish();
+		let string_id_hash =
+			fxhash::hash64(reaction.get_string(byond_string!("id")).unwrap().as_bytes());
 		let id = ReactionIdentifier {
 			string_id_hash,
 			priority,

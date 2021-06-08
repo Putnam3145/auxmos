@@ -481,7 +481,7 @@ impl GasMixture {
 				if gas >= &amt {
 					hasher.write(&[
 						i,
-						(FACTOR_GAS_VISIBLE_MAX * amt).min((gas / amt).ceil()) as u8,
+						(FACTOR_GAS_VISIBLE_MAX).min((gas / amt).ceil()) as u8,
 					]);
 				}
 			}

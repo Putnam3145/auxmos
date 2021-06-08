@@ -475,13 +475,13 @@ impl GasMixture {
 	/// A hashed representation of the visibility of a gas, so that it only needs to update vis when actually changed.
 	pub fn visibility_hash(&self) -> u64 {
 		use std::hash::Hasher;
-		let mut hasher = std::collections::hash_map::DefaultHasher::new();
+		let mut hasher: fxhash::FxHasher64 = Default::default();
 		for (&i, gas) in self.enumerate() {
 			if let Some(amt) = gas_visibility(i as usize) {
 				if gas >= &amt {
 					hasher.write(&[
 						i,
-						FACTOR_GAS_VISIBLE_MAX.min((gas / MOLES_GAS_VISIBLE_STEP).ceil()) as u8,
+						(FACTOR_GAS_VISIBLE_MAX * amt).min((gas / amt).ceil()) as u8,
 					]);
 				}
 			}

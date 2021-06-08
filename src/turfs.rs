@@ -137,7 +137,6 @@ fn check_and_update_vis_hash(id: TurfID, hash: u64) -> bool {
 	}
 }
 
-
 thread_local! {
 	// This is a terrible hack. Too bad!
 	static PLEASE_KEEP_REFCOUNTS: std::cell::RefCell<HashMap<TurfID, Value>> = std::cell::RefCell::new(HashMap::new());

@@ -359,6 +359,9 @@ fn _shut_down_gases() {
 	NEXT_GAS_IDS.with(|gas_ids| {
 		gas_ids.borrow_mut().clear();
 	});
+	GAS_ID_INFO.with(|gas_id_info| {
+		*gas_id_info.borrow_mut() = Default::default();
+	})
 }
 
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.

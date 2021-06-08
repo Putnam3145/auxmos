@@ -139,7 +139,9 @@ fn check_and_update_vis_hash(id: TurfID, hash: u64) -> bool {
 
 
 thread_local! {
+	// This is a terrible hack. Too bad!
 	static PLEASE_KEEP_REFCOUNTS: std::cell::RefCell<HashMap<TurfID, Value>> = std::cell::RefCell::new(HashMap::new());
+	// or: TEMPORARY, I HOPE HOPE HOPE
 }
 
 #[shutdown]
@@ -159,6 +161,7 @@ fn _hook_register_turf() {
 	if simulation_level < 0.0 {
 		let id = unsafe { src.raw.data.id };
 		TURF_GASES.remove(&id);
+		// this decrements the refcount, preventing a memory leak
 		PLEASE_KEEP_REFCOUNTS.with(|pls| {
 			pls.borrow_mut().remove(&id);
 		});
@@ -187,6 +190,7 @@ fn _hook_register_turf() {
 		}
 		let id = unsafe { src.raw.data.id };
 		TURF_GASES.insert(id, to_insert);
+		// this increments the refcount of the air--necessary to prevent it from being stomped on restart (?)
 		PLEASE_KEEP_REFCOUNTS.with(|pls| {
 			pls.borrow_mut().insert(id, air);
 		});

@@ -479,10 +479,7 @@ impl GasMixture {
 		for (&i, gas) in self.enumerate() {
 			if let Some(amt) = gas_visibility(i as usize) {
 				if gas >= &amt {
-					hasher.write(&[
-						i,
-						(FACTOR_GAS_VISIBLE_MAX).min((gas / amt).ceil()) as u8,
-					]);
+					hasher.write(&[i, (FACTOR_GAS_VISIBLE_MAX).min((gas / amt).ceil()) as u8]);
 				}
 			}
 		}

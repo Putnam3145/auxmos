@@ -67,8 +67,18 @@ impl PartialEq for Reaction {
 
 impl Eq for Reaction {}
 
+use std::collections::BTreeMap;
+
 thread_local! {
-	static REACTION_VALUES: RefCell<std::collections::BTreeMap<ReactionIdentifier,Value>> = RefCell::new(std::collections::BTreeMap::new())
+	// gotta be a BTreeMap for priorities
+	static REACTION_VALUES: RefCell<BTreeMap<ReactionIdentifier,Value>> = RefCell::new(BTreeMap::new())
+}
+
+#[shutdown]
+fn clean_up_reaction_values() {
+	REACTION_VALUES.with(|reaction_values| {
+		reaction_values.borrow_mut().clear();
+	})
 }
 
 pub fn react_by_id(id: ReactionIdentifier, src: &Value, holder: &Value) -> DMResult {

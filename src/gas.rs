@@ -190,58 +190,58 @@ fn _init_gas_mixtures() -> Result<(), String> {
 }
 
 impl GasMixtures {
-	pub fn with_all_mixtures<T, F>(mut f: F) -> T
+	pub fn with_all_mixtures<T, F>(f: F) -> T
 	where
-		F: FnMut(&Vec<RwLock<GasMixture>>) -> T,
+		F: FnOnce(&Vec<RwLock<GasMixture>>) -> T,
 	{
 		f(&GAS_MIXTURES.read().as_ref().unwrap())
 	}
-	fn with_gas_mixture<T, F>(id: f32, mut f: F) -> Result<T, Runtime>
+	fn with_gas_mixture<T, F>(id: usize, f: F) -> Result<T, Runtime>
 	where
-		F: FnMut(&GasMixture) -> Result<T, Runtime>,
+		F: FnOnce(&GasMixture) -> Result<T, Runtime>,
 	{
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
 		let mix = gas_mixtures
-			.get(id.to_bits() as usize)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?
+			.get(id)
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id))?
 			.read();
 		f(&mix)
 	}
-	fn with_gas_mixture_mut<T, F>(id: f32, mut f: F) -> Result<T, Runtime>
+	fn with_gas_mixture_mut<T, F>(id: usize, f: F) -> Result<T, Runtime>
 	where
-		F: FnMut(&mut GasMixture) -> Result<T, Runtime>,
+		F: FnOnce(&mut GasMixture) -> Result<T, Runtime>,
 	{
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
 		let mut mix = gas_mixtures
-			.get(id.to_bits() as usize)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id.to_bits()))?
+			.get(id)
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id))?
 			.write();
 		f(&mut mix)
 	}
-	fn with_gas_mixtures<T, F>(src: f32, arg: f32, mut f: F) -> Result<T, Runtime>
+	fn with_gas_mixtures<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
-		F: FnMut(&GasMixture, &GasMixture) -> Result<T, Runtime>,
+		F: FnOnce(&GasMixture, &GasMixture) -> Result<T, Runtime>,
 	{
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
 		let src_gas = gas_mixtures
-			.get(src.to_bits() as usize)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src.to_bits()))?
+			.get(src)
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?
 			.read();
 		let arg_gas = gas_mixtures
-			.get(arg.to_bits() as usize)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg.to_bits()))?
+			.get(arg)
+			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?
 			.read();
 		f(&src_gas, &arg_gas)
 	}
-	fn with_gas_mixtures_mut<T, F>(src: f32, arg: f32, mut f: F) -> Result<T, Runtime>
+	fn with_gas_mixtures_mut<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
-		F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<T, Runtime>,
+		F: FnOnce(&mut GasMixture, &mut GasMixture) -> Result<T, Runtime>,
 	{
-		let src = src.to_bits() as usize;
-		let arg = arg.to_bits() as usize;
+		let src = src;
+		let arg = arg;
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
 		if src == arg {
@@ -265,12 +265,12 @@ impl GasMixtures {
 			)
 		}
 	}
-	fn with_gas_mixtures_custom<T, F>(src: f32, arg: f32, mut f: F) -> Result<T, Runtime>
+	fn with_gas_mixtures_custom<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
-		F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
+		F: FnOnce(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
 	{
-		let src = src.to_bits() as usize;
-		let arg = arg.to_bits() as usize;
+		let src = src;
+		let arg = arg;
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
 		if src == arg {
@@ -287,6 +287,35 @@ impl GasMixtures {
 					.get(arg)
 					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?,
 			)
+		}
+	}
+	/// Makes a new living gas mixture and returns the index to it. Returns None if an allocation must happen.
+	pub fn try_push(vol: f32) -> Option<usize> {
+		if let Some(idx) = {
+			let mut next_gas_ids = NEXT_GAS_IDS.write();
+			next_gas_ids.as_mut().unwrap().pop()
+		} {
+			GAS_MIXTURES
+				.read()
+				.as_ref()
+				.unwrap()
+				.get(idx)
+				.unwrap()
+				.write()
+				.clear_with_vol(vol);
+			Some(idx)
+		} else if {
+			let lock = GAS_MIXTURES.read();
+			let g = lock.as_ref().unwrap();
+			g.len() == g.capacity()
+		} {
+			let mut lock = GAS_MIXTURES.write();
+			let g = lock.as_mut().unwrap();
+			let idx = g.len();
+			g.push(RwLock::new(GasMixture::from_vol(vol)));
+			Some(idx)
+		} else {
+			None
 		}
 	}
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
@@ -355,7 +384,8 @@ where
 	F: FnMut(&GasMixture) -> Result<T, Runtime>,
 {
 	GasMixtures::with_gas_mixture(
-		mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
+		mix.get_number(byond_string!("_extools_pointer_gasmixture"))?
+			.to_bits() as usize,
 		f,
 	)
 }
@@ -366,7 +396,8 @@ where
 	F: FnMut(&mut GasMixture) -> Result<T, Runtime>,
 {
 	GasMixtures::with_gas_mixture_mut(
-		mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
+		mix.get_number(byond_string!("_extools_pointer_gasmixture"))?
+			.to_bits() as usize,
 		f,
 	)
 }
@@ -377,8 +408,12 @@ where
 	F: FnMut(&GasMixture, &GasMixture) -> Result<T, Runtime>,
 {
 	GasMixtures::with_gas_mixtures(
-		src_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
-		arg_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
+		src_mix
+			.get_number(byond_string!("_extools_pointer_gasmixture"))?
+			.to_bits() as usize,
+		arg_mix
+			.get_number(byond_string!("_extools_pointer_gasmixture"))?
+			.to_bits() as usize,
 		f,
 	)
 }
@@ -389,8 +424,12 @@ where
 	F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<T, Runtime>,
 {
 	GasMixtures::with_gas_mixtures_mut(
-		src_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
-		arg_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
+		src_mix
+			.get_number(byond_string!("_extools_pointer_gasmixture"))?
+			.to_bits() as usize,
+		arg_mix
+			.get_number(byond_string!("_extools_pointer_gasmixture"))?
+			.to_bits() as usize,
 		f,
 	)
 }
@@ -401,8 +440,12 @@ where
 	F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
 {
 	GasMixtures::with_gas_mixtures_custom(
-		src_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
-		arg_mix.get_number(byond_string!("_extools_pointer_gasmixture"))?,
+		src_mix
+			.get_number(byond_string!("_extools_pointer_gasmixture"))?
+			.to_bits() as usize,
+		arg_mix
+			.get_number(byond_string!("_extools_pointer_gasmixture"))?
+			.to_bits() as usize,
 		f,
 	)
 }

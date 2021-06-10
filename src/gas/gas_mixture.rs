@@ -126,12 +126,12 @@ impl GasMixture {
 	}
 	/// Returns if any data is corrupt.
 	pub fn is_corrupt(&self) -> bool {
-		self.mole_ids.iter().any(|&i| i > total_num_gases())
-			|| self.moles.iter().any(|amt| !amt.is_normal())
+		!self.temperature.is_normal()
+			|| self.mole_ids.len() != self.moles.len()
+			|| self.mole_ids.len() != self.heat_capacities.len()
+			|| self.mole_ids.iter().any(|&i| i > total_num_gases())
+			|| self.moles.iter().any(|amt| !amt.is_finite())
 			|| self.heat_capacities.iter().any(|cap| !cap.is_normal())
-			|| !self.temperature.is_normal()
-			|| (self.mole_ids.len() != self.moles.len())
-			|| (self.mole_ids.len() != self.heat_capacities.len())
 	}
 	/// Fixes any corruption found.
 	pub fn fix_corruption(&mut self) {
@@ -293,8 +293,6 @@ impl GasMixture {
 		removed.copy_from_mutable(self);
 		removed.multiply(ratio);
 		self.multiply(1.0 - ratio);
-		self.garbage_collect();
-		removed.garbage_collect();
 		removed
 	}
 	/// As remove_ratio, but a raw number of moles instead of a ratio.
@@ -434,6 +432,7 @@ impl GasMixture {
 			for amt in self.moles.iter_mut() {
 				*amt *= multiplier;
 			}
+			self.garbage_collect();
 			self.cached_heat_capacity
 				.set(Some(self.heat_capacity() * multiplier)); // hax
 		}

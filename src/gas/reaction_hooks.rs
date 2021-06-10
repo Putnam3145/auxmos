@@ -67,6 +67,7 @@ fn _plasma_fire(byond_air: &Value, holder: &Value) {
 			let new_temp = (initial_energy + plasma_burn_rate * FIRE_PLASMA_ENERGY_RELEASED)
 				/ air.heat_capacity();
 			air.set_temperature(new_temp);
+			air.garbage_collect();
 			Ok(new_temp)
 		})?;
 		let cached_results = byond_air.get_list(byond_string!("reaction_results"))?;
@@ -118,6 +119,7 @@ fn tritfire(byond_air: &Value, holder: &Value) {
 		let energy_released = FIRE_HYDROGEN_ENERGY_RELEASED * burned_fuel;
 		let new_temp = (initial_energy + energy_released) / air.heat_capacity();
 		air.set_temperature(new_temp);
+		air.garbage_collect();
 		Ok((burned_fuel, energy_released, new_temp))
 	})?;
 	if burned_fuel > TRITIUM_MINIMUM_RADIATION_FACTOR {
@@ -222,6 +224,7 @@ fn fusion(byond_air: Value, holder: Value) {
 			if reaction_energy != 0.0 {
 				air.set_temperature((initial_energy + reaction_energy) / air.heat_capacity());
 			}
+			air.garbage_collect();
 			Ok(())
 		})?;
 		if reaction_energy != 0.0 {

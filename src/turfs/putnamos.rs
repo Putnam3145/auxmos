@@ -83,7 +83,15 @@ fn explosively_depressurize(
 	}
 	let hpd = auxtools::Value::globals()
 		.get(byond_string!("SSAir"))?
-		.get_list(byond_string!("high_pressure_delta"))?;
+		.get_list(byond_string!("high_pressure_delta"))
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-list value as list {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 	for (i, m) in progression_order.iter().rev() {
 		let cur_orig = adjacency_info.get(i).unwrap();
 		let mut cur_info = cur_orig.get();

@@ -169,7 +169,14 @@ fn check_and_update_vis_hash(id: TurfID, hash: u64) -> bool {
 
 #[hook("/turf/proc/update_air_ref")]
 fn _hook_register_turf() {
-	let simulation_level = args[0].as_number()?;
+	let simulation_level = args[0].as_number().map_err(|_| {
+		runtime!(
+			"Attempt to interpret non-number value as number {} {}:{}",
+			std::file!(),
+			std::line!(),
+			std::column!()
+		)
+	})?;
 	if simulation_level < 0.0 {
 		turf_gases().remove(&unsafe { src.raw.data.id });
 		Ok(Value::null())
@@ -177,9 +184,24 @@ fn _hook_register_turf() {
 		let mut to_insert: TurfMixture = Default::default();
 		let air = src.get(byond_string!("air"))?;
 		to_insert.mix = air
-			.get_number(byond_string!("_extools_pointer_gasmixture"))?
+			.get_number(byond_string!("_extools_pointer_gasmixture"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})?
 			.to_bits() as usize;
-		to_insert.simulation_level = args[0].as_number()? as u8;
+		to_insert.simulation_level = args[0].as_number().map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})? as u8;
 		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
 			if is_planet != 0.0 {
 				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
@@ -220,11 +242,45 @@ fn _hook_turf_update_temp() {
 				adjacency: NORTH | SOUTH | WEST | EAST,
 				adjacent_to_space: false,
 			});
-		entry.thermal_conductivity = src.get_number(byond_string!("thermal_conductivity"))?;
-		entry.heat_capacity = src.get_number(byond_string!("heat_capacity"))?;
+		entry.thermal_conductivity = src
+			.get_number(byond_string!("thermal_conductivity"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})?;
+		entry.heat_capacity = src
+			.get_number(byond_string!("heat_capacity"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})?;
 		entry.adjacency = NORTH | SOUTH | WEST | EAST;
-		entry.adjacent_to_space = args[0].as_number()? != 0.0;
-		entry.temperature = src.get_number(byond_string!("initial_temperature"))?;
+		entry.adjacent_to_space = args[0].as_number().map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})? != 0.0;
+		entry.temperature = src
+			.get_number(byond_string!("initial_temperature"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})?;
 	} else {
 		turf_temperatures().remove(&unsafe { src.raw.data.id });
 	}
@@ -235,7 +291,14 @@ fn _hook_turf_update_temp() {
 fn _hook_sleep() {
 	let arg = if let Some(arg_get) = args.get(0) {
 		// null is falsey in byond so
-		arg_get.as_number()?
+		arg_get.as_number().map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?
 	} else {
 		0.0
 	};
@@ -260,7 +323,17 @@ fn _hook_adjacent_turfs() {
 	if let Ok(adjacent_list) = src.get_list(byond_string!("atmos_adjacent_turfs")) {
 		let mut adjacency = 0;
 		for i in 1..adjacent_list.len() + 1 {
-			adjacency |= adjacent_list.get(&adjacent_list.get(i)?)?.as_number()? as i8;
+			adjacency |= adjacent_list
+				.get(&adjacent_list.get(i)?)?
+				.as_number()
+				.map_err(|_| {
+					runtime!(
+						"Attempt to interpret non-number value as number {} {}:{}",
+						std::file!(),
+						std::line!(),
+						std::column!()
+					)
+				})? as i8;
 		}
 		turf_gases()
 			.entry(unsafe { src.raw.data.id })
@@ -316,7 +389,15 @@ fn _hook_set_temperature() {
 	let argument = args
 		.get(0)
 		.ok_or_else(|| runtime!("Invalid argument count to turf temperature set: 0"))?
-		.as_number()?;
+		.as_number()
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 	turf_temperatures()
 		.entry(unsafe { src.raw.data.id })
 		.and_modify(|turf| {

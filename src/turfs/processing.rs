@@ -35,7 +35,15 @@ fn _finish_process_turfs() {
 	let arg_limit = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf finishing: 0"))?
-		.as_number()?;
+		.as_number()
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 	let processing_callbacks_unfinished = process_callbacks_for_millis(arg_limit as u64);
 	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
 	let processing_turfs_unfinished = PROCESSING_TURF_STEP.compare_exchange(
@@ -57,22 +65,82 @@ fn _process_turf_hook() {
 	let resumed = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 0"))?
-		.as_number()?
-		== 1.0;
+		.as_number()
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})? == 1.0;
 	#[allow(unused_variables)]
 	if !resumed && PROCESSING_TURF_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
 		// Don't want to start it while there's already a thread running, so we only start it if it hasn't been started.
 		let fdm_max_steps = src
 			.get_number(byond_string!("share_max_steps"))
 			.unwrap_or_else(|_| 1.0) as i32;
-		let equalize_turf_limit = src.get_number(byond_string!("equalize_turf_limit"))? as usize;
-		let equalize_hard_turf_limit =
-			src.get_number(byond_string!("equalize_hard_turf_limit"))? as usize;
+		let equalize_turf_limit = src
+			.get_number(byond_string!("equalize_turf_limit"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})? as usize;
+		let equalize_hard_turf_limit = src
+			.get_number(byond_string!("equalize_hard_turf_limit"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})? as usize;
 		let equalize_enabled = cfg!(feature = "equalization")
-			&& src.get_number(byond_string!("equalize_enabled"))? != 0.0;
-		let group_pressure_goal = src.get_number(byond_string!("excited_group_pressure_goal"))?;
-		let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
-		let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
+			&& src
+				.get_number(byond_string!("equalize_enabled"))
+				.map_err(|_| {
+					runtime!(
+						"Attempt to interpret non-number value as number {} {}:{}",
+						std::file!(),
+						std::line!(),
+						std::column!()
+					)
+				})? != 0.0;
+		let group_pressure_goal = src
+			.get_number(byond_string!("excited_group_pressure_goal"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})?;
+		let max_x = auxtools::Value::world()
+			.get_number(byond_string!("maxx"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})? as i32;
+		let max_y = auxtools::Value::world()
+			.get_number(byond_string!("maxy"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})? as i32;
 		rayon::spawn(move || {
 			PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
 			let sender = byond_callback_sender();
@@ -83,7 +151,15 @@ fn _process_turf_hook() {
 				let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
 				let _ = sender.try_send(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-					let prev_cost = ssair.get_number(byond_string!("cost_turfs"))?;
+					let prev_cost =
+						ssair.get_number(byond_string!("cost_turfs")).map_err(|_| {
+							runtime!(
+								"Attempt to interpret non-number value as number {} {}:{}",
+								std::file!(),
+								std::line!(),
+								std::column!()
+							)
+						})?;
 					ssair.set(
 						byond_string!("cost_turfs"),
 						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
@@ -104,7 +180,17 @@ fn _process_turf_hook() {
 				let bench = start_time.elapsed().as_millis();
 				let _ = sender.try_send(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-					let prev_cost = ssair.get_number(byond_string!("cost_groups"))?;
+					let prev_cost =
+						ssair
+							.get_number(byond_string!("cost_groups"))
+							.map_err(|_| {
+								runtime!(
+									"Attempt to interpret non-number value as number {} {}:{}",
+									std::file!(),
+									std::line!(),
+									std::column!()
+								)
+							})?;
 					ssair.set(
 						byond_string!("cost_groups"),
 						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
@@ -147,7 +233,17 @@ fn _process_turf_hook() {
 				let bench = start_time.elapsed().as_millis();
 				let _ = sender.try_send(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-					let prev_cost = ssair.get_number(byond_string!("cost_equalize"))?;
+					let prev_cost =
+						ssair
+							.get_number(byond_string!("cost_equalize"))
+							.map_err(|_| {
+								runtime!(
+									"Attempt to interpret non-number value as number {} {}:{}",
+									std::file!(),
+									std::line!(),
+									std::column!()
+								)
+							})?;
 					ssair.set(
 						byond_string!("cost_equalize"),
 						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
@@ -165,7 +261,16 @@ fn _process_turf_hook() {
 				let bench = start_time.elapsed().as_millis();
 				let _ = sender.try_send(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-					let prev_cost = ssair.get_number(byond_string!("cost_post_process"))?;
+					let prev_cost = ssair
+						.get_number(byond_string!("cost_post_process"))
+						.map_err(|_| {
+							runtime!(
+								"Attempt to interpret non-number value as number {} {}:{}",
+								std::file!(),
+								std::line!(),
+								std::column!()
+							)
+						})?;
 					ssair.set(
 						byond_string!("cost_post_process"),
 						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
@@ -212,6 +317,59 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 					shard
 						.read()
 						.iter()
+						.filter(|(&i, m_v)| {
+							let m = *m_v.get();
+							let adj = m.adjacency;
+							if m.simulation_level > SIMULATION_LEVEL_NONE
+								&& adj > 0 && (m.simulation_level & SIMULATION_LEVEL_DISABLED
+								!= SIMULATION_LEVEL_DISABLED)
+							{
+								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
+								if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
+									if gas.is_corrupt() {
+										return false;
+									}
+									for (_, loc) in adj_tiles {
+										if let Some(turf) = turf_gases().get(&loc) {
+											if turf.simulation_level & SIMULATION_LEVEL_DISABLED
+												!= SIMULATION_LEVEL_DISABLED
+											{
+												if let Some(entry) = all_mixtures.get(turf.mix) {
+													if let Some(mix) = entry.try_read() {
+														if mix.is_corrupt() {
+															continue;
+														}
+														if gas.temperature_compare(&mix)
+															|| gas.compare(&mix)
+																> MINIMUM_MOLES_DELTA_TO_MOVE
+														{
+															return true;
+														}
+													} else {
+														return false;
+													}
+												}
+											}
+										}
+									}
+									// Obviously planetary atmos needs love too.
+									if let Some(planet_atmos_id) = m.planetary_atmos {
+										if let Some(planet_atmos_entry) =
+											planetary_atmos().get(&planet_atmos_id)
+										{
+											let planet_atmos = planet_atmos_entry.value();
+											if gas.temperature_compare(&planet_atmos)
+												|| gas.compare(&planet_atmos)
+													> MINIMUM_MOLES_DELTA_TO_MOVE
+											{
+												return true;
+											}
+										}
+									}
+								}
+							}
+							false
+						})
 						.filter_map(|(&i, m_v)| {
 							// m_v is a SharedValue<TurfMixture>. Need to use get() on it to get the original.
 							// It's dereferenced to copy it. m_v is Copy, so this is reasonably fast.
@@ -229,101 +387,74 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 							{
 								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 								let mut adj_amount = 0;
-								if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
-									/*
-										Getting write locks is potential danger zone,
-										so we make sure we don't do that unless we
-										absolutely need to. Saving is fast enough.
-									*/
-									if gas.is_corrupt() {
-										return None;
-									}
-									let mut end_gas = GasMixture::from_vol(2500.0);
-									let mut pressure_diffs: [(TurfID, f32); 6] = Default::default();
-									/*
-										The pressure here is negative
-										because we're going to be adding it
-										to the base turf's pressure later on.
-										It's multiplied by the diffusion constant
-										because it's not representing the total
-										gas pressure difference but the force exerted
-										due to the pressure gradient.
-										Technically that's ρν², but, like, video games.
-									*/
-									let mut should_share = false;
-									for (j, loc) in adj_tiles {
-										if let Some(turf) = turf_gases().get(&loc) {
-											if turf.simulation_level & SIMULATION_LEVEL_DISABLED
-												!= SIMULATION_LEVEL_DISABLED
-											{
-												if let Some(entry) = all_mixtures.get(turf.mix) {
-													if let Some(mix) = entry.try_read() {
-														if mix.is_corrupt() {
-															continue;
-														}
-														end_gas.merge(&mix);
-														adj_amount += 1;
-														pressure_diffs[j as usize] = (
-															loc,
-															-mix.return_pressure()
-																* GAS_DIFFUSION_CONSTANT,
-														);
-														if !should_share
-															&& gas.temperature_compare(&mix) || gas
-															.compare(&mix)
-															> MINIMUM_MOLES_DELTA_TO_MOVE
-														{
-															should_share = true;
-														}
-													} else {
-														return None;
+								/*
+									Getting write locks is potential danger zone,
+									so we make sure we don't do that unless we
+									absolutely need to. Saving is fast enough.
+								*/
+								let mut end_gas = GasMixture::from_vol(2500.0);
+								let mut pressure_diffs: [(TurfID, f32); 6] = Default::default();
+								/*
+									The pressure here is negative
+									because we're going to be adding it
+									to the base turf's pressure later on.
+									It's multiplied by the diffusion constant
+									because it's not representing the total
+									gas pressure difference but the force exerted
+									due to the pressure gradient.
+									Technically that's ρν², but, like, video games.
+								*/
+								for (j, loc) in adj_tiles {
+									if let Some(turf) = turf_gases().get(&loc) {
+										if turf.simulation_level & SIMULATION_LEVEL_DISABLED
+											!= SIMULATION_LEVEL_DISABLED
+										{
+											if let Some(entry) = all_mixtures.get(turf.mix) {
+												if let Some(mix) = entry.try_read() {
+													if mix.is_corrupt() {
+														continue;
 													}
+													end_gas.merge(&mix);
+													adj_amount += 1;
+													pressure_diffs[j as usize] = (
+														loc,
+														-mix.return_pressure()
+															* GAS_DIFFUSION_CONSTANT,
+													);
+												} else {
+													return None;
 												}
 											}
 										}
 									}
-									// Obviously planetary atmos needs love too.
-									if let Some(planet_atmos_id) = m.planetary_atmos {
-										if let Some(planet_atmos_entry) =
-											planetary_atmos().get(&planet_atmos_id)
-										{
-											let planet_atmos = planet_atmos_entry.value();
-											if should_share
-												|| gas.temperature_compare(&planet_atmos) || gas
-												.compare(&planet_atmos)
-												> MINIMUM_MOLES_DELTA_TO_MOVE
-											{
-												end_gas.merge(&planet_atmos);
-												adj_amount += 1;
-												should_share = true;
-											}
-										}
-									}
-									/*
-										This method of simulating diffusion
-										diverges at coefficients that are
-										larger than the inverse of the number
-										of adjacent finite elements.
-										As such, we must multiply it
-										by a coefficient that is at most
-										as big as this coefficient. The
-										GAS_DIFFUSION_CONSTANT chosen here
-										is 1/8, chosen both because it is
-										smaller than 1/7 and because, in
-										floats, 1/8 is exact and so are
-										all multiples of it up to 1.
-										(Technically up to 2,097,152,
-										but I digress.)
-									*/
-									if should_share {
-										end_gas.multiply(GAS_DIFFUSION_CONSTANT);
-										Some((i, m, end_gas, pressure_diffs, adj_amount))
-									} else {
-										None
-									}
-								} else {
-									None
 								}
+								if let Some(planet_atmos_id) = m.planetary_atmos {
+									if let Some(planet_atmos_entry) =
+										planetary_atmos().get(&planet_atmos_id)
+									{
+										let planet_atmos = planet_atmos_entry.value();
+										end_gas.merge(&planet_atmos);
+										adj_amount += 1;
+									}
+								}
+								/*
+									This method of simulating diffusion
+									diverges at coefficients that are
+									larger than the inverse of the number
+									of adjacent finite elements.
+									As such, we must multiply it
+									by a coefficient that is at most
+									as big as this coefficient. The
+									GAS_DIFFUSION_CONSTANT chosen here
+									is 1/8, chosen both because it is
+									smaller than 1/7 and because, in
+									floats, 1/8 is exact and so are
+									all multiples of it up to 1.
+									(Technically up to 2,097,152,
+									but I digress.)
+								*/
+								end_gas.multiply(GAS_DIFFUSION_CONSTANT);
+								Some((i, m, end_gas, pressure_diffs, adj_amount))
 							} else {
 								None
 							}
@@ -386,34 +517,37 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 				.partition(|&(_, _, max_diff)| max_diff <= 5.0);
 			if cur_count == 1 {
 				let pressure_deltas_chunked = high_pressure.par_chunks(20).collect::<Vec<_>>();
-				pressure_deltas_chunked.par_iter().for_each(|temp_value| {
-					let sender = byond_callback_sender();
-					let these_pressure_deltas = temp_value.iter().copied().collect::<Vec<_>>();
-					let _ = sender.try_send(Box::new(move || {
-						for &(turf_id, pressure_diffs, _) in
-							these_pressure_deltas.iter().filter(|&(id, _, _)| *id != 0)
-						{
-							let turf = unsafe { Value::turf_by_id_unchecked(turf_id) };
-							for &(id, diff) in pressure_diffs.iter() {
-								if id != 0 {
-									let enemy_tile = unsafe { Value::turf_by_id_unchecked(id) };
-									if diff > 5.0 {
-										turf.call(
-											"consider_pressure_difference",
-											&[&enemy_tile, &Value::from(diff)],
-										)?;
-									} else if diff < -5.0 {
-										enemy_tile.call(
-											"consider_pressure_difference",
-											&[&turf.clone(), &Value::from(-diff)],
-										)?;
+				pressure_deltas_chunked
+					.par_iter()
+					.with_min_len(5)
+					.for_each(|temp_value| {
+						let sender = byond_callback_sender();
+						let these_pressure_deltas = temp_value.iter().copied().collect::<Vec<_>>();
+						let _ = sender.try_send(Box::new(move || {
+							for &(turf_id, pressure_diffs, _) in
+								these_pressure_deltas.iter().filter(|&(id, _, _)| *id != 0)
+							{
+								let turf = unsafe { Value::turf_by_id_unchecked(turf_id) };
+								for &(id, diff) in pressure_diffs.iter() {
+									if id != 0 {
+										let enemy_tile = unsafe { Value::turf_by_id_unchecked(id) };
+										if diff > 5.0 {
+											turf.call(
+												"consider_pressure_difference",
+												&[&enemy_tile, &Value::from(diff)],
+											)?;
+										} else if diff < -5.0 {
+											enemy_tile.call(
+												"consider_pressure_difference",
+												&[&turf.clone(), &Value::from(-diff)],
+											)?;
+										}
 									}
 								}
 							}
-						}
-						Ok(Value::null())
-					}));
-				});
+							Ok(Value::null())
+						}));
+					});
 			}
 			high_pressure_turfs.extend(high_pressure.iter().map(|(i, _, _)| i));
 			low_pressure_turfs.extend(low_pressure.iter().map(|(i, _, _)| i));
@@ -490,7 +624,24 @@ fn excited_group_processing(
 	found_turfs.len()
 }
 
+static mut PLANET_RESET_TIMER: Option<Instant> = None;
+
 fn post_process() {
+	let should_check_planet_turfs = unsafe {
+		if let Some(timer) = PLANET_RESET_TIMER.as_mut() {
+			if timer.elapsed() > Duration::from_secs(5) {
+				*timer = Instant::now();
+				true
+			} else {
+				false
+			}
+		} else {
+			PLANET_RESET_TIMER = Some(Instant::now());
+			false
+		}
+	};
+	let vis_vec = crate::gas::visibility_copies();
+	let vis = vis_vec.as_slice();
 	turf_gases().shards().par_iter().for_each(|shard| {
 		let sender = byond_callback_sender();
 		GasMixtures::with_all_mixtures(|all_mixtures| {
@@ -505,29 +656,33 @@ fn post_process() {
 						&& m.simulation_level & SIMULATION_LEVEL_DISABLED
 							!= SIMULATION_LEVEL_DISABLED
 					{
-						if let Some(planet_atmos_id) = m.planetary_atmos {
-							if let Some(planet_atmos_entry) =
-								planetary_atmos().get(&planet_atmos_id)
-							{
-								let planet_atmos = planet_atmos_entry.value();
-								if {
-									if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
-										let comparison = gas.compare(planet_atmos);
-										comparison < 1.0 && comparison > 0.0
-									} else {
-										false
-									}
-								} {
-									if let Some(mut gas) =
-										all_mixtures.get(m.mix).unwrap().try_write()
-									{
-										gas.copy_from_mutable(planet_atmos);
+						if should_check_planet_turfs {
+							if let Some(planet_atmos_id) = m.planetary_atmos {
+								if let Some(planet_atmos_entry) =
+									planetary_atmos().get(&planet_atmos_id)
+								{
+									let planet_atmos = planet_atmos_entry.value();
+									if {
+										if let Some(gas) =
+											all_mixtures.get(m.mix).unwrap().try_read()
+										{
+											let comparison = gas.compare(planet_atmos);
+											comparison < 1.0 && comparison > 0.0
+										} else {
+											false
+										}
+									} {
+										if let Some(mut gas) =
+											all_mixtures.get(m.mix).unwrap().try_write()
+										{
+											gas.copy_from_mutable(planet_atmos);
+										}
 									}
 								}
 							}
 						}
 						if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
-							let visibility = gas.visibility_hash();
+							let visibility = gas.visibility_hash(vis);
 							let should_update_visuals = check_and_update_vis_hash(i, visibility);
 							let reactable = gas.can_react();
 							if should_update_visuals || reactable {
@@ -617,9 +772,34 @@ fn _process_heat_hook() {
 			turf tiles are 1 meter^2 anyway--the atmos subsystem
 			does this in general, thus turf gas mixtures being 2.5 m^3.
 		*/
-		let time_delta = (src.get_number(byond_string!("wait"))? / 10.0) as f64;
-		let max_x = auxtools::Value::world().get_number(byond_string!("maxx"))? as i32;
-		let max_y = auxtools::Value::world().get_number(byond_string!("maxy"))? as i32;
+		let time_delta = (src.get_number(byond_string!("wait")).map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})? / 10.0) as f64;
+		let max_x = auxtools::Value::world()
+			.get_number(byond_string!("maxx"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})? as i32;
+		let max_y = auxtools::Value::world()
+			.get_number(byond_string!("maxy"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})? as i32;
 		rayon::spawn(move || {
 			let start_time = Instant::now();
 			let sender = byond_callback_sender();
@@ -758,7 +938,15 @@ fn _process_heat_hook() {
 	let arg_limit = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to heat processing: 0"))?
-		.as_number()?;
+		.as_number()
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 	Ok(Value::from(process_callbacks_for_millis(arg_limit as u64)))
 }
 

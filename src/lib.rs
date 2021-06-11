@@ -87,8 +87,7 @@ fn _remove_ratio_hook() {
 		Err(runtime!("remove_ratio called with fewer than 2 arguments"))
 	} else {
 		with_mixes_mut(src, &args[0], |src_mix, into_mix| {
-			into_mix
-				.copy_from_mutable(&src_mix.remove_ratio(args[1].as_number().unwrap_or_default()));
+			src_mix.remove_ratio_into(args[1].as_number().unwrap_or_default(), into_mix);
 			Ok(Value::null())
 		})
 	}
@@ -100,7 +99,7 @@ fn _remove_hook() {
 		Err(runtime!("remove called with fewer than 2 arguments"))
 	} else {
 		with_mixes_mut(src, &args[0], |src_mix, into_mix| {
-			into_mix.copy_from_mutable(&src_mix.remove(args[1].as_number().unwrap_or_default()));
+			src_mix.remove_into(args[1].as_number().unwrap_or_default(), into_mix);
 			Ok(Value::null())
 		})
 	}
@@ -144,7 +143,7 @@ fn _get_gases_hook() {
 	with_mix(src, |mix| {
 		let gases_list: List = List::new();
 		for gas in mix.get_gases() {
-			gases_list.append(Value::from_string(&gas_idx_to_id(*gas)?)?);
+			gases_list.append(Value::from_string(&*gas_idx_to_id(*gas)?)?);
 		}
 		Ok(Value::from(gases_list))
 	})
@@ -155,7 +154,15 @@ fn _set_temperature_hook() {
 	let v = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong amount of arguments for set_temperature: 0!"))?
-		.as_number()?;
+		.as_number()
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 	if !v.is_finite() {
 		Err(runtime!(
 			"Attempted to set a temperature to a number that is NaN or infinite."
@@ -187,7 +194,14 @@ fn _set_volume_hook() {
 		Err(runtime!("Attempted to set volume to nothing."))
 	} else {
 		with_mix_mut(src, |mix| {
-			mix.volume = args[0].as_number()?;
+			mix.volume = args[0].as_number().map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})?;
 			Ok(Value::null())
 		})
 	}
@@ -222,22 +236,43 @@ fn _set_moles_hook() {
 	})
 }
 
+#[hook("/datum/gas_mixture/proc/adjust_moles")]
+fn _adjust_moles_hook(id_val: Value, num_val: Value) {
+	let vf = num_val.as_number().unwrap_or_default();
+	with_mix_mut(src, |mix| {
+		mix.adjust_moles(gas_idx_from_value(&id_val)?, vf);
+		Ok(Value::null())
+	})
+}
+
 #[hook("/datum/gas_mixture/proc/scrub_into")]
 fn _scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
-	let ratio = ratio_v.as_number()?;
+	let ratio = ratio_v.as_number().map_err(|_| {
+		runtime!(
+			"Attempt to interpret non-number value as number {} {}:{}",
+			std::file!(),
+			std::line!(),
+			std::column!()
+		)
+	})?;
+	let gases_to_scrub = gas_list.as_list().map_err(|_| {
+		runtime!(
+			"Attempt to interpret non-list value as list {} {}:{}",
+			std::file!(),
+			std::line!(),
+			std::column!()
+		)
+	})?;
 	with_mixes_mut(src, into, |src_gas, dest_gas| {
-		let mut removed = src_gas.remove_ratio(ratio);
-		let gases_to_scrub = gas_list.as_list()?;
-		let mut buffer = gas::gas_mixture::GasMixture::from_vol(gas::constants::CELL_VOLUME);
-		buffer.set_temperature(src_gas.get_temperature());
 		for idx in 1..gases_to_scrub.len() + 1 {
 			if let Ok(gas_id) = gas_idx_from_value(&gases_to_scrub.get(idx).unwrap()) {
-				buffer.set_moles(gas_id, removed.get_moles(gas_id));
-				removed.set_moles(gas_id, 0.0);
+				let amt = src_gas.get_moles(gas_id) * ratio;
+				if amt >= GAS_MIN_MOLES {
+					dest_gas.adjust_moles(gas_id, amt);
+					src_gas.adjust_moles(gas_id, -amt);
+				}
 			}
 		}
-		dest_gas.merge(&buffer);
-		src_gas.merge(&removed);
 		Ok(Value::from(true))
 	})
 }
@@ -294,7 +329,9 @@ fn _react_hook() {
 	let holder = args.first().unwrap_or(&n);
 	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
 	for reaction in reactions {
-		ret |= react_by_id(reaction, src, holder)?.as_number()? as i32;
+		ret |= react_by_id(reaction, src, holder)?
+			.as_number()
+			.unwrap_or_default() as i32;
 		if ret & STOP_REACTIONS == STOP_REACTIONS {
 			return Ok(Value::from(ret as f32));
 		}
@@ -308,7 +345,15 @@ fn _adjust_heat_hook() {
 		mix.adjust_heat(
 			args.get(0)
 				.ok_or_else(|| runtime!("Wrong number of args for adjust heat: 0"))?
-				.as_number()?,
+				.as_number()
+				.map_err(|_| {
+					runtime!(
+						"Attempt to interpret non-number value as number {} {}:{}",
+						std::file!(),
+						std::line!(),
+						std::column!()
+					)
+				})?,
 		);
 		Ok(Value::null())
 	})
@@ -317,7 +362,14 @@ fn _adjust_heat_hook() {
 #[hook("/datum/gas_mixture/proc/transfer_to")]
 fn _transfer_hook(other: Value, moles: Value) {
 	with_mixes_mut(src, other, |our_mix, other_mix| {
-		other_mix.merge(&our_mix.remove(moles.as_number()?));
+		other_mix.merge(&our_mix.remove(moles.as_number().map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?));
 		Ok(Value::null())
 	})
 }
@@ -325,7 +377,14 @@ fn _transfer_hook(other: Value, moles: Value) {
 #[hook("/datum/gas_mixture/proc/transfer_ratio_to")]
 fn _transfer_ratio_hook(other: Value, ratio: Value) {
 	with_mixes_mut(src, other, |our_mix, other_mix| {
-		other_mix.merge(&our_mix.remove_ratio(ratio.as_number()?));
+		other_mix.merge(&our_mix.remove_ratio(ratio.as_number().map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?));
 		Ok(Value::null())
 	})
 }
@@ -353,7 +412,15 @@ fn _equalize_all_hook() {
 	let value_list = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of args for equalize all: 0"))?
-		.as_list()?;
+		.as_list()
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-list value as list {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 	let gas_list: BTreeSet<usize> = (1..value_list.len() + 1)
 		.map(|i| {
 			value_list
@@ -364,26 +431,27 @@ fn _equalize_all_hook() {
 				.to_bits() as usize
 		})
 		.collect(); // collect because get_number is way slower than the one-time allocation
-	let mut tot = gas::gas_mixture::GasMixture::new();
-	let mut tot_vol: f64 = 0.0;
 	GasMixtures::with_all_mixtures(move |all_mixtures| {
-		for &id in gas_list.iter() {
-			if let Some(src_gas_lock) = all_mixtures.get(id) {
-				let src_gas = src_gas_lock.read();
-				tot.merge(&src_gas);
-				tot_vol += src_gas.volume as f64;
-			}
-		}
-		if tot_vol > 0.0 {
+		gas::GasMixtures::with_new_mix_and_lock(0.0, all_mixtures, |tot| {
+			let mut tot_vol: f64 = 0.0;
 			for &id in gas_list.iter() {
-				if let Some(dest_gas_lock) = all_mixtures.get(id) {
-					let dest_gas = &mut dest_gas_lock.write();
-					let vol = dest_gas.volume; // don't wanna borrow it in the below
-					dest_gas.copy_from_mutable(&tot);
-					dest_gas.multiply((vol as f64 / tot_vol) as f32);
+				if let Some(src_gas_lock) = all_mixtures.get(id) {
+					let src_gas = src_gas_lock.read();
+					tot.merge(&src_gas);
+					tot_vol += src_gas.volume as f64;
 				}
 			}
-		}
+			if tot_vol > 0.0 {
+				for &id in gas_list.iter() {
+					if let Some(dest_gas_lock) = all_mixtures.get(id) {
+						let dest_gas = &mut dest_gas_lock.write();
+						let vol = dest_gas.volume; // don't wanna borrow it in the below
+						dest_gas.copy_from_mutable(&tot);
+						dest_gas.multiply((vol as f64 / tot_vol) as f32);
+					}
+				}
+			}
+		})
 	});
 	Ok(Value::null())
 }

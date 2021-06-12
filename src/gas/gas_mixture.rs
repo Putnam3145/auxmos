@@ -227,7 +227,7 @@ impl GasMixture {
 				Ok(i) => {
 					let r = unsafe { self.moles.get_unchecked_mut(i) };
 					*r += amt;
-					if !r.is_normal() || amt <= GAS_MIN_MOLES {
+					if !r.is_normal() || *r <= GAS_MIN_MOLES {
 						Some(i)
 					} else {
 						None

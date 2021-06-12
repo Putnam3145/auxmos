@@ -264,15 +264,17 @@ fn _scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
 		)
 	})?;
 	with_mixes_mut(src, into, |src_gas, dest_gas| {
+		let mut removed = src_gas.remove_ratio(ratio);
+		let mut buffer = gas::gas_mixture::GasMixture::from_vol(gas::constants::CELL_VOLUME);
+		buffer.set_temperature(src_gas.get_temperature());
 		for idx in 1..gases_to_scrub.len() + 1 {
 			if let Ok(gas_id) = gas_idx_from_value(&gases_to_scrub.get(idx).unwrap()) {
-				let amt = src_gas.get_moles(gas_id) * ratio;
-				if amt >= GAS_MIN_MOLES {
-					dest_gas.adjust_moles(gas_id, amt);
-					src_gas.adjust_moles(gas_id, -amt);
-				}
+				buffer.set_moles(gas_id, removed.get_moles(gas_id));
+				removed.set_moles(gas_id, 0.0);
 			}
 		}
+		dest_gas.merge(&buffer);
+		src_gas.merge(&removed);
 		Ok(Value::from(true))
 	})
 }

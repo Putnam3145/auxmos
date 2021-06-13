@@ -44,10 +44,10 @@ fn explosively_depressurize(
 					"consider_firelocks",
 					&[&unsafe { Value::turf_by_id_unchecked(loc) }],
 				)?;
-				let new_m = TURF_GASES.get(&i).unwrap();
+				let new_m = turf_gases().get(&i).unwrap();
 				let bit = 1 << j;
 				if new_m.adjacency & bit == bit {
-					if let Some(adj) = TURF_GASES.get(&loc) {
+					if let Some(adj) = turf_gases().get(&loc) {
 						let (&adj_i, &adj_m) = (adj.key(), adj.value());
 						turfs.push((adj_i, adj_m));
 					}
@@ -69,7 +69,7 @@ fn explosively_depressurize(
 		let (i, m) = progression_order[cur_queue_idx];
 		let actual_turf = unsafe { Value::turf_by_id_unchecked(i) };
 		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
-			if let Some(adj) = TURF_GASES.get(&loc) {
+			if let Some(adj) = turf_gases().get(&loc) {
 				let (adj_i, adj_m) = (*adj.key(), adj.value());
 				if !adjacency_info.contains_key(&adj_i) && !adj_m.is_immutable() {
 					adjacency_info.insert(i, Cell::new((OPP_DIR_INDEX[j as usize], 0.0)));
@@ -101,7 +101,7 @@ fn explosively_depressurize(
 		let actual_turf = unsafe { Value::turf_by_id_unchecked(*i) };
 		hpd.set(&actual_turf, 1.0)?;
 		let loc = adjacent_tile_id(cur_info.0, *i, max_x, max_y);
-		if let Some(adj) = TURF_GASES.get(&loc) {
+		if let Some(adj) = turf_gases().get(&loc) {
 			let (adj_i, adj_m) = (*adj.key(), adj.value());
 			let adj_orig = adjacency_info.get(&adj_i).unwrap();
 			let mut adj_info = adj_orig.get();
@@ -132,9 +132,7 @@ fn explosively_depressurize(
 
 // Just floodfills to lower-pressure turfs until it can't find any more.
 
-#[deprecated(
-	note = "Figure out what's wrong with it and it can be enabled, I'm not bothering for now."
-)]
+#[deprecated(note = "Prefer monstermos.")]
 pub fn equalize(
 	equalize_turf_limit: usize,
 	equalize_hard_turf_limit: usize,
@@ -144,26 +142,26 @@ pub fn equalize(
 ) -> usize {
 	let sender = byond_callback_sender();
 	let mut turfs_processed = 0;
+	let mut merger = GasMixture::new();
 	let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
 	'turf_loop: for &initial_idx in high_pressure_turfs.iter() {
-		if let Some(initial_turf) = TURF_GASES.get(&initial_idx) {
+		if let Some(initial_turf) = turf_gases().get(&initial_idx) {
 			let mut turfs: Vec<(TurfID, TurfMixture, TurfID, f32)> =
 				Vec::with_capacity(equalize_turf_limit);
 			let mut border_turfs: VecDeque<(TurfID, TurfMixture, TurfID, f32)> =
 				VecDeque::with_capacity(equalize_turf_limit);
-			let mut merger = GasMixture::merger();
+			merger.clear_with_vol(0.0);
 			border_turfs.push_back((initial_idx, *initial_turf, initial_idx, 0.0));
 			found_turfs.insert(initial_idx);
-			let (mut avg_pressure, mut pressure_weight) =
-				(initial_turf.return_pressure() as f64, 1.0);
 			if GasMixtures::with_all_mixtures(|all_mixtures| {
 				// floodfill
-				while border_turfs.len() > 0 && turfs.len() < equalize_turf_limit {
+				while !border_turfs.is_empty() && turfs.len() < equalize_turf_limit {
 					let (cur_idx, cur_turf, parent_turf, pressure_delta) =
 						border_turfs.pop_front().unwrap();
 					if let Some(our_gas_entry) = all_mixtures.get(cur_turf.mix) {
 						let gas = our_gas_entry.read();
 						merger.merge(&gas);
+						merger.volume += gas.volume;
 						turfs.push((cur_idx, cur_turf, parent_turf, pressure_delta));
 						if !gas.is_immutable() {
 							for (_, loc) in
@@ -173,7 +171,7 @@ pub fn equalize(
 									continue;
 								}
 								found_turfs.insert(loc);
-								if let Some(adj_turf) = TURF_GASES.get(&loc) {
+								if let Some(adj_turf) = turf_gases().get(&loc) {
 									if cfg!(feature = "putnamos_decompression")
 										&& adj_turf.is_immutable()
 									{
@@ -188,12 +186,8 @@ pub fn equalize(
 										}));
 										return true;
 									} else {
-										let other_pressure = adj_turf.return_pressure();
-										let delta = avg_pressure as f32 - other_pressure;
-										avg_pressure = (avg_pressure * pressure_weight)
-											+ other_pressure as f64;
-										pressure_weight += 1.0;
-										avg_pressure /= pressure_weight;
+										let delta =
+											adj_turf.return_pressure() - merger.return_pressure();
 										if delta < 0.0 {
 											border_turfs.push_back((
 												loc,
@@ -213,15 +207,16 @@ pub fn equalize(
 			{
 				continue 'turf_loop;
 			}
-			let final_mix = merger.copy_with_vol(CELL_VOLUME as f64);
+			merger.multiply(1.0 / turfs.len() as f32);
 			turfs_processed += turfs.len();
 			let to_send = GasMixtures::with_all_mixtures(|all_mixtures| {
 				turfs
-					.iter()
+					.par_iter()
+					.with_min_len(50)
 					.map(|(cur_idx, cur_turf, parent_turf, pressure_delta)| {
 						if let Some(entry) = all_mixtures.get(cur_turf.mix) {
 							let gas: &mut GasMixture = &mut entry.write();
-							gas.copy_from_mutable(&final_mix);
+							gas.copy_from_mutable(&merger);
 						}
 						(*cur_idx, *parent_turf, *pressure_delta)
 					})

@@ -18,7 +18,6 @@ struct MonstermosInfo {
 	curr_transfer_dir: usize,
 	last_slow_queue_cycle: i32,
 	fast_done: bool,
-	last_cycle: i32,
 }
 
 const OPP_DIR_INDEX: [usize; 7] = [1, 0, 3, 2, 5, 4, 6];
@@ -69,7 +68,7 @@ fn finalize_eq(
 				.remove(planet_transfer_amount);
 		})
 	} else if planet_transfer_amount < 0.0 {
-		if let Some(air_entry) = PLANETARY_ATMOS.get(turf.planetary_atmos.unwrap()) {
+		if let Some(air_entry) = turf.planetary_atmos.and_then(|i| planetary_atmos().get(&i)) {
 			let planet_air = air_entry.value();
 			let planet_sum = planet_air.total_moles();
 			if planet_sum > 0.0 {
@@ -90,7 +89,7 @@ fn finalize_eq(
 				finalize_eq_neighbors(i, turf, info, max_x, max_y);
 			}
 			if let Some(adj_orig) = info.get(&adj_id) {
-				if let Some(adj_turf) = TURF_GASES.get(&adj_id) {
+				if let Some(adj_turf) = turf_gases().get(&adj_id) {
 					let mut adj_info = adj_orig.get();
 					adj_info.transfer_dirs[OPP_DIR_INDEX[j as usize]] = 0.0;
 					if turf.mix != adj_turf.mix {
@@ -137,41 +136,42 @@ fn finalize_eq_neighbors(
 	for (j, adjacent_id) in adjacent_tile_ids(turf.adjacency, i, max_x, max_y) {
 		let amount = transfer_dirs[j as usize];
 		if amount < 0.0 {
-			if let Some(other_turf) = TURF_GASES.get(&adjacent_id) {
+			if let Some(other_turf) = turf_gases().get(&adjacent_id) {
 				finalize_eq(adjacent_id, other_turf.value(), info, max_x, max_y);
 			}
 		}
 	}
 }
 
+#[deprecated(
+	note = "It panics when trying to get the 'pressure_direction' string from byond. I don't even know, man, it's cursed."
+)]
 #[cfg(feature = "explosive_decompression")]
 fn explosively_depressurize(
 	turf_idx: TurfID,
 	turf: TurfMixture,
-	info: &mut BTreeMap<TurfID, Cell<[MonstermosInfo]>>,
-	queue_cycle_slow: &mut i32,
+	mut found_turfs: BTreeSet<TurfID>,
 	equalize_hard_turf_limit: usize,
 	max_x: i32,
 	max_y: i32,
-) {
-	let mut total_gases_deleted = 0.0;
+) -> DMResult {
+	let mut info: BTreeMap<TurfID, Cell<MonstermosInfo>> = BTreeMap::new();
 	let mut turfs: Vec<(TurfID, TurfMixture)> = Vec::new();
 	let mut space_turfs: Vec<(TurfID, TurfMixture)> = Vec::new();
 	turfs.push((turf_idx, turf));
 	let cur_orig = info.get(&turf_idx).unwrap();
 	let mut cur_info: MonstermosInfo = Default::default();
-	cur_info.done_this_cycle = true;
+	found_turfs.insert(turf_idx);
 	cur_info.curr_transfer_dir = 6;
 	cur_orig.set(cur_info);
 	let mut warned_about_planet_atmos = false;
 	let mut cur_queue_idx = 0;
-	let sender = byond_callback_sender();
 	while cur_queue_idx < turfs.len() {
 		let (i, m) = turfs[cur_queue_idx];
 		cur_queue_idx += 1;
 		let cur_orig = info.get(&i).unwrap();
 		let mut cur_info = cur_orig.get();
-		cur_info.done_this_cycle = true;
+		found_turfs.insert(i);
 		cur_info.curr_transfer_dir = 6;
 		cur_orig.set(cur_info);
 		if m.planetary_atmos.is_some() {
@@ -180,15 +180,10 @@ fn explosively_depressurize(
 		}
 		if m.is_immutable() {
 			space_turfs.push((i, m));
-			sender
-				.send(Box::new(move || {
-					unsafe { Value::turf_by_id_unchecked(i) }.set(
-						"pressure_specific_target",
-						&[&unsafe { Value::turf_by_id_unchecked(i) }],
-					)?;
-					Ok(Value::null())
-				}))
-				.unwrap();
+			unsafe { Value::turf_by_id_unchecked(i) }
+				.set(byond_string!("pressure_specific_target"), &unsafe {
+					Value::turf_by_id_unchecked(i)
+				})?;
 		} else {
 			if cur_queue_idx > equalize_hard_turf_limit {
 				continue;
@@ -197,30 +192,19 @@ fn explosively_depressurize(
 				let bit = 1 << j;
 				if m.adjacency & bit == bit {
 					let loc = adjacent_tile_id(j as u8, i, max_x, max_y);
-					if let Some(adj) = TURF_GASES.get(&loc) {
+					if found_turfs.contains(&loc) {
+						continue;
+					}
+					if let Some(adj) = turf_gases().get(&loc) {
 						let (&adj_i, &adj_m) = (adj.key(), adj.value());
-						let adj_orig = info.entry(loc).or_default();
-						let mut adj_info = adj_orig.get();
-						if adj_info.done_this_cycle {
-							continue;
-						}
-						let (call_result_sender, call_result_receiver) = flume::bounded(0);
-						sender
-							.send(Box::new(move || {
-								unsafe { Value::turf_by_id_unchecked(i) }.call(
-									"consider_firelocks",
-									&[&unsafe { Value::turf_by_id_unchecked(loc) }],
-								)?;
-								call_result_sender.send(true).unwrap();
-								Ok(Value::null())
-							}))
-							.unwrap();
-						call_result_receiver.recv().unwrap();
-						let new_m = TURF_GASES[i];
+						unsafe { Value::turf_by_id_unchecked(i) }.call(
+							"consider_firelocks",
+							&[&unsafe { Value::turf_by_id_unchecked(loc) }],
+						)?;
+						let new_m = turf_gases().get(&i).unwrap();
 						if new_m.adjacency & bit == bit {
-							adj_info = Default::default();
-							adj_info.done_this_cycle = true;
-							adj_orig.set(adj_info);
+							found_turfs.insert(loc);
+							info.entry(loc).or_default().take();
 							turfs.push((adj_i, adj_m));
 						}
 					}
@@ -228,41 +212,30 @@ fn explosively_depressurize(
 			}
 		}
 		if warned_about_planet_atmos {
-			return; // planet atmos > space
+			return Ok(Value::null()); // planet atmos > space
 		}
 	}
-	*queue_cycle_slow += 1;
 	let mut progression_order: Vec<(TurfID, TurfMixture)> = Vec::with_capacity(space_turfs.len());
 	for (i, m) in space_turfs.iter() {
 		progression_order.push((*i, *m));
 		let cur_info = info.get_mut(i).unwrap().get_mut();
-		cur_info.last_slow_queue_cycle = *queue_cycle_slow;
 		cur_info.curr_transfer_dir = 6;
 	}
 	cur_queue_idx = 0;
 	while cur_queue_idx < progression_order.len() {
 		let (i, m) = progression_order[cur_queue_idx];
 		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
-			if let Some(adj) = TURF_GASES.get(&loc) {
+			if let Some(adj) = turf_gases().get(&loc) {
 				let (adj_i, adj_m) = (adj.key(), adj.value());
 				let adj_orig = info.entry(loc).or_default();
 				let mut adj_info = adj_orig.get();
-				if adj_info.done_this_cycle
-					&& adj_info.last_slow_queue_cycle != *queue_cycle_slow
-					&& !adj_m.is_immutable()
-				{
+				if !adj_m.is_immutable() {
 					adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 					adj_info.curr_transfer_amount = 0.0;
-					sender
-						.send(Box::new(move || {
-							unsafe { Value::turf_by_id_unchecked(adj_i) }.set(
-								"pressure_specific_target",
-								&[&unsafe { Value::turf_by_id_unchecked(i) }],
-							)?;
-							Ok(Value::null())
-						}))
-						.unwrap();
-					adj_info.last_slow_queue_cycle = *queue_cycle_slow;
+					unsafe { Value::turf_by_id_unchecked(*adj_i) }
+						.set(byond_string!("pressure_specific_target"), &unsafe {
+							Value::turf_by_id_unchecked(i)
+						})?;
 					adj_orig.set(adj_info);
 					progression_order.push((*adj_i, *adj_m));
 				}
@@ -270,64 +243,49 @@ fn explosively_depressurize(
 			cur_queue_idx += 1;
 		}
 	}
-	let mut hpd_entries: Vec<ByondArg> = Vec::new();
 	for (i, m) in progression_order.iter().rev() {
 		let cur_orig = info.get(i).unwrap();
 		let mut cur_info = cur_orig.get();
 		if cur_info.curr_transfer_dir == 6 {
 			continue;
 		}
-		hpd_entries.push(ByondArg::Turf(*i as u32));
 		let loc = adjacent_tile_id(cur_info.curr_transfer_dir as u8, *i, max_x, max_y);
-		if let Some(adj) = TURF_GASES.get(&loc) {
+		if let Some(adj) = turf_gases().get(&loc) {
 			let (adj_i, adj_m) = (adj.key(), adj.value());
 			let adj_orig = info.get(&loc).unwrap();
 			let mut adj_info = adj_orig.get();
 			let sum = adj_m.total_moles();
-			total_gases_deleted += sum;
 			cur_info.curr_transfer_amount += sum;
 			adj_info.curr_transfer_amount += cur_info.curr_transfer_amount;
 			if adj_info.curr_transfer_dir == 6 {
-				sender
-					.send(Box::new(move || {
-						let byond_turf = unsafe { Value::turf_by_id_unchecked(adj_i) };
-						byond_turf.set(
-							byond_string!("pressure_difference"),
-							cur_info.curr_transfer_amount,
-						)?;
-						byond_turf.set(
-							"pressure_direction",
-							(1 << cur_info.curr_transfer_dir) as f32,
-						)?;
-						Ok(Value::null())
-					}))
-					.unwrap();
+				let byond_turf = unsafe { Value::turf_by_id_unchecked(*adj_i) };
+				byond_turf.set(
+					byond_string!("pressure_difference"),
+					cur_info.curr_transfer_amount,
+				)?;
+				byond_turf.set(
+					byond_string!("pressure_direction"),
+					(1 << cur_info.curr_transfer_dir) as f32,
+				)?;
 			}
 			m.clear_air();
-			sender
-				.send(Box::new(move || {
-					let byond_turf = unsafe { Value::turf_by_id_unchecked(i) };
-					byond_turf.set(
-						byond_string!("pressure_difference"),
-						cur_info.curr_transfer_amount,
-					)?;
-					byond_turf.set(
-						"pressure_direction",
-						(1 << cur_info.curr_transfer_dir) as f32,
-					)?;
-					byond_turf.call("handle decompression floor rip", &[&Value::from(sum)])?;
-					Ok(Value::null())
-				}))
-				.unwrap();
+			let byond_turf = unsafe { Value::turf_by_id_unchecked(*i) };
+			byond_turf.set(
+				byond_string!("pressure_difference"),
+				cur_info.curr_transfer_amount,
+			)?;
+			byond_turf.set(
+				byond_string!("pressure_direction"),
+				(1 << cur_info.curr_transfer_dir) as f32,
+			)?;
+			byond_turf.call("handle decompression floor rip", &[&Value::from(sum)])?;
 		}
 	}
-	if (total_gases_deleted / turfs.len() as f32) > 20.0 && turfs.len() > 10 { // logging I guess
-	}
+	Ok(Value::null())
+	//	if (total_gases_deleted / turfs.len() as f32) > 20.0 && turfs.len() > 10 { // logging I guess
+	//	}
 }
 
-#[deprecated(
-	note = "Figure out what's wrong with it and it can be enabled, I'm not bothering for now."
-)]
 pub(crate) fn equalize(
 	equalize_turf_limit: usize,
 	equalize_hard_turf_limit: usize,
@@ -336,54 +294,43 @@ pub(crate) fn equalize(
 	high_pressure_turfs: BTreeSet<TurfID>,
 ) -> usize {
 	let mut info: BTreeMap<TurfID, Cell<MonstermosInfo>> = BTreeMap::new();
-	let mut queue_cycle_slow = 1;
-	let mut queue_cycle = 1;
 	let mut turfs_processed = 0;
+	let mut queue_cycle_slow = 1;
+	let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
+	#[cfg(feature = "explosive_decompression")]
 	let sender = byond_callback_sender();
 	for &i in high_pressure_turfs.iter() {
-		if let Some(m) = TURF_GASES.get(&i) {
+		if let Some(m) = turf_gases().get(&i) {
 			if m.simulation_level & (SIMULATION_LEVEL_ALL | SIMULATION_LEVEL_DISABLED)
 				== SIMULATION_LEVEL_ALL
 				&& m.adjacency > 0
 			{
-				let our_info = info.entry(i).or_default().get();
-				if our_info.last_cycle >= queue_cycle {
+				if found_turfs.contains(&i) {
 					continue;
 				}
 				let our_moles = m.total_moles();
 				if our_moles < 10.0 {
 					continue;
 				}
-				let adj_tiles = adjacent_tile_ids(m.adjacency, i, max_x, max_y);
-				if {
-					let mut all_bad = true;
-					for (_, loc) in adj_tiles {
-						if let Some(gas) = TURF_GASES.get(&loc) {
-							if (gas.total_moles() - our_moles).abs() > MINIMUM_MOLES_DELTA_TO_MOVE {
-								all_bad = false;
-								break;
-							}
-						}
-					}
-					all_bad
-				} {
+				if adjacent_tile_ids(m.adjacency, i, max_x, max_y).all(|(_, loc)| {
+					turf_gases().get(&loc).map_or(true, |gas| {
+						(gas.total_moles() - our_moles).abs() < MINIMUM_MOLES_DELTA_TO_MOVE
+					})
+				}) {
 					continue;
 				}
 			} else {
 				continue;
 			}
-			queue_cycle += 1;
 			let mut turfs: Vec<(TurfID, TurfMixture)> = Vec::with_capacity(equalize_turf_limit);
 			let mut border_turfs: VecDeque<(TurfID, TurfMixture)> =
 				VecDeque::with_capacity(equalize_turf_limit);
-			let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
 			//			let mut planet_turfs: Vec<(TurfID, TurfMixture)> = Vec::new();
 			let mut total_moles: f32 = 0.0;
 			#[allow(unused_mut)]
 			let mut space_this_time = false;
 			#[warn(unused_mut)]
 			border_turfs.push_back((i, *m));
-			info.entry(i).or_default().get_mut().last_cycle = queue_cycle;
 			while border_turfs.len() > 0 {
 				if turfs.len() > equalize_hard_turf_limit {
 					break;
@@ -402,42 +349,39 @@ pub(crate) fn equalize(
 						continue;
 					}
 					found_turfs.insert(loc);
-					if let Some(adj_turf) = TURF_GASES.get(&loc) {
+					if let Some(adj_turf) = turf_gases().get(&loc) {
 						let adj_orig = info.entry(cur_idx).or_default();
-						let mut adj_info = adj_orig.get();
 						#[cfg(feature = "explosive_decompression")]
 						{
-							if !adj_info.last_cycle != queue_cycle {
-								adj_info = Default::default();
-								adj_info.last_cycle = queue_cycle;
-								adj_orig.set(adj_info);
-								border_turfs.push_back((*loc, *adj_turf.value()));
-								if adj_turf.value().is_immutable() {
-									// Uh oh! looks like someone opened an airlock to space! TIME TO SUCK ALL THE AIR OUT!!!
-									// NOT ONE OF YOU IS GONNA SURVIVE THIS
-									// (I just made explosions less laggy, you're welcome)
-									turfs.push((*loc, *adj_turf.value()));
+							adj_orig.take();
+							border_turfs.push_back((loc, *adj_turf.value()));
+							if adj_turf.value().is_immutable() {
+								// Uh oh! looks like someone opened an airlock to space! TIME TO SUCK ALL THE AIR OUT!!!
+								// NOT ONE OF YOU IS GONNA SURVIVE THIS
+								// (I just made explosions less laggy, you're welcome)
+								turfs.push((loc, *adj_turf.value()));
+								let map_copy = found_turfs.clone();
+								let turf_copy = *m;
+								let _ = sender.send(Box::new(move || {
 									explosively_depressurize(
-										*i,
-										*m,
-										&mut info,
-										&mut queue_cycle_slow,
+										i,
+										turf_copy,
+										map_copy.clone(),
 										equalize_hard_turf_limit,
-									);
-									space_this_time = true;
-								}
+										max_x,
+										max_y,
+									)
+								}));
+								space_this_time = true;
 							}
 						}
 						#[cfg(not(feature = "explosive_decompression"))]
 						{
-							if !adj_info.last_cycle != queue_cycle
-								&& adj_turf.simulation_level != SIMULATION_LEVEL_NONE
-								&& (adj_turf.simulation_level & SIMULATION_LEVEL_DISABLED
+							if adj_turf.simulation_level != SIMULATION_LEVEL_NONE
+								&& ((adj_turf.simulation_level & SIMULATION_LEVEL_DISABLED)
 									!= SIMULATION_LEVEL_DISABLED)
 							{
-								adj_info = Default::default();
-								adj_info.last_cycle = queue_cycle;
-								adj_orig.set(adj_info);
+								adj_orig.take();
 								border_turfs.push_back((loc, *adj_turf.value()));
 							}
 						}
@@ -453,15 +397,14 @@ pub(crate) fn equalize(
 			}
 			if turfs.len() > equalize_turf_limit {
 				for (idx, _) in turfs.drain(equalize_turf_limit..) {
-					info.entry(idx).or_default().get_mut().last_cycle = 0;
+					found_turfs.remove(&idx);
 				}
 			}
 			let average_moles = total_moles / (turfs.len() as f32/* - planet_turfs.len() as f32*/);
-			let mut giver_turfs: Vec<(TurfID, TurfMixture)> = Vec::with_capacity(turfs.len() / 2);
-			let mut taker_turfs: Vec<(TurfID, TurfMixture)> = Vec::with_capacity(turfs.len() / 2);
+			let mut giver_turfs: Vec<(TurfID, TurfMixture)> = Vec::with_capacity(turfs.len());
+			let mut taker_turfs: Vec<(TurfID, TurfMixture)> = Vec::with_capacity(turfs.len());
 			for (i, m) in turfs.iter() {
 				let cur_info = info.entry(*i).or_default().get_mut();
-				cur_info.last_cycle = queue_cycle;
 				cur_info.mole_delta = m.total_moles() - average_moles;
 				if cur_info.mole_delta > 0.0 {
 					giver_turfs.push((*i, *m));
@@ -483,7 +426,7 @@ pub(crate) fn equalize(
 						for (j, loc) in adjacent_tile_ids(m.adjacency, *i, max_x, max_y) {
 							if let Some(adj_orig) = info.get(&loc) {
 								let adj_info = adj_orig.get();
-								if adj_info.fast_done || adj_info.last_cycle != queue_cycle {
+								if adj_info.fast_done {
 									continue;
 								} else {
 									eligible_adjacents |= 1 << j;
@@ -492,6 +435,7 @@ pub(crate) fn equalize(
 						}
 						let amt_eligible = eligible_adjacents.count_ones();
 						if amt_eligible == 0 {
+							cur_orig.set(cur_info);
 							continue;
 						}
 						let moles_to_move = cur_info.mole_delta / amt_eligible as f32;
@@ -542,14 +486,12 @@ pub(crate) fn equalize(
 						let (idx, turf) = *queue.get(queue_idx).unwrap();
 						for (j, loc) in adjacent_tile_ids(turf.adjacency, idx, max_x, max_y) {
 							if let Some(adj_orig) = info.get(&loc) {
-								if let Some(adj_mix) = TURF_GASES.get(&loc) {
+								if let Some(adj_mix) = turf_gases().get(&loc) {
 									if giver_info.mole_delta <= 0.0 {
 										break;
 									}
 									let mut adj_info = adj_orig.get();
-									if !adj_info.last_cycle == queue_cycle
-										&& adj_info.last_slow_queue_cycle != queue_cycle_slow
-									{
+									if adj_info.last_slow_queue_cycle != queue_cycle_slow {
 										queue.push_back((loc, *adj_mix.value()));
 										adj_info.last_slow_queue_cycle = queue_cycle_slow;
 										adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
@@ -620,14 +562,12 @@ pub(crate) fn equalize(
 						let (idx, turf) = *queue.get(queue_idx).unwrap();
 						for (j, loc) in adjacent_tile_ids(turf.adjacency, idx, max_x, max_y) {
 							if let Some(adj_orig) = info.get(&loc) {
-								if let Some(adj_mix) = TURF_GASES.get(&loc) {
+								if let Some(adj_mix) = turf_gases().get(&loc) {
 									let mut adj_info = adj_orig.get();
 									if taker_info.mole_delta >= 0.0 {
 										break;
 									}
-									if !adj_info.last_cycle == queue_cycle
-										&& adj_info.last_slow_queue_cycle != queue_cycle_slow
-									{
+									if adj_info.last_slow_queue_cycle != queue_cycle_slow {
 										queue.push_back((loc, *adj_mix));
 										adj_info.last_slow_queue_cycle = queue_cycle_slow;
 										adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
@@ -707,11 +647,9 @@ pub(crate) fn equalize(
 							let loc = adjacent_tile_id(j, i, max_x, max_y);
 							if let Some(adj_orig) = info.get(&loc) {
 								let mut adj_info = adj_orig.get();
-								if let Some(adj) = TURF_GASES.get(&loc) {
+								if let Some(adj) = turf_gases().get(&loc) {
 									if adj_info.last_slow_queue_cycle == queue_cycle_slow
-										|| adj.value().planetary_atmos.is_some() || adj_info
-										.last_cycle
-										!= queue_cycle
+										|| adj.value().planetary_atmos.is_some()
 									{
 										continue;
 									}

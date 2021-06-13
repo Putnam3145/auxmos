@@ -24,8 +24,8 @@ pub struct GasMixture {
 	pub volume: f32,
 	min_heat_capacity: f32,
 	immutable: bool,
-	moles: TinyVec<[f32;8]>,
-	heat_capacities: TinyVec<[f32;8]>,
+	moles: TinyVec<[f32; 8]>,
+	heat_capacities: TinyVec<[f32; 8]>,
 	cached_heat_capacity: Cell<Option<f32>>,
 }
 
@@ -106,8 +106,10 @@ impl GasMixture {
 			.map(|((a, b), c)| (a, b, c))
 	}
 	/// Allows closures to iterate over each gas.
-	pub fn for_each_gas(&self, mut f: impl FnMut(GasIDX, f32) -> Result<(), auxtools::Runtime>) -> Result<(), auxtools::Runtime>
-	{
+	pub fn for_each_gas(
+		&self,
+		mut f: impl FnMut(GasIDX, f32) -> Result<(), auxtools::Runtime>,
+	) -> Result<(), auxtools::Runtime> {
 		for (i, g) in self.enumerate() {
 			f(i, g)?;
 		}
@@ -344,9 +346,7 @@ impl GasMixture {
 			.iter()
 			.copied()
 			.zip_longest(sample.moles.iter().copied())
-			.fold(0.0, |acc, pair| {
-				acc.max(pair.reduce(|a, b| (b - a).abs()))
-			})
+			.fold(0.0, |acc, pair| acc.max(pair.reduce(|a, b| (b - a).abs())))
 	}
 	pub fn compare_with(&self, sample: &GasMixture, amt: f32) -> bool {
 		self.moles
@@ -408,16 +408,16 @@ impl GasMixture {
 	}
 	/// Returns true if there's a visible gas in this mix.
 	pub fn is_visible(&self) -> bool {
-		self.enumerate().any(|(i, gas)| {
-			gas_visibility(i as usize).map_or(false, |amt| gas >= amt)
-		})
+		self.enumerate()
+			.any(|(i, gas)| gas_visibility(i as usize).map_or(false, |amt| gas >= amt))
 	}
 	/// A hashed representation of the visibility of a gas, so that it only needs to update vis when actually changed.
 	pub fn visibility_hash(&self, gas_visibility: &[Option<f32>]) -> u64 {
 		use std::hash::Hasher;
 		let mut hasher: fxhash::FxHasher64 = Default::default();
 		for (i, gas) in self.enumerate() {
-			if let Some(amt) = unsafe { gas_visibility.get_unchecked(i) }.filter(|&amt| gas >= amt) {
+			if let Some(amt) = unsafe { gas_visibility.get_unchecked(i) }.filter(|&amt| gas >= amt)
+			{
 				hasher.write_usize(i);
 				hasher.write_usize((FACTOR_GAS_VISIBLE_MAX).min((gas / amt).ceil()) as GasIDX);
 			}

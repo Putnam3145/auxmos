@@ -1,56 +1,14 @@
 use itertools::Itertools;
 
-use std::cmp::Ordering;
-
 use std::cell::Cell;
+
+use tinyvec::TinyVec;
 
 use super::reaction::ReactionIdentifier;
 
 use super::constants::*;
 
 use super::{gas_specific_heat, gas_visibility, total_num_gases, with_reactions, GasIDX};
-
-trait LinearSearch<T> {
-	fn linear_search(&self, x: &T) -> Result<usize, usize>
-	where
-		T: Ord;
-	fn linear_search_by<F>(&self, f: F) -> Result<usize, usize>
-	where
-		F: FnMut(&T) -> Ordering;
-	fn linear_search_by_key<B, F>(&self, b: &B, f: F) -> Result<usize, usize>
-	where
-		B: Ord,
-		F: FnMut(&T) -> B;
-}
-
-impl<T> LinearSearch<T> for [T] {
-	fn linear_search(&self, x: &T) -> Result<usize, usize>
-	where
-		T: Ord,
-	{
-		self.linear_search_by(|p| p.cmp(x))
-	}
-	fn linear_search_by<F>(&self, mut f: F) -> Result<usize, usize>
-	where
-		F: FnMut(&T) -> Ordering,
-	{
-		for (idx, i) in self.iter().enumerate() {
-			match f(i) {
-				Ordering::Equal => return Ok(idx),
-				Ordering::Greater => return Err(idx),
-				_ => (),
-			}
-		}
-		Err(self.len())
-	}
-	fn linear_search_by_key<B, F>(&self, b: &B, mut f: F) -> Result<usize, usize>
-	where
-		B: Ord,
-		F: FnMut(&T) -> B,
-	{
-		self.linear_search_by(|k| f(k).cmp(b))
-	}
-}
 
 /// The data structure representing a Space Station 13 gas mixture.
 /// Unlike Monstermos, this doesn't have the archive built-in; instead,
@@ -66,8 +24,8 @@ pub struct GasMixture {
 	pub volume: f32,
 	min_heat_capacity: f32,
 	immutable: bool,
-	moles: Vec<f32>,
-	heat_capacities: Vec<f32>,
+	moles: TinyVec<[f32;8]>,
+	heat_capacities: TinyVec<[f32;8]>,
 	cached_heat_capacity: Cell<Option<f32>>,
 }
 
@@ -94,8 +52,8 @@ impl GasMixture {
 	/// Makes an empty gas mixture.
 	pub fn new() -> Self {
 		GasMixture {
-			moles: Vec::with_capacity(8),
-			heat_capacities: Vec::with_capacity(8),
+			moles: TinyVec::new(),
+			heat_capacities: TinyVec::new(),
 			temperature: 2.7,
 			volume: 2500.0,
 			min_heat_capacity: MINIMUM_HEAT_CAPACITY,

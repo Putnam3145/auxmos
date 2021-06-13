@@ -340,8 +340,10 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 															continue;
 														}
 														if gas.temperature_compare(&mix)
-															|| gas.compare_with(&mix, MINIMUM_MOLES_DELTA_TO_MOVE)
-														{
+															|| gas.compare_with(
+																&mix,
+																MINIMUM_MOLES_DELTA_TO_MOVE,
+															) {
 															return true;
 														}
 													} else {
@@ -358,8 +360,10 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 										{
 											let planet_atmos = planet_atmos_entry.value();
 											if gas.temperature_compare(&planet_atmos)
-												|| gas.compare_with(&planet_atmos, MINIMUM_MOLES_DELTA_TO_MOVE)
-											{
+												|| gas.compare_with(
+													&planet_atmos,
+													MINIMUM_MOLES_DELTA_TO_MOVE,
+												) {
 												return true;
 											}
 										}
@@ -610,7 +614,7 @@ fn excited_group_processing(
 						break;
 					}
 				}
-				fully_mixed.multiply(crate::gas::constants::CELL_VOLUME / fully_mixed.volume);
+				fully_mixed.multiply(1.0 / turfs.len() as f32);
 				if !fully_mixed.is_corrupt() {
 					turfs.par_iter().for_each(|turf| {
 						let mut mix = all_mixtures.get(turf.mix).unwrap().write();

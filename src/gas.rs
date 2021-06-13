@@ -167,11 +167,14 @@ impl GasMixtures {
 			let g = lock.as_ref().unwrap();
 			g.len() == g.capacity()
 		} {
-			let mut lock = GAS_MIXTURES.write();
-			let g = lock.as_mut().unwrap();
-			let idx = g.len();
-			g.push(RwLock::new(GasMixture::from_vol(vol)));
-			Some(idx)
+			if let Some(mut lock) = GAS_MIXTURES.try_write() {
+				let g = lock.as_mut().unwrap();
+				let idx = g.len();
+				g.push(RwLock::new(GasMixture::from_vol(vol)));
+				Some(idx)
+			} else {
+				None
+			}
 		} else {
 			None
 		}

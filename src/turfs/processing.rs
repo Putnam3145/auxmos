@@ -556,7 +556,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 		});
 		cur_count += 1;
 	}
-	(high_pressure_turfs, low_pressure_turfs)
+	(low_pressure_turfs, high_pressure_turfs)
 }
 
 fn excited_group_processing(

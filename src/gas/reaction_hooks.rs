@@ -166,7 +166,7 @@ fn fusion(byond_air: Value, holder: Value) {
 				(2.0 * PI)
 					+ ((air.volume - TOROID_VOLUME_BREAKEVEN) / TOROID_VOLUME_BREAKEVEN).atan(),
 				air.enumerate()
-					.fold(0.0, |acc, (i, amt)| acc + gas_fusion_power(i) * amt),
+					.fold(0.0, |acc, (i, amt)| acc + gas_fusion_power(&i) * amt),
 			))
 		})?;
 	let instability = (gas_power * INSTABILITY_GAS_FACTOR)
@@ -260,7 +260,7 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 		if let Some(fire_amount) = with_mix(&byond_air, |air| {
 			let (mut fuels, mut oxidizers): (Vec<_>, Vec<_>) = air
 				.enumerate()
-				.filter_map(|(&i, &g)| {
+				.filter_map(|(i, g)| {
 					let this_gas_info = &gas_info[i as usize];
 					if let Some(oxidation) = this_gas_info.oxidation {
 						if air.get_temperature() > oxidation.temperature() {

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fxhash::FxBuildHasher;
 
@@ -12,7 +12,7 @@ use dashmap::DashMap;
 
 use std::collections::HashMap;
 
-static TOTAL_NUM_GASES: AtomicU8 = AtomicU8::new(0);
+static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
 
 static mut REACTION_INFO: Option<Vec<Reaction>> = None;
 
@@ -56,13 +56,13 @@ pub enum GasRef {
 }
 
 impl GasRef {
-	pub fn get(&self) -> Result<u8, Runtime> {
+	pub fn get(&self) -> Result<GasIDX, Runtime> {
 		match self {
 			Self::Deferred(s) => gas_idx_from_string(s),
 			Self::Found(id) => Ok(*id),
 		}
 	}
-	pub fn update(&mut self) -> Result<u8, Runtime> {
+	pub fn update(&mut self) -> Result<GasIDX, Runtime> {
 		match self {
 			Self::Deferred(s) => {
 				*self = Self::Found(gas_idx_from_string(s)?);

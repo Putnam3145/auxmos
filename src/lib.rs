@@ -142,9 +142,12 @@ fn _temperature_share_hook() {
 fn _get_gases_hook() {
 	with_mix(src, |mix| {
 		let gases_list: List = List::new();
-		for gas in mix.get_gases() {
-			gases_list.append(Value::from_string(&*gas_idx_to_id(*gas)?)?);
-		}
+		mix.for_each_gas(|idx, gas| {
+			if gas > GAS_MIN_MOLES {
+				gases_list.append(Value::from_string(&*gas_idx_to_id(idx)?)?);
+			}
+			Ok(())
+		})?;
 		Ok(Value::from(gases_list))
 	})
 }
@@ -301,13 +304,10 @@ fn _compare_hook() {
 		Err(runtime!("Tried comparing a gas mix to nothing"))
 	} else {
 		with_mixes(src, &args[0], |gas_one, gas_two| {
-			if gas_one.temperature_compare(gas_two)
-				|| gas_one.compare(gas_two) > MINIMUM_MOLES_DELTA_TO_MOVE
-			{
-				Ok(Value::from(1.0))
-			} else {
-				Ok(Value::from(0.0))
-			}
+			Ok(Value::from(
+				gas_one.temperature_compare(gas_two)
+					|| gas_one.compare_with(gas_two, MINIMUM_MOLES_DELTA_TO_MOVE),
+			))
 		})
 	}
 }

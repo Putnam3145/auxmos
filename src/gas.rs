@@ -8,7 +8,7 @@ pub mod reaction_hooks;
 
 pub use gases::*;
 
-type GasIDX = u8;
+type GasIDX = usize;
 
 use auxtools::*;
 

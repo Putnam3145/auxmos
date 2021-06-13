@@ -340,8 +340,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 															continue;
 														}
 														if gas.temperature_compare(&mix)
-															|| gas.compare(&mix)
-																> MINIMUM_MOLES_DELTA_TO_MOVE
+															|| gas.compare_with(&mix, MINIMUM_MOLES_DELTA_TO_MOVE)
 														{
 															return true;
 														}
@@ -359,8 +358,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 										{
 											let planet_atmos = planet_atmos_entry.value();
 											if gas.temperature_compare(&planet_atmos)
-												|| gas.compare(&planet_atmos)
-													> MINIMUM_MOLES_DELTA_TO_MOVE
+												|| gas.compare_with(&planet_atmos, MINIMUM_MOLES_DELTA_TO_MOVE)
 											{
 												return true;
 											}
@@ -573,7 +571,7 @@ fn excited_group_processing(
 			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
 			let mut min_pressure = initial_mix_ref.return_pressure();
 			let mut max_pressure = min_pressure;
-			let mut fully_mixed = GasMixture::merger();
+			let mut fully_mixed = GasMixture::new();
 			border_turfs.push_back((initial_turf, *initial_mix_ref.value()));
 			found_turfs.insert(initial_turf);
 			GasMixtures::with_all_mixtures(|all_mixtures| {
@@ -594,6 +592,7 @@ fn excited_group_processing(
 						max_pressure = this_max;
 						turfs.push(turf);
 						fully_mixed.merge(&mix);
+						fully_mixed.volume += mix.volume;
 						for (_, loc) in adj_tiles {
 							if found_turfs.contains(&loc) {
 								continue;
@@ -611,11 +610,11 @@ fn excited_group_processing(
 						break;
 					}
 				}
-				let final_gas = fully_mixed.copy_with_vol(2500.0);
-				if !final_gas.is_corrupt() {
+				fully_mixed.multiply(crate::gas::constants::CELL_VOLUME / fully_mixed.volume);
+				if !fully_mixed.is_corrupt() {
 					turfs.par_iter().for_each(|turf| {
 						let mut mix = all_mixtures.get(turf.mix).unwrap().write();
-						mix.copy_from_mutable(&final_gas);
+						mix.copy_from_mutable(&fully_mixed);
 					});
 				}
 			});

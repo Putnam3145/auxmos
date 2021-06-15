@@ -72,7 +72,6 @@ impl GasMixture {
 		!self.temperature.is_normal()
 			|| self.moles.len() > total_num_gases()
 			|| self.moles.len() != self.heat_capacities.len()
-			|| self.moles.iter().any(|amt| !amt.is_finite())
 	}
 	/// Fixes any corruption found.
 	pub fn fix_corruption(&mut self) {
@@ -137,7 +136,7 @@ impl GasMixture {
 	/// If mix is not immutable, sets the gas at the given `idx` to the given `amt`.
 	pub fn set_moles(&mut self, idx: GasIDX, amt: f32) {
 		if !self.immutable && idx < total_num_gases() {
-			if amt.is_normal() && amt > GAS_MIN_MOLES {
+			if idx <= self.moles.len() || (amt.is_normal() && amt > GAS_MIN_MOLES) {
 				self.maybe_expand((idx + 1) as usize);
 				unsafe { *self.moles.get_unchecked_mut(idx) = amt };
 				self.cached_heat_capacity.set(None);
@@ -168,12 +167,12 @@ impl GasMixture {
 				if let Some(oxidation) = this_gas_info.oxidation {
 					if self.temperature > oxidation.temperature() {
 						let amount =
-							amt * (1.0 - self.temperature / oxidation.temperature()).max(0.0);
+							amt * (1.0 - oxidation.temperature() / self.temperature).max(0.0);
 						acc.0 += amount * oxidation.power();
 					}
 				} else if let Some(fire) = this_gas_info.fire {
 					if self.temperature > fire.temperature() {
-						let amount = amt * (1.0 - self.temperature / fire.temperature()).max(0.0);
+						let amount = amt * (1.0 - fire.temperature() / self.temperature).max(0.0);
 						acc.1 += amount / fire.burn_rate();
 					}
 				}

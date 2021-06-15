@@ -116,18 +116,39 @@ pub const NO_REACTION: i32 = 0;
 pub const REACTING: i32 = 1;
 pub const STOP_REACTIONS: i32 = 2;
 
-pub const GAS_O2: &str = "o2";
-pub const GAS_N2: &str = "n2";
-pub const GAS_CO2: &str = "co2";
-pub const GAS_PLASMA: &str = "plasma";
-pub const GAS_H2O: &str = "water_vapor";
-pub const GAS_HYPERNOB: &str = "nob";
-pub const GAS_NITROUS: &str = "n2o";
-pub const GAS_NITRYL: &str = "no2";
-pub const GAS_TRITIUM: &str = "tritium";
-pub const GAS_BZ: &str = "bz";
-pub const GAS_STIMULUM: &str = "stim";
-pub const GAS_PLUOXIUM: &str = "pluox";
-pub const GAS_MIASMA: &str = "miasma";
-pub const GAS_METHANE: &str = "methane";
-pub const GAS_METHYL_BROMIDE: &str = "methyl_bromide";
+pub const GAS_O2: &'static str = "o2";
+pub const GAS_N2: &'static str = "n2";
+pub const GAS_CO2: &'static str = "co2";
+pub const GAS_PLASMA: &'static str = "plasma";
+pub const GAS_H2O: &'static str = "water_vapor";
+pub const GAS_HYPERNOB: &'static str = "nob";
+pub const GAS_NITROUS: &'static str = "n2o";
+pub const GAS_NITRYL: &'static str = "no2";
+pub const GAS_TRITIUM: &'static str = "tritium";
+pub const GAS_BZ: &'static str = "bz";
+pub const GAS_STIMULUM: &'static str = "stim";
+pub const GAS_PLUOXIUM: &'static str = "pluox";
+pub const GAS_MIASMA: &'static str = "miasma";
+pub const GAS_METHANE: &'static str = "methane";
+pub const GAS_METHYL_BROMIDE: &'static str = "methyl_bromide";
+
+pub fn is_hardcoded_gas(s: &str) -> Option<&'static str> {
+	match s {
+		GAS_O2 => Some(GAS_O2),
+		GAS_N2 => Some(GAS_N2),
+		GAS_CO2 => Some(GAS_CO2),
+		GAS_PLASMA => Some(GAS_PLASMA),
+		GAS_H2O => Some(GAS_H2O),
+		GAS_HYPERNOB => Some(GAS_HYPERNOB),
+		GAS_NITROUS => Some(GAS_NITROUS),
+		GAS_NITRYL => Some(GAS_NITRYL),
+		GAS_TRITIUM => Some(GAS_TRITIUM),
+		GAS_BZ => Some(GAS_BZ),
+		GAS_STIMULUM => Some(GAS_STIMULUM),
+		GAS_PLUOXIUM => Some(GAS_PLUOXIUM),
+		GAS_MIASMA => Some(GAS_MIASMA),
+		GAS_METHANE => Some(GAS_METHANE),
+		GAS_METHYL_BROMIDE => Some(GAS_METHYL_BROMIDE),
+		_ => None,
+	}
+}

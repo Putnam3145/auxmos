@@ -2,6 +2,7 @@ pub mod constants;
 pub mod gas_mixture;
 pub mod gases;
 pub mod reaction;
+pub mod simd_vector;
 
 #[cfg(feature = "reaction_hooks")]
 pub mod reaction_hooks;

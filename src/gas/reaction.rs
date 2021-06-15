@@ -2,9 +2,9 @@ use auxtools::*;
 
 use std::cell::RefCell;
 
-use super::gas_mixture::GasMixture;
+use super::gas_mixture::{FlatSimdVec, GasMixture};
 
-use super::{gas_idx_to_id, total_num_gases, GasIDX};
+use super::{gas_idx_to_id, total_num_gases};
 
 use core::cmp::Ordering;
 
@@ -15,13 +15,19 @@ pub struct Reaction {
 	max_temp_req: Option<f32>,
 	min_ener_req: Option<f32>,
 	min_fire_req: Option<f32>,
-	min_gas_reqs: Vec<(GasIDX, f32)>,
+	min_gas_reqs: FlatSimdVec,
 }
 
 #[derive(Copy, Clone)]
 pub struct ReactionIdentifier {
 	string_id_hash: u64,
 	priority: f32,
+}
+
+impl std::hash::Hash for ReactionIdentifier {
+	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+		self.string_id_hash.hash(state);
+	}
 }
 
 impl Ord for ReactionIdentifier {
@@ -84,19 +90,18 @@ fn clean_up_reaction_values() {
 
 pub fn react_by_id(id: ReactionIdentifier, src: &Value, holder: &Value) -> DMResult {
 	REACTION_VALUES.with(|r| {
-		if let Some(reaction) = r.borrow().get(&id) {
-			reaction.call("react", &[src, holder])
-		} else {
-			Err(runtime!("Reaction with invalid id"))
-		}
+		r.borrow()
+			.get(&id)
+			.ok_or_else(|| runtime!("Reaction with invalid id"))
+			.and_then(|reaction| reaction.call("react", &[src, holder]))
 	})
 }
 
 impl Reaction {
-	/// Takes a /datum/reaction and makes a byond reaction out of it.
-	///  This will panic if it's given anything that isn't a /datum/reaction.
+	/// Takes a /datum/gas_reaction and makes a Rust reaction out of it.
+	///  This will panic if it's given anything that isn't a /datum/gas_reaction.
 	///  Yes, *panic*, not runtime. This is intentional. Please do not give it
-	///  anything but a /datum/reaction.
+	///  anything but a /datum/gas_reaction.
 	pub fn from_byond_reaction(reaction: &Value) -> Self {
 		let priority = reaction.get_number(byond_string!("priority")).unwrap();
 		let string_id_hash =
@@ -107,13 +112,13 @@ impl Reaction {
 		};
 		let our_reaction = {
 			if let Ok(min_reqs) = reaction.get_list(byond_string!("min_requirements")) {
-				let mut min_gas_reqs: Vec<(GasIDX, f32)> = Vec::new();
+				let mut min_gas_reqs: FlatSimdVec = FlatSimdVec::new();
 				for i in 0..total_num_gases() {
 					if let Ok(gas_req) =
 						min_reqs.get(Value::from_string(&*gas_idx_to_id(i).unwrap()).unwrap())
 					{
 						if let Ok(req_amount) = gas_req.as_number() {
-							min_gas_reqs.push((i, req_amount));
+							min_gas_reqs.force_set(i, req_amount);
 						}
 					}
 				}
@@ -149,10 +154,10 @@ impl Reaction {
 				Reaction {
 					id,
 					min_temp_req: None,
-					max_temp_req: Some(1.0),
+					max_temp_req: Some(-1.0),
 					min_ener_req: None,
 					min_fire_req: None,
-					min_gas_reqs: vec![],
+					min_gas_reqs: FlatSimdVec::new(),
 				}
 			}
 		};
@@ -164,6 +169,10 @@ impl Reaction {
 	}
 	/// Checks if the given gas mixture can react with this reaction.
 	pub fn check_conditions(&self, mix: &GasMixture) -> bool {
+		use itertools::{
+			EitherOrBoth::{Both, Left, Right},
+			Itertools,
+		};
 		self.min_temp_req
 			.map_or(true, |temp_req| mix.get_temperature() >= temp_req)
 			&& self
@@ -173,12 +182,19 @@ impl Reaction {
 				.min_ener_req
 				.map_or(true, |ener_req| mix.thermal_energy() >= ener_req)
 			&& self.min_fire_req.map_or(true, |fire_req| {
-				let (oxi, fuel) = mix.get_burnability();
-				oxi.min(fuel) >= fire_req
-			}) && self
+				mix.get_fuel_amount() > fire_req && mix.get_oxidation_power() > fire_req
+				})
+			&& self
 			.min_gas_reqs
 			.iter()
-			.all(|&(k, v)| mix.get_moles(k) >= v)
+			.zip_longest(mix.gases().iter().copied())
+			.all(|pair| {
+				match pair {
+					Left(_) => false, // they have more gases than us
+					Right(_) => true, // we have more gases than them
+					Both(a,b) => a.le(b).all()
+				}
+			})
 	}
 	/// Returns the priority of the reaction.
 	pub fn get_priority(&self) -> f32 {

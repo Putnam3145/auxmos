@@ -142,9 +142,16 @@ fn _temperature_share_hook() {
 fn _get_gases_hook() {
 	with_mix(src, |mix| {
 		let gases_list: List = List::new();
-		mix.for_each_gas(|idx, gas| {
-			if gas > GAS_MIN_MOLES {
-				gases_list.append(Value::from_string(&*gas_idx_to_id(idx)?)?);
+		with_gas_info(|gas_info| {
+			for i in 0..mix.gases().len().min(total_num_gases()) {
+				if mix.get_moles(i) > GAS_MIN_MOLES {
+					gases_list.append(Value::from_string(
+						gas_info
+							.get(i)
+							.ok_or_else(|| runtime!("Invalid gas index: {}", i))?
+							.id,
+					)?);
+				}
 			}
 			Ok(())
 		})?;
@@ -315,22 +322,19 @@ fn _compare_hook() {
 #[hook("/datum/gas_mixture/proc/multiply")]
 fn _multiply_hook() {
 	with_mix_mut(src, |mix| {
-		mix.multiply(if args.is_empty() {
-			1.0
-		} else {
-			args[0].as_number().unwrap_or(1.0)
-		});
+		mix.multiply(
+			args.get(0)
+				.map_or(0.0, |arg| arg.as_number().unwrap_or(1.0)),
+		);
 		Ok(Value::null())
 	})
 }
 
 #[hook("/datum/gas_mixture/proc/react")]
-fn _react_hook() {
+fn _react_hook(holder: Value) {
 	let mut ret: i32 = 0;
-	let n = Value::null();
-	let holder = args.first().unwrap_or(&n);
 	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
-	for reaction in reactions {
+	for reaction in reactions.iter().copied() {
 		ret |= react_by_id(reaction, src, holder)?
 			.as_number()
 			.unwrap_or_default() as i32;

@@ -1,12 +1,8 @@
-use super::{with_mix, with_mix_mut};
-
-use super::constants::*;
+use super::{constants::*, gas_mixture::FlatSimdVec, with_mix, with_mix_mut, gas_mixture::SimdGasVec};
 
 use auxtools::*;
 
-use crate::{gas_fusion_power, gas_idx_from_string};
-
-use super::{with_gas_info, GasIDX};
+use crate::gas_idx_from_string;
 
 #[cfg(feature = "plasma_fire_hook")]
 #[hook("/datum/gas_reaction/plasmafire/react")]
@@ -19,8 +15,6 @@ fn _plasma_fire(byond_air: &Value, holder: &Value) {
 	const FIRE_PLASMA_ENERGY_RELEASED: f32 = 3000000.0;
 	let o2 = gas_idx_from_string(GAS_O2)?;
 	let plasma = gas_idx_from_string(GAS_PLASMA)?;
-	let co2 = gas_idx_from_string(GAS_CO2)?;
-	let tritium = gas_idx_from_string(GAS_TRITIUM)?;
 	let (oxygen_burn_rate, plasma_burn_rate, initial_oxy, initial_plasma, initial_energy) =
 		with_mix(&byond_air, |air| {
 			let temperature_scale = {
@@ -62,9 +56,9 @@ fn _plasma_fire(byond_air: &Value, holder: &Value) {
 			air.set_moles(plasma, initial_plasma - plasma_burn_rate);
 			air.set_moles(o2, initial_oxy - (plasma_burn_rate * oxygen_burn_rate));
 			if initial_oxy / initial_plasma > SUPER_SATURATION_THRESHOLD {
-				air.adjust_moles(tritium, plasma_burn_rate);
+				air.adjust_moles(gas_idx_from_string(GAS_TRITIUM)?, plasma_burn_rate);
 			} else {
-				air.adjust_moles(co2, plasma_burn_rate);
+				air.adjust_moles(gas_idx_from_string(GAS_CO2)?, plasma_burn_rate);
 			}
 			let new_temp = (initial_energy + plasma_burn_rate * FIRE_PLASMA_ENERGY_RELEASED)
 				/ air.heat_capacity();
@@ -140,7 +134,7 @@ fn tritfire(byond_air: &Value, holder: &Value) {
 			.unwrap()
 			.call(&[holder, byond_air, &Value::from(temperature)])?;
 	}
-	Ok(Value::from(1.0))
+	Ok(Value::from(burned_fuel > 0.0))
 }
 
 #[cfg(feature = "fusion_hook")]
@@ -165,8 +159,8 @@ fn fusion(byond_air: Value, holder: Value) {
 				air.volume / PI,
 				(2.0 * PI)
 					+ ((air.volume - TOROID_VOLUME_BREAKEVEN) / TOROID_VOLUME_BREAKEVEN).atan(),
-				air.enumerate()
-					.fold(0.0, |acc, (i, amt)| acc + gas_fusion_power(&i) * amt),
+				air.gases()
+					.dot_product(crate::gases::FUSION_POWERS.read().as_ref().unwrap()),
 			))
 		})?;
 	let instability = (gas_power * INSTABILITY_GAS_FACTOR)
@@ -231,7 +225,7 @@ fn fusion(byond_air: Value, holder: Value) {
 			air.garbage_collect();
 			Ok(())
 		})?;
-		if reaction_energy != 0.0 {
+		if reaction_energy.is_normal() {
 			Proc::find(byond_string!("/proc/fusion_ball"))
 				.unwrap()
 				.call(&[
@@ -239,9 +233,9 @@ fn fusion(byond_air: Value, holder: Value) {
 					&Value::from(reaction_energy),
 					&Value::from(instability),
 				])?;
-			Ok(Value::from(1.0))
+			Ok(Value::from(REACTING))
 		} else {
-			Ok(Value::from(0.0))
+			Ok(Value::from(NO_REACTION))
 		}
 	}
 }
@@ -249,97 +243,115 @@ fn fusion(byond_air: Value, holder: Value) {
 #[cfg(feature = "generic_fire_hook")]
 #[hook("/datum/gas_reaction/genericfire/react")]
 fn _hook_generic_fire(byond_air: Value, holder: Value) {
-	use fxhash::FxBuildHasher;
-	use std::collections::HashMap;
-	let mut burn_results: HashMap<GasIDX, f32, FxBuildHasher> = HashMap::with_capacity_and_hasher(
-		super::total_num_gases() as usize,
-		FxBuildHasher::default(),
-	);
+	let mut burn_results = FlatSimdVec::new();
 	let mut energy_released = 0.0;
-	with_gas_info(|gas_info| {
-		if let Some(fire_amount) = with_mix(&byond_air, |air| {
-			let (mut fuels, mut oxidizers): (Vec<_>, Vec<_>) = air
-				.enumerate()
-				.filter_map(|(i, g)| {
-					let this_gas_info = &gas_info[i as usize];
-					if let Some(oxidation) = this_gas_info.oxidation {
-						if air.get_temperature() > oxidation.temperature() {
-							let amount = g
-								* (1.0 - air.get_temperature() / oxidation.temperature()).max(0.0);
-							Some((i, amount, amount * oxidation.power()))
-						} else {
-							None
-						}
-					} else if let Some(fire) = this_gas_info.fire {
-						if air.get_temperature() > fire.temperature() {
-							let amount =
-								g * (1.0 - air.get_temperature() / fire.temperature()).max(0.0);
-							Some((i, amount, -amount / fire.burn_rate()))
-						} else {
-							None
-						}
-					} else {
-						None
-					}
-				})
-				.partition(|&(_, _, power)| power < 0.0);
-			for (_, _, power) in fuels.iter_mut() {
-				*power *= -1.0;
-			}
-			let oxidation_power = oxidizers
-				.iter()
-				.copied()
-				.fold(0.0, |acc, (_, _, power)| acc + power);
-			let total_fuel = fuels
-				.iter()
-				.copied()
-				.fold(0.0, |acc, (_, _, power)| acc + power);
-			if oxidation_power <= 0.0 || total_fuel <= 0.0 {
-				Ok(None)
-			} else {
-				let oxidation_ratio = oxidation_power / total_fuel;
-				if oxidation_ratio > 1.0 {
-					for (_, amt, power) in oxidizers.iter_mut() {
-						*amt /= oxidation_ratio;
-						*power /= oxidation_ratio;
-					}
-				} else {
-					for (_, amt, power) in fuels.iter_mut() {
-						*amt *= oxidation_ratio;
-						*power *= oxidation_ratio;
-					}
-				}
-				for (i, amt, power) in oxidizers.iter().copied().chain(fuels.iter().copied()) {
-					let this_gas_info = &gas_info[i as usize];
-					energy_released += power * this_gas_info.fire_energy_released;
-					if let Some(products) = this_gas_info.fire_products.as_ref() {
-						for (product_idx, product_amt) in products.iter() {
-							burn_results
-								.entry(product_idx.get()?)
-								.and_modify(|r| *r += product_amt * amt)
-								.or_insert_with(|| product_amt * amt);
-						}
-					}
-					burn_results
-						.entry(i)
-						.and_modify(|r| *r -= amt)
-						.or_insert(-amt);
-				}
-				Ok(Some(oxidation_power.min(total_fuel) * 2.0))
-			}
-		})
-		.unwrap()
-		{
-			let temperature = with_mix_mut(&byond_air, |air| {
-				let final_energy = air.thermal_energy() + energy_released;
-				for (&i, &amt) in burn_results.iter() {
-					air.adjust_moles(i, amt);
-				}
-				air.set_temperature(final_energy / air.heat_capacity());
-				Ok(air.get_temperature())
+	with_mix(&byond_air, |air| {
+		use super::{
+			with_fire_products, FIRE_ENTHALPIES, FIRE_RATES, FIRE_TEMPS, OXIDATION_POWERS,
+			OXIDATION_TEMPS,
+		};
+		let temp_vec = SimdGasVec::splat(air.get_temperature());
+		let mut oxidizers: Vec<(_, _)> = air
+			.gases()
+			.iter()
+			.copied()
+			.zip(
+				OXIDATION_TEMPS
+					.read()
+					.as_ref()
+					.unwrap()
+					.iter()
+					.copied()
+					.zip(OXIDATION_POWERS.read().as_ref().unwrap().iter().copied()),
+			)
+			.map(|(mut amt, (oxi_temp, oxi_pwr))| {
+				amt = temp_vec.ge(oxi_temp).select(amt, SimdGasVec::splat(0.0));
+				let mut powers = amt.clone();
+				powers *= oxi_pwr;
+				let temperature_scale = 1.0 - (oxi_temp / air.get_temperature());
+				powers *= temperature_scale;
+				(amt, powers)
 			})
-			.unwrap();
-			let cached_results = byond_air
+			.collect();
+		let mut fuels: Vec<(_, _)> = air
+			.gases()
+			.iter()
+			.copied()
+			.zip(
+				FIRE_TEMPS
+					.read()
+					.as_ref()
+					.unwrap()
+					.iter()
+					.copied()
+					.zip(FIRE_RATES.read().as_ref().unwrap().iter().copied()),
+			)
+			.map(|(mut amt, (fire_temp, fire_rate))| {
+				amt = temp_vec.ge(fire_temp).select(amt, SimdGasVec::splat(0.0));
+				let mut powers = amt.clone();
+				powers /= fire_rate;
+				let temperature_scale = 1.0 - (fire_temp / air.get_temperature());
+				powers *= temperature_scale;
+				(amt, powers)
+			})
+			.collect();
+		let oxidation_power = oxidizers
+			.iter()
+			.copied()
+			.fold(0.0f32, |acc, (_, power)| acc + power.sum());
+		let total_fuel = fuels
+			.iter()
+			.copied()
+			.fold(0.0f32, |acc, (_, power)| acc + power.sum());
+		if oxidation_power <= 0.0 || total_fuel <= 0.0 {
+			Ok(None)
+		} else {
+			let oxidation_ratio = oxidation_power / total_fuel;
+			if oxidation_ratio > 1.0 {
+				for (amt, power) in oxidizers.iter_mut() {
+					*amt /= oxidation_ratio;
+					*power /= oxidation_ratio;
+				}
+			} else {
+				for (amt, power) in fuels.iter_mut() {
+					*amt *= oxidation_ratio;
+					*power *= oxidation_ratio;
+				}
+			}
+			let all_amounts = FlatSimdVec::from_vec(
+				oxidizers
+					.iter()
+					.copied()
+					.zip(fuels.iter().copied())
+					.map(|(a, b)| a.0 + b.0)
+					.collect(),
+			);
+			let all_powers = FlatSimdVec::from_vec(
+				oxidizers
+					.iter()
+					.copied()
+					.zip(fuels.iter().copied())
+					.map(|(a, b)| a.1 + b.1)
+					.collect(),
+			);
+			with_fire_products(|fire_products| {
+				for (i, product_vec) in fire_products.iter().enumerate() {
+					burn_results += product_vec.clone() * all_powers.get(i).unwrap_or_default();
+				}
+			});
+			{
+				energy_released = (all_amounts * FIRE_ENTHALPIES.read().as_ref().unwrap()).sum();
+			}
+			Ok(Some(oxidation_power.min(total_fuel) * 2.0))
+		}
+	})
+	.and_then(|maybe_fire_amount| {
+		if let Some(fire_amount) = maybe_fire_amount {
+			let temperature = with_mix_mut(&byond_air, |air| {
+				air.merge_from_vec_with_energy(&burn_results, energy_released);
+				Ok(air.get_temperature())
+			})?;
+			byond_air
 				.get_list(byond_string!("reaction_results"))
 				.map_err(|_| {
 					runtime!(
@@ -348,16 +360,22 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 						std::line!(),
 						std::column!()
 					)
-				})?;
-			cached_results.set(byond_string!("fire"), Value::from(fire_amount))?;
+				})?
+				.set(byond_string!("fire"), Value::from(fire_amount))?;
 			if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
+				// not a guarantee by any means!
 				Proc::find(byond_string!("/proc/fire_expose"))
-					.unwrap()
+					.ok_or_else(|| runtime!("Could not find fire_expose"))?
 					.call(&[holder, byond_air, &Value::from(temperature)])?;
 			}
-			Ok(Value::from(if fire_amount > 0.0 { 1.0 } else { 0.0 }))
+			Ok(if fire_amount > 0.0 {
+				REACTING
+			} else {
+				NO_REACTION
+			})
 		} else {
-			Ok(Value::from(0.0))
+			Ok(NO_REACTION)
 		}
 	})
+	.map(|r| Value::from(r))
 }

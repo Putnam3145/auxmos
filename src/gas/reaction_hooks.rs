@@ -265,7 +265,7 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 					if let Some(oxidation) = this_gas_info.oxidation {
 						if air.get_temperature() > oxidation.temperature() {
 							let amount = g
-								* (1.0 - oxidation.temperature() / air.get_temperature() ).max(0.0);
+								* (1.0 - oxidation.temperature() / air.get_temperature()).max(0.0);
 							Some((i, amount, amount * oxidation.power()))
 						} else {
 							None

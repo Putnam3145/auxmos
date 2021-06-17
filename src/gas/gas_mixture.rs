@@ -240,6 +240,23 @@ impl GasMixture {
 		}
 		self.cached_heat_capacity.set(Some(combined_heat_capacity));
 	}
+	pub fn transfer_gases_to(&mut self, r: f32, gases: &[GasIDX], into: &mut GasMixture) {
+		let ratio = r.clamp(0.0, 1.0);
+		let initial_energy = into.thermal_energy();
+		let mut heat_transfer = 0.0;
+		for i in gases.iter().copied() {
+			let orig = self.get_moles(i);
+			if orig > 0.0 {
+				let delta = orig * ratio;
+				heat_transfer += delta * self.heat_capacities[i];
+				*unsafe { self.moles.get_unchecked_mut(i) } -= delta;
+				into.adjust_moles(i, delta);
+			}
+		}
+		self.cached_heat_capacity.set(None);
+		into.cached_heat_capacity.set(None);
+		into.set_temperature((initial_energy + heat_transfer) / into.heat_capacity());
+	}
 	pub fn remove_ratio_into(&mut self, mut ratio: f32, into: &mut GasMixture) {
 		if ratio <= 0.0 {
 			return;
@@ -247,9 +264,12 @@ impl GasMixture {
 		if ratio >= 1.0 {
 			ratio = 1.0;
 		}
+		let orig_temp = self.temperature;
 		into.copy_from_mutable(self);
 		into.multiply(ratio);
 		self.multiply(1.0 - ratio);
+		self.temperature = orig_temp;
+		into.temperature = orig_temp;
 	}
 	pub fn remove_into(&mut self, amount: f32, into: &mut GasMixture) {
 		self.remove_ratio_into(amount / self.total_moles(), into);

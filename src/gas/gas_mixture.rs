@@ -4,6 +4,8 @@ use std::cell::Cell;
 
 use tinyvec::TinyVec;
 
+use itertools::EitherOrBoth::{Left, Right, Both};
+
 use super::reaction::ReactionIdentifier;
 
 use super::constants::*;
@@ -372,7 +374,11 @@ impl GasMixture {
 			.iter()
 			.copied()
 			.zip_longest(sample.moles.iter().copied())
-			.any(|pair| pair.reduce(|a, b| (b - a).abs()) >= amt)
+			.any(|pair| match pair {
+				Left(a) => a >= amt,
+				Right(b) => b >= amt,
+				Both(a,b) => a != b && (a-b).abs() >= amt
+			})
 	}
 	/// Clears the moles from the gas.
 	pub fn clear(&mut self) {

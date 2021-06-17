@@ -326,9 +326,6 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 							{
 								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 								if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
-									if gas.is_corrupt() {
-										return false;
-									}
 									for (_, loc) in adj_tiles {
 										if let Some(turf) = turf_gases().get(&loc) {
 											if turf.simulation_level & SIMULATION_LEVEL_DISABLED
@@ -336,9 +333,6 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 											{
 												if let Some(entry) = all_mixtures.get(turf.mix) {
 													if let Some(mix) = entry.try_read() {
-														if mix.is_corrupt() {
-															continue;
-														}
 														if gas.temperature_compare(&mix)
 															|| gas.compare_with(
 																&mix,
@@ -413,9 +407,6 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 										{
 											if let Some(entry) = all_mixtures.get(turf.mix) {
 												if let Some(mix) = entry.try_read() {
-													if mix.is_corrupt() {
-														continue;
-													}
 													end_gas.merge(&mix);
 													adj_amount += 1;
 													pressure_diffs[j as usize] = (

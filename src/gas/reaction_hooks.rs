@@ -1,8 +1,33 @@
-use super::{constants::*, gas_mixture::FlatSimdVec, with_mix, with_mix_mut, gas_mixture::SimdGasVec};
+use super::{constants::*, gas_mixture::*, with_mix, with_mix_mut, GasIDX};
 
 use auxtools::*;
 
 use crate::gas_idx_from_string;
+
+#[cfg(feature = "plasma_fire_hook")]
+static mut PLAS_FIRE_GASES: Option<(GasIDX, GasIDX, GasIDX, GasIDX)> = None;
+
+#[cfg(feature = "trit_fire_hook")]
+static mut TRIT_FIRE_GASES: Option<(GasIDX, GasIDX, GasIDX)> = None;
+
+#[cfg(feature = "fusion_hook")]
+static mut FUSION_GASES: Option<(GasIDX, GasIDX, GasIDX, GasIDX, GasIDX, GasIDX, GasIDX)> = None;
+
+#[shutdown]
+fn _shutdown_reaction_hooks() {
+	#[cfg(feature = "plasma_fire_hook")]
+	unsafe {
+		PLAS_FIRE_GASES = None
+	}
+	#[cfg(feature = "trit_fire_hook")]
+	unsafe {
+		TRIT_FIRE_GASES = None
+	}
+	#[cfg(feature = "fusion_hook")]
+	unsafe {
+		FUSION_GASES = None
+	}
+}
 
 #[cfg(feature = "plasma_fire_hook")]
 #[hook("/datum/gas_reaction/plasmafire/react")]
@@ -13,8 +38,20 @@ fn _plasma_fire(byond_air: &Value, holder: &Value) {
 	const PLASMA_OXYGEN_FULLBURN: f32 = 10.0;
 	const PLASMA_BURN_RATE_DELTA: f32 = 9.0;
 	const FIRE_PLASMA_ENERGY_RELEASED: f32 = 3000000.0;
-	let o2 = gas_idx_from_string(GAS_O2)?;
-	let plasma = gas_idx_from_string(GAS_PLASMA)?;
+	let (o2, plasma, co2, tritium) = unsafe {
+		if let Some(tup) = PLAS_FIRE_GASES {
+			tup
+		} else {
+			let tup = (
+				gas_idx_from_string(GAS_O2)?,
+				gas_idx_from_string(GAS_PLASMA)?,
+				gas_idx_from_string(GAS_CO2)?,
+				gas_idx_from_string(GAS_TRITIUM)?,
+			);
+			PLAS_FIRE_GASES = Some(tup);
+			tup
+		}
+	};
 	let (oxygen_burn_rate, plasma_burn_rate, initial_oxy, initial_plasma, initial_energy) =
 		with_mix(&byond_air, |air| {
 			let temperature_scale = {
@@ -52,14 +89,20 @@ fn _plasma_fire(byond_air: &Value, holder: &Value) {
 		})?;
 	let fire_amount = plasma_burn_rate * (1.0 + oxygen_burn_rate);
 	if fire_amount > 0.0 {
+		let gas_changes = [
+			(plasma, -plasma_burn_rate),
+			(o2, -plasma_burn_rate * oxygen_burn_rate),
+			(
+				if initial_oxy / initial_plasma > SUPER_SATURATION_THRESHOLD {
+					tritium
+				} else {
+					co2
+				},
+				plasma_burn_rate,
+			),
+		];
 		let temperature = with_mix_mut(&byond_air, |air| {
-			air.set_moles(plasma, initial_plasma - plasma_burn_rate);
-			air.set_moles(o2, initial_oxy - (plasma_burn_rate * oxygen_burn_rate));
-			if initial_oxy / initial_plasma > SUPER_SATURATION_THRESHOLD {
-				air.adjust_moles(gas_idx_from_string(GAS_TRITIUM)?, plasma_burn_rate);
-			} else {
-				air.adjust_moles(gas_idx_from_string(GAS_CO2)?, plasma_burn_rate);
-			}
+			air.adjust_multiple(&gas_changes);
 			let new_temp = (initial_energy + plasma_burn_rate * FIRE_PLASMA_ENERGY_RELEASED)
 				/ air.heat_capacity();
 			air.set_temperature(new_temp);
@@ -95,9 +138,19 @@ fn tritfire(byond_air: &Value, holder: &Value) {
 	const TRITIUM_BURN_TRIT_FACTOR: f32 = 10.0;
 	const TRITIUM_MINIMUM_RADIATION_FACTOR: f32 = 0.1;
 	const FIRE_HYDROGEN_ENERGY_RELEASED: f32 = 280000.0;
-	let o2 = gas_idx_from_string(GAS_O2)?;
-	let tritium = gas_idx_from_string(GAS_TRITIUM)?;
-	let water = gas_idx_from_string(GAS_H2O)?;
+	let (o2, tritium, water) = unsafe {
+		if let Some(tup) = TRIT_FIRE_GASES {
+			tup
+		} else {
+			let tup = (
+				gas_idx_from_string(GAS_O2)?,
+				gas_idx_from_string(GAS_TRITIUM)?,
+				gas_idx_from_string(GAS_H2O)?,
+			);
+			TRIT_FIRE_GASES = Some(tup);
+			tup
+		}
+	};
 	let (burned_fuel, energy_released, temperature) = with_mix_mut(byond_air, |air| {
 		let initial_oxy = air.get_moles(o2);
 		let initial_trit = air.get_moles(tritium);
@@ -148,8 +201,23 @@ fn fusion(byond_air: Value, holder: Value) {
 	const FUSION_INSTABILITY_ENDOTHERMALITY: f32 = 2.0;
 	const FUSION_TRITIUM_CONVERSION_COEFFICIENT: f32 = 1E-10;
 	const FUSION_MOLE_THRESHOLD: f32 = 250.0;
-	let plas = gas_idx_from_string(GAS_PLASMA)?;
-	let co2 = gas_idx_from_string(GAS_CO2)?;
+	let (tritium, plas, co2, o2, nitrous, bz, nitryl) = unsafe {
+		if let Some(tup) = FUSION_GASES {
+			tup
+		} else {
+			let tup = (
+				gas_idx_from_string(GAS_TRITIUM)?,
+				gas_idx_from_string(GAS_PLASMA)?,
+				gas_idx_from_string(GAS_CO2)?,
+				gas_idx_from_string(GAS_O2)?,
+				gas_idx_from_string(GAS_NITROUS)?,
+				gas_idx_from_string(GAS_BZ)?,
+				gas_idx_from_string(GAS_NITRYL)?,
+			);
+			FUSION_GASES = Some(tup);
+			tup
+		}
+	};
 	let (initial_energy, initial_plasma, initial_carbon, scale_factor, toroidal_size, gas_power) =
 		with_mix(byond_air, |air| {
 			Ok((
@@ -170,7 +238,6 @@ fn fusion(byond_air: Value, holder: Value) {
 	let mut plasma = (initial_plasma - FUSION_MOLE_THRESHOLD) / scale_factor;
 	let mut carbon = (initial_carbon - FUSION_MOLE_THRESHOLD) / scale_factor;
 	plasma = (plasma - instability * carbon.sin()).rem_euclid(toroidal_size);
-	//count the rings. ss13's modulus is positive, this ain't, who knew
 	carbon = (carbon - plasma).rem_euclid(toroidal_size);
 	plasma = plasma * scale_factor + FUSION_MOLE_THRESHOLD;
 	carbon = carbon * scale_factor + FUSION_MOLE_THRESHOLD;
@@ -191,41 +258,40 @@ fn fusion(byond_air: Value, holder: Value) {
 	if initial_energy + reaction_energy < 0.0 {
 		Ok(Value::from(0.0))
 	} else {
-		let tritium = gas_idx_from_string(GAS_TRITIUM)?;
-		let (byproduct_a, byproduct_b, tritium_conversion_coefficient) = {
+		let (byproduct_a, byproduct_b, tritium_conversion_amount) = {
 			if reaction_energy > 0.0 {
 				(
-					gas_idx_from_string(GAS_O2)?,
-					gas_idx_from_string(GAS_NITROUS)?,
-					FUSION_TRITIUM_CONVERSION_COEFFICIENT,
+					o2,
+					nitrous,
+					FUSION_TRITIUM_MOLES_USED
+						* reaction_energy * FUSION_TRITIUM_CONVERSION_COEFFICIENT,
 				)
 			} else {
 				(
-					gas_idx_from_string(GAS_BZ)?,
-					gas_idx_from_string(GAS_NITRYL)?,
-					-FUSION_TRITIUM_CONVERSION_COEFFICIENT,
+					bz,
+					nitryl,
+					-FUSION_TRITIUM_MOLES_USED
+						* reaction_energy * FUSION_TRITIUM_CONVERSION_COEFFICIENT,
 				)
 			}
 		};
-		with_mix_mut(byond_air, |air| {
-			air.adjust_moles(tritium, -FUSION_TRITIUM_MOLES_USED);
+		let gas_changes = [
+			(tritium, -FUSION_TRITIUM_MOLES_USED),
+			(byproduct_a, tritium_conversion_amount),
+			(byproduct_b, tritium_conversion_amount),
+		];
+		if with_mix_mut(byond_air, |air| {
 			air.set_moles(plas, plasma);
 			air.set_moles(co2, carbon);
-			air.adjust_moles(
-				byproduct_a,
-				FUSION_TRITIUM_MOLES_USED * (reaction_energy * tritium_conversion_coefficient),
-			);
-			air.adjust_moles(
-				byproduct_b,
-				FUSION_TRITIUM_MOLES_USED * (reaction_energy * tritium_conversion_coefficient),
-			);
-			if reaction_energy != 0.0 {
-				air.set_temperature((initial_energy + reaction_energy) / air.heat_capacity());
-			}
+			air.adjust_multiple(&gas_changes);
 			air.garbage_collect();
-			Ok(())
-		})?;
-		if reaction_energy.is_normal() {
+			if reaction_energy.is_normal() {
+				air.set_temperature((initial_energy + reaction_energy) / air.heat_capacity());
+				Ok(true)
+			} else {
+				Ok(false)
+			}
+		})? {
 			Proc::find(byond_string!("/proc/fusion_ball"))
 				.unwrap()
 				.call(&[
@@ -336,7 +402,7 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 			);
 			with_fire_products(|fire_products| {
 				for (i, product_vec) in fire_products.iter().enumerate() {
-					burn_results += product_vec.clone() * all_powers.get(i).unwrap_or_default();
+					burn_results += product_vec * all_powers.get(i).unwrap_or_default();
 				}
 			});
 			{

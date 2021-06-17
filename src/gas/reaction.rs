@@ -15,7 +15,7 @@ pub struct Reaction {
 	max_temp_req: Option<f32>,
 	min_ener_req: Option<f32>,
 	min_fire_req: Option<f32>,
-	min_gas_reqs: FlatSimdVec,
+	min_gas_reqs: Option<FlatSimdVec>,
 }
 
 #[derive(Copy, Clone)]
@@ -112,13 +112,13 @@ impl Reaction {
 		};
 		let our_reaction = {
 			if let Ok(min_reqs) = reaction.get_list(byond_string!("min_requirements")) {
-				let mut min_gas_reqs: FlatSimdVec = FlatSimdVec::new();
+				let mut found_gas_reqs = FlatSimdVec::new();
 				for i in 0..total_num_gases() {
 					if let Ok(gas_req) =
 						min_reqs.get(Value::from_string(&*gas_idx_to_id(i).unwrap()).unwrap())
 					{
 						if let Ok(req_amount) = gas_req.as_number() {
-							min_gas_reqs.force_set(i, req_amount);
+							found_gas_reqs.force_set(i, req_amount);
 						}
 					}
 				}
@@ -148,7 +148,7 @@ impl Reaction {
 					max_temp_req,
 					min_ener_req,
 					min_fire_req,
-					min_gas_reqs,
+					min_gas_reqs: (found_gas_reqs.len() > 0).then(|| found_gas_reqs),
 				}
 			} else {
 				Reaction {
@@ -157,7 +157,7 @@ impl Reaction {
 					max_temp_req: Some(-1.0),
 					min_ener_req: None,
 					min_fire_req: None,
-					min_gas_reqs: FlatSimdVec::new(),
+					min_gas_reqs: None,
 				}
 			}
 		};
@@ -181,20 +181,20 @@ impl Reaction {
 			&& self
 				.min_ener_req
 				.map_or(true, |ener_req| mix.thermal_energy() >= ener_req)
-			&& self.min_fire_req.map_or(true, |fire_req| {
-				mix.get_fuel_amount() > fire_req && mix.get_oxidation_power() > fire_req
-				})
-			&& self
-			.min_gas_reqs
-			.iter()
-			.zip_longest(mix.gases().iter().copied())
-			.all(|pair| {
-				match pair {
-					Left(_) => false, // they have more gases than us
-					Right(_) => true, // we have more gases than them
-					Both(a,b) => a.le(b).all()
-				}
-			})
+			&& self.min_gas_reqs.as_ref().map_or(true, |gas_reqs| {
+				gas_reqs
+					.iter()
+					.zip_longest(mix.gases().iter().copied())
+					.all(|pair| {
+						match pair {
+							Left(_) => false, // we don't have enough gases
+							Right(_) => true, // reaction is out of gases to check
+							Both(a, b) => a.le(b).all(),
+						}
+					})
+			}) && self.min_fire_req.map_or(true, |fire_req| {
+			mix.get_fuel_amount() > fire_req && mix.get_oxidation_power() > fire_req
+		})
 	}
 	/// Returns the priority of the reaction.
 	pub fn get_priority(&self) -> f32 {

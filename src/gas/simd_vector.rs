@@ -2,6 +2,8 @@ pub use packed_simd_2::*;
 
 pub type SimdGasVec = f32x4; // 8 got reasonable performance but this seems to work better, + it's more portable i guess
 
+pub type SimdGasMask = m32x4;
+
 use std::ops::*;
 
 #[derive(Clone)]
@@ -21,8 +23,16 @@ impl FlatSimdVec {
 	pub fn from_vec(internal: Vec<SimdGasVec>) -> Self {
 		let len = internal.len() * Self::LANE_SIZE;
 		let mut res = FlatSimdVec { internal, len };
-		res.garbage_collect();
+		res.shrink_to_fit();
 		res
+	}
+	pub fn with_flat_view<T>(&self, f: impl Fn(&[f32]) -> T) -> T {
+		f(unsafe { std::slice::from_raw_parts(self.internal.as_ptr() as *const f32, self.len) })
+	}
+	pub fn with_flat_mut<T>(&mut self, f: impl Fn(&mut [f32]) -> T) -> T {
+		f(unsafe {
+			std::slice::from_raw_parts_mut(self.internal.as_mut_ptr() as *mut f32, self.len)
+		})
 	}
 	pub fn get(&self, idx: usize) -> Option<f32> {
 		(idx < self.len).then(|| unsafe {
@@ -39,7 +49,11 @@ impl FlatSimdVec {
 	pub fn set(&mut self, idx: usize, n: f32) -> bool {
 		self.correct_size();
 		if idx < self.len {
-			self.internal[idx / Self::LANE_SIZE] = self.internal.get(idx / Self::LANE_SIZE).unwrap().replace(idx % Self::LANE_SIZE, n);
+			self.internal[idx / Self::LANE_SIZE] = self
+				.internal
+				.get(idx / Self::LANE_SIZE)
+				.unwrap()
+				.replace(idx % Self::LANE_SIZE, n);
 			true
 		} else {
 			false
@@ -61,9 +75,6 @@ impl FlatSimdVec {
 		}
 	}
 	fn correct_size(&mut self) {
-		if self.len < self.internal.len() * Self::LANE_SIZE {
-			self.garbage_collect();
-		}
 		while self.internal.len() * Self::LANE_SIZE < self.len {
 			self.internal.push(SimdGasVec::splat(0.0));
 		}
@@ -73,6 +84,10 @@ impl FlatSimdVec {
 		self.len += 1;
 		self.correct_size();
 		self.set(prev_len, val);
+	}
+	pub fn push_simd(&mut self, val: SimdGasVec) {
+		self.len = (self.len + Self::LANE_SIZE * 2) & !(Self::LANE_SIZE - 1);
+		self.internal.push(val);
 	}
 	pub fn resize(&mut self, size: usize) {
 		self.len = size;
@@ -88,32 +103,37 @@ impl FlatSimdVec {
 		}
 		acc.sum()
 	}
-	pub fn truncate(&mut self) {
+	pub fn shrink_to_fit(&mut self) {
+		let count = self
+			.internal
+			.iter()
+			.copied()
+			.rev()
+			.take_while(|&v| v == SimdGasVec::splat(0.0))
+			.count();
+		self.internal.truncate(self.internal.len() - count);
 		self.len = self.len.min(self.internal.len() * Self::LANE_SIZE);
 	}
 	pub fn clear(&mut self) {
 		self.internal.clear();
 		self.len = 0;
 	}
-	pub fn garbage_collect(&mut self) {
-		loop {
-			if self.internal.len() <= 1
-				|| self
-					.internal
-					.last()
-					.map(|vector| vector.sum())
-					.map_or(true, |s| {
-						if s <= crate::GAS_MIN_MOLES || !s.is_normal() {
-							self.internal.pop();
-							false
-						} else {
-							true
-						}
-					}) {
-				break;
+	pub fn copy_from(&mut self, other: &FlatSimdVec) {
+		self.len = other.len;
+		for (i, entry) in other.iter().copied().enumerate() {
+			if let Some(ours) = self.internal.get_mut(i) {
+				*ours = entry;
+			} else {
+				self.internal.push(entry);
 			}
 		}
-		self.truncate();
+	}
+	pub fn select(field: &[SimdGasMask], a: &FlatSimdVec, b: &FlatSimdVec) -> FlatSimdVec {
+		let mut n = FlatSimdVec::new();
+		for (bits, (a, b)) in field.iter().zip(a.iter().copied().zip(b.iter().copied())) {
+			n.push_simd(bits.select(a, b))
+		}
+		n
 	}
 }
 
@@ -127,6 +147,7 @@ impl Deref for FlatSimdVec {
 
 impl AddAssign<Self> for FlatSimdVec {
 	fn add_assign(&mut self, other: Self) {
+		self.len = self.len.max(other.len);
 		for (i, entry) in other.iter().copied().enumerate() {
 			if let Some(ours) = self.internal.get_mut(i) {
 				*ours += entry;
@@ -148,11 +169,12 @@ impl Add<Self> for FlatSimdVec {
 
 impl SubAssign<Self> for FlatSimdVec {
 	fn sub_assign(&mut self, other: Self) {
+		self.len = self.len.max(other.len);
 		for (i, entry) in other.iter().copied().enumerate() {
 			if let Some(ours) = self.internal.get_mut(i) {
 				*ours -= entry;
 			} else {
-				self.internal.push(entry);
+				self.internal.push(-entry);
 			}
 		}
 	}
@@ -169,6 +191,7 @@ impl Sub<Self> for FlatSimdVec {
 
 impl MulAssign<Self> for FlatSimdVec {
 	fn mul_assign(&mut self, other: Self) {
+		self.len = self.len.max(other.len);
 		for (i, entry) in other.iter().copied().enumerate() {
 			if let Some(ours) = self.internal.get_mut(i) {
 				*ours *= entry;
@@ -190,6 +213,7 @@ impl Mul<Self> for FlatSimdVec {
 
 impl DivAssign<Self> for FlatSimdVec {
 	fn div_assign(&mut self, other: Self) {
+		self.len = self.len.max(other.len);
 		for (i, entry) in other.iter().copied().enumerate() {
 			if let Some(ours) = self.internal.get_mut(i) {
 				*ours /= entry;
@@ -368,6 +392,19 @@ where
 	type Output = Self;
 
 	fn mul(self, rhs: T) -> Self {
+		let mut ret = self.clone();
+		ret *= rhs;
+		ret
+	}
+}
+
+impl<T: RhsForFlatSimdVec + Copy> Mul<T> for &FlatSimdVec
+where
+	SimdGasVec: std::ops::MulAssign<T>,
+{
+	type Output = FlatSimdVec;
+
+	fn mul(self, rhs: T) -> FlatSimdVec {
 		let mut ret = self.clone();
 		ret *= rhs;
 		ret

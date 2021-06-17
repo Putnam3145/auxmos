@@ -4,7 +4,7 @@ use std::cell::Cell;
 
 pub use super::simd_vector::*;
 
-use std::ops::{Add,Mul};
+use std::ops::{Add, Mul};
 
 use super::{
 	constants::*, reaction::ReactionIdentifier, total_num_gases, with_reactions,
@@ -81,7 +81,7 @@ impl GasMixture {
 	}
 	/// Fixes any corruption found.
 	pub fn fix_corruption(&mut self) {
-		self.moles.garbage_collect();
+		self.moles.shrink_to_fit();
 		if self.temperature < 2.7 || !self.temperature.is_normal() {
 			self.set_temperature(293.15);
 		}
@@ -123,8 +123,21 @@ impl GasMixture {
 		if !self.immutable && amt.is_normal() {
 			self.set_moles(idx, self.get_moles(idx) + amt);
 			if amt < 0.0 {
-				self.moles.garbage_collect();
+				self.moles.shrink_to_fit();
 			}
+		}
+	}
+	pub fn adjust_multiple(&mut self, adjustments: &[(GasIDX, f32)]) {
+		if !self.immutable {
+			self.moles
+				.expand(adjustments.iter().map(|a| a.0).max().unwrap_or(0));
+			self.moles.with_flat_mut(|gases| {
+				for (i, amt) in adjustments.iter().copied() {
+					gases[i] += amt;
+				}
+			});
+			self.cached_heat_capacity.set(None);
+			self.garbage_collect();
 		}
 	}
 	fn slow_heat_cap(&self) -> f32 {
@@ -144,6 +157,10 @@ impl GasMixture {
 		self.moles.get(idx).map_or(0.0, |amt| {
 			amt * with_specific_heats(|spec| spec.get(idx).unwrap_or(0.0))
 		})
+	}
+	/// A vector of all partial heat capacities.
+	pub fn heat_capacities(&self) -> FlatSimdVec {
+		with_specific_heats(|spec_heats| &self.moles * spec_heats)
 	}
 	/// The total mole count of the mixture. Moles.
 	pub fn total_moles(&self) -> f32 {
@@ -209,7 +226,7 @@ impl GasMixture {
 		if self.immutable && !sample.is_corrupt() {
 			return;
 		}
-		self.moles = sample.moles.clone();
+		self.moles.copy_from(&sample.moles);
 		self.temperature = sample.temperature;
 		self.cached_heat_capacity
 			.set(sample.cached_heat_capacity.get());
@@ -284,16 +301,18 @@ impl GasMixture {
 			.iter()
 			.copied()
 			.zip_longest(sample.moles.iter().copied())
-			.fold(0.0, |acc, pair| {
-				acc.max(pair.reduce(|a, b| (b - a).abs()).max_element())
+			.fold(SimdGasVec::splat(0.0), |acc, pair| {
+				acc + pair.reduce(|a, b| (b - a).abs())
 			})
+			.max_element()
 	}
 	pub fn compare_with(&self, sample: &GasMixture, amt: f32) -> bool {
+		let real_amt = SimdGasVec::splat(amt);
 		self.moles
 			.iter()
 			.copied()
 			.zip_longest(sample.moles.iter().copied())
-			.any(|pair| pair.reduce(|a, b| (b - a).abs()).max_element() >= amt)
+			.any(|pair| pair.reduce(|a, b| (b - a).abs()).ge(real_amt).any())
 	}
 	/// Clears the moles from the gas.
 	pub fn clear(&mut self) {
@@ -316,8 +335,11 @@ impl GasMixture {
 			self.cached_heat_capacity
 				.set(Some(self.heat_capacity() * multiplier)); // hax
 			self.moles *= multiplier;
-			self.moles.garbage_collect();
+			self.moles.shrink_to_fit();
 		}
+	}
+	pub fn with_gases<T>(&self, f: impl Fn(&[f32]) -> T) -> T {
+		self.moles.with_flat_view(f)
 	}
 	pub fn get_burnability(&self) -> (f32, f32) {
 		(self.get_oxidation_power(), self.get_fuel_amount())
@@ -337,13 +359,18 @@ impl GasMixture {
 					.copied()
 					.zip(OXIDATION_POWERS.read().as_ref().unwrap().iter().copied()),
 			)
-			.fold(SimdGasVec::splat(0.0), |acc, (mut amt, (oxi_temp, oxi_pwr))| {
-				amt *= oxi_pwr;
-				let temperature_scale = 1.0
-					- (temp_vec.ge(oxi_temp).select(oxi_temp, SimdGasVec::splat(0.0))
-						/ self.temperature);
-				amt.mul_adde(temperature_scale, acc)
-			})
+			.fold(
+				SimdGasVec::splat(0.0),
+				|acc, (mut amt, (oxi_temp, oxi_pwr))| {
+					amt *= oxi_pwr;
+					let temperature_scale = 1.0
+						- (temp_vec
+							.ge(oxi_temp)
+							.select(oxi_temp, SimdGasVec::splat(0.0))
+							/ self.temperature);
+					amt.mul_adde(temperature_scale, acc)
+				},
+			)
 			.sum()
 	}
 	pub fn get_fuel_amount(&self) -> f32 {
@@ -366,34 +393,35 @@ impl GasMixture {
 				|acc, (mut amt, (fire_temp, fire_burn_rate))| {
 					amt /= fire_burn_rate;
 					let temperature_scale = 1.0
-						- (temp_vec.ge(fire_temp).select(fire_temp, SimdGasVec::splat(0.0))
+						- (temp_vec
+							.ge(fire_temp)
+							.select(fire_temp, SimdGasVec::splat(0.0))
 							/ self.temperature);
 					amt.mul_adde(temperature_scale, acc)
 				},
 			)
 			.sum()
 	}
-	/// Checks if the proc can react with any reactions.
+	/// Checks if the gas can react with any reactions.
 	pub fn can_react(&self) -> bool {
-		with_reactions(|reactions| {
-			reactions
-				.iter()
-				.any(|r| r.check_conditions(self))
-		})
+		!self.immutable
+			&& with_reactions(|reactions| reactions.iter().any(|r| r.check_conditions(self)))
 	}
 	/// Gets all of the reactions this mix should do.
-	pub fn all_reactable(&self) -> Vec<ReactionIdentifier> {
-		with_reactions(|reactions| {
-			reactions
-				.iter()
-				.filter_map(|r| {
-					if r.check_conditions(self) {
-						Some(r.get_id())
-					} else {
-						None
-					}
-				})
-				.collect()
+	pub fn all_reactable(&self) -> Option<Vec<ReactionIdentifier>> {
+		(!self.immutable).then(|| {
+			with_reactions(|reactions| {
+				reactions
+					.iter()
+					.filter_map(|r| {
+						if r.check_conditions(self) {
+							Some(r.get_id())
+						} else {
+							None
+						}
+					})
+					.collect()
+			})
 		})
 	}
 	/// Adds heat directly to the gas mixture, in joules (probably).
@@ -424,7 +452,7 @@ impl GasMixture {
 		hasher.finish()
 	}
 	pub fn garbage_collect(&mut self) {
-		self.moles.garbage_collect();
+		self.moles.shrink_to_fit();
 	}
 }
 

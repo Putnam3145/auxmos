@@ -9,11 +9,11 @@ pub mod reaction_hooks;
 
 pub use gases::*;
 
+pub use gas_mixture::*;
+
 type GasIDX = usize;
 
 use auxtools::*;
-
-use gas_mixture::GasMixture;
 
 use parking_lot::{const_rwlock, RwLock};
 
@@ -138,15 +138,13 @@ impl GasMixtures {
 		}
 	}
 	pub fn try_push_with_lock(vol: f32, g: &Vec<RwLock<GasMixture>>) -> Option<usize> {
-		if let Some(idx) = {
-			let mut next_gas_ids = NEXT_GAS_IDS.write();
-			next_gas_ids.as_mut().unwrap().pop()
-		} {
-			g.get(idx).unwrap().write().clear_with_vol(vol);
-			Some(idx)
-		} else {
-			None
-		}
+		NEXT_GAS_IDS
+			.try_write()
+			.and_then(|mut lock| lock.as_mut().unwrap().pop())
+			.map(|idx| {
+				g.get(idx).unwrap().write().clear_with_vol(vol);
+				idx
+			})
 	}
 	/// Makes a new living gas mixture and returns the index to it. Returns None if an allocation must happen.
 	pub fn try_push(vol: f32) -> Option<usize> {
@@ -283,24 +281,25 @@ fn _shut_down_gases() {
 	*NEXT_GAS_IDS.write() = None;
 }
 
+pub fn value_to_idx(mix: &Value) -> Result<usize, Runtime> {
+	mix.get_number(byond_string!("_extools_pointer_gasmixture"))
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})
+		.map(|n| n.to_bits() as usize)
+}
+
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.
 pub fn with_mix<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
 where
 	F: FnMut(&GasMixture) -> Result<T, Runtime>,
 {
-	GasMixtures::with_gas_mixture(
-		mix.get_number(byond_string!("_extools_pointer_gasmixture"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		f,
-	)
+	GasMixtures::with_gas_mixture(value_to_idx(mix)?, f)
 }
 
 /// As with_mix, but mutable.
@@ -308,19 +307,7 @@ pub fn with_mix_mut<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
 where
 	F: FnMut(&mut GasMixture) -> Result<T, Runtime>,
 {
-	GasMixtures::with_gas_mixture_mut(
-		mix.get_number(byond_string!("_extools_pointer_gasmixture"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		f,
-	)
+	GasMixtures::with_gas_mixture_mut(value_to_idx(mix)?, f)
 }
 
 /// As with_mix, but with two mixes.
@@ -328,31 +315,7 @@ pub fn with_mixes<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Run
 where
 	F: FnMut(&GasMixture, &GasMixture) -> Result<T, Runtime>,
 {
-	GasMixtures::with_gas_mixtures(
-		src_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		arg_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		f,
-	)
+	GasMixtures::with_gas_mixtures(value_to_idx(src_mix)?, value_to_idx(arg_mix)?, f)
 }
 
 /// As with_mix_mut, but with two mixes.
@@ -360,31 +323,7 @@ pub fn with_mixes_mut<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T,
 where
 	F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<T, Runtime>,
 {
-	GasMixtures::with_gas_mixtures_mut(
-		src_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		arg_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		f,
-	)
+	GasMixtures::with_gas_mixtures_mut(value_to_idx(src_mix)?, value_to_idx(arg_mix)?, f)
 }
 
 /// Allows different lock levels for each gas. Instead of relevant refs to the gases, returns the RWLock object.
@@ -392,31 +331,7 @@ pub fn with_mixes_custom<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result
 where
 	F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
 {
-	GasMixtures::with_gas_mixtures_custom(
-		src_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		arg_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		f,
-	)
+	GasMixtures::with_gas_mixtures_custom(value_to_idx(src_mix)?, value_to_idx(arg_mix)?, f)
 }
 
 #[hook("/proc/fix_corrupted_atmos")]

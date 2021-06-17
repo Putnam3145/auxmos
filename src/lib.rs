@@ -6,9 +6,9 @@ use auxtools::*;
 
 use gas::*;
 
-use gas::reaction::react_by_id;
+use reaction::react_by_id;
 
-use gas::constants::*;
+use constants::*;
 
 #[hook("/proc/process_atmos_callbacks")]
 fn _atmos_callback_handle() {
@@ -17,12 +17,12 @@ fn _atmos_callback_handle() {
 
 #[hook("/datum/gas_mixture/proc/__gasmixture_register")]
 fn _register_gasmixture_hook() {
-	gas::GasMixtures::register_gasmix(src)
+	GasMixtures::register_gasmix(src)
 }
 
 #[hook("/datum/gas_mixture/proc/__gasmixture_unregister")]
 fn _unregister_gasmixture_hook() {
-	gas::GasMixtures::unregister_gasmix(src)
+	GasMixtures::unregister_gasmix(src)
 }
 
 #[hook("/datum/gas_mixture/proc/heat_capacity")]
@@ -143,17 +143,19 @@ fn _get_gases_hook() {
 	with_mix(src, |mix| {
 		let gases_list: List = List::new();
 		with_gas_info(|gas_info| {
-			for i in 0..mix.gases().len().min(total_num_gases()) {
-				if mix.get_moles(i) > GAS_MIN_MOLES {
-					gases_list.append(Value::from_string(
-						gas_info
-							.get(i)
-							.ok_or_else(|| runtime!("Invalid gas index: {}", i))?
-							.id,
-					)?);
+			mix.with_gases(|gases| {
+				for (i, amt) in gases.iter().copied().enumerate() {
+					if amt > GAS_MIN_MOLES {
+						gases_list.append(Value::from_string(
+							gas_info
+								.get(i)
+								.ok_or_else(|| runtime!("Invalid gas index: {}", i))?
+								.id,
+						)?);
+					}
 				}
-			}
-			Ok(())
+				Ok(())
+			})
 		})?;
 		Ok(Value::from(gases_list))
 	})
@@ -273,19 +275,40 @@ fn _scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
 			std::column!()
 		)
 	})?;
-	with_mixes_mut(src, into, |src_gas, dest_gas| {
-		let mut removed = src_gas.remove_ratio(ratio);
-		let mut buffer = gas::gas_mixture::GasMixture::from_vol(gas::constants::CELL_VOLUME);
-		buffer.set_temperature(src_gas.get_temperature());
-		for idx in 1..gases_to_scrub.len() + 1 {
-			if let Ok(gas_id) = gas_idx_from_value(&gases_to_scrub.get(idx).unwrap()) {
-				buffer.set_moles(gas_id, removed.get_moles(gas_id));
-				removed.set_moles(gas_id, 0.0);
-			}
-		}
-		dest_gas.merge(&buffer);
-		src_gas.merge(&removed);
-		Ok(Value::from(true))
+	GasMixtures::with_all_mixtures(|all_mixtures| {
+		let mut src_gas = all_mixtures
+			.get(value_to_idx(src)?)
+			.ok_or_else(|| {
+				runtime!(
+					"No gas mixture with ID {} exists!",
+					value_to_idx(src).unwrap()
+				)
+			})?
+			.write();
+		let mut dest_gas = all_mixtures
+			.get(value_to_idx(into)?)
+			.ok_or_else(|| {
+				runtime!(
+					"No gas mixture with ID {} exists!",
+					value_to_idx(into).unwrap()
+				)
+			})?
+			.write();
+		GasMixtures::with_new_mix_and_lock(src_gas.volume, all_mixtures, |removed| {
+			src_gas.remove_ratio_into(ratio, removed);
+			GasMixtures::with_new_mix_and_lock(src_gas.volume, all_mixtures, |buffer| {
+				buffer.set_temperature(src_gas.get_temperature());
+				for idx in 1..gases_to_scrub.len() + 1 {
+					if let Ok(gas_id) = gas_idx_from_value(&gases_to_scrub.get(idx).unwrap()) {
+						buffer.set_moles(gas_id, removed.get_moles(gas_id));
+						removed.set_moles(gas_id, 0.0);
+					}
+				}
+				dest_gas.merge(&buffer);
+				src_gas.merge(&removed);
+				Ok(Value::from(true))
+			})
+		})
 	})
 }
 
@@ -333,34 +356,23 @@ fn _multiply_hook() {
 #[hook("/datum/gas_mixture/proc/react")]
 fn _react_hook(holder: Value) {
 	let mut ret: i32 = 0;
-	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
-	for reaction in reactions.iter().copied() {
-		ret |= react_by_id(reaction, src, holder)?
-			.as_number()
-			.unwrap_or_default() as i32;
-		if ret & STOP_REACTIONS == STOP_REACTIONS {
-			return Ok(Value::from(ret as f32));
+	if let Some(reactions) = with_mix(src, |mix| Ok(mix.all_reactable()))? {
+		for reaction in reactions.iter().copied() {
+			ret |= react_by_id(reaction, src, holder)?
+				.as_number()
+				.unwrap_or_default() as i32;
+			if ret & STOP_REACTIONS == STOP_REACTIONS {
+				return Ok(Value::from(ret as f32));
+			}
 		}
 	}
 	Ok(Value::from(ret as f32))
 }
 
 #[hook("/datum/gas_mixture/proc/adjust_heat")]
-fn _adjust_heat_hook() {
+fn _adjust_heat_hook(heat: Value) {
 	with_mix_mut(src, |mix| {
-		mix.adjust_heat(
-			args.get(0)
-				.ok_or_else(|| runtime!("Wrong number of args for adjust heat: 0"))?
-				.as_number()
-				.map_err(|_| {
-					runtime!(
-						"Attempt to interpret non-number value as number {} {}:{}",
-						std::file!(),
-						std::line!(),
-						std::column!()
-					)
-				})?,
-		);
+		mix.adjust_heat(heat.as_number().unwrap_or_default());
 		Ok(Value::null())
 	})
 }
@@ -438,7 +450,7 @@ fn _equalize_all_hook() {
 		})
 		.collect(); // collect because get_number is way slower than the one-time allocation
 	GasMixtures::with_all_mixtures(move |all_mixtures| {
-		gas::GasMixtures::with_new_mix_and_lock(0.0, all_mixtures, |tot| {
+		GasMixtures::with_new_mix_and_lock(0.0, all_mixtures, |tot| {
 			let mut tot_vol: f64 = 0.0;
 			for &id in gas_list.iter() {
 				if let Some(src_gas_lock) = all_mixtures.get(id) {

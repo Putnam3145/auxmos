@@ -12,6 +12,10 @@ type GasIDX = usize;
 
 use auxtools::*;
 
+use fxhash::FxBuildHasher;
+
+use std::collections::HashSet;
+
 use gas_mixture::GasMixture;
 
 use parking_lot::{const_rwlock, RwLock};
@@ -28,6 +32,22 @@ pub struct GasMixtures {}
 static GAS_MIXTURES: RwLock<Option<Vec<RwLock<GasMixture>>>> = const_rwlock(None);
 
 static NEXT_GAS_IDS: RwLock<Option<Vec<usize>>> = const_rwlock(None);
+
+static mut REGISTERED_GAS_MIXES: Option<HashSet<u32, FxBuildHasher>> = None;
+
+fn is_registered_mix(i: u32) -> bool {
+	unsafe { REGISTERED_GAS_MIXES.as_ref().map_or(false, |map| {
+		map.contains(&i)
+	})}
+}
+
+pub fn register_mix(v: &Value) {
+	unsafe { REGISTERED_GAS_MIXES.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default())).insert(v.raw.data.id); }
+}
+
+pub fn unregister_mix(i: u32) {
+	unsafe { REGISTERED_GAS_MIXES.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default())).remove(&i); }
+}
 
 #[init(partial)]
 fn _init_gas_mixtures() -> Result<(), String> {
@@ -260,19 +280,33 @@ impl GasMixtures {
 				f32::from_bits(idx as u32),
 			)?;
 		}
+		register_mix(mix);
 		Ok(Value::null())
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
-	pub fn unregister_gasmix(mix: &Value) -> DMResult {
-		if let Ok(float_bits) = mix.get_number(byond_string!("_extools_pointer_gasmixture")) {
-			let idx = float_bits.to_bits();
-			{
-				let mut next_gas_ids = NEXT_GAS_IDS.write();
-				next_gas_ids.as_mut().unwrap().push(idx as usize);
+	pub fn unregister_gasmix(mix: u32) {
+		if is_registered_mix(mix) {
+			use raw_types::values::{ValueTag, ValueData};
+			unsafe {
+				let mut raw = raw_types::values::Value {
+					tag: ValueTag::Null,
+					data: ValueData { id: 0}
+				};
+				let this_mix = raw_types::values::Value {
+					tag: ValueTag::Datum,
+					data: ValueData { id: mix }
+				};
+				let err = raw_types::funcs::get_variable(&mut raw, this_mix, byond_string!("_extools_pointer_gasmixture").get_id());
+				if err == 1 {
+					let idx = raw.data.number.to_bits();
+					{
+						let mut next_gas_ids = NEXT_GAS_IDS.write();
+						next_gas_ids.as_mut().unwrap().push(idx as usize);
+					}
+					unregister_mix(mix);
+				}
 			}
-			mix.set(byond_string!("_extools_pointer_gasmixture"), &Value::null())?;
 		}
-		Ok(Value::null())
 	}
 }
 

@@ -4,6 +4,8 @@ pub mod turfs;
 
 use auxtools::*;
 
+use auxcleanup::*;
+
 use gas::*;
 
 use gas::reaction::react_by_id;
@@ -20,9 +22,17 @@ fn _register_gasmixture_hook() {
 	gas::GasMixtures::register_gasmix(src)
 }
 
+#[cfg(not(feature = "auxcleanup_gas_deletion"))]
 #[hook("/datum/gas_mixture/proc/__gasmixture_unregister")]
 fn _unregister_gasmixture_hook() {
-	gas::GasMixtures::unregister_gasmix(src)
+	gas::GasMixtures::unregister_gasmix(unsafe {src.raw.data.id});
+	Ok(Value::null())
+}
+
+#[cfg(feature = "auxcleanup_gas_deletion")]
+#[datum_del]
+fn _unregister_gasmixture_hook(v: u32) {
+	gas::GasMixtures::unregister_gasmix(v);
 }
 
 #[hook("/datum/gas_mixture/proc/heat_capacity")]

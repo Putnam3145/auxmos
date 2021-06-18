@@ -73,7 +73,7 @@ impl GasMixture {
 	pub fn is_corrupt(&self) -> bool {
 		!self.temperature.is_normal()
 			|| self.moles.len() > total_num_gases()
-			|| self.moles.len() != self.heat_capacities.len()
+			|| self.moles.len() < self.heat_capacities.len()
 	}
 	/// Fixes any corruption found.
 	pub fn fix_corruption(&mut self) {
@@ -146,17 +146,11 @@ impl GasMixture {
 		}
 	}
 	pub fn adjust_moles(&mut self, idx: GasIDX, amt: f32) {
-		if !self.immutable && idx < total_num_gases() {
+		if !self.immutable && amt.is_normal() && idx < total_num_gases() {
 			self.maybe_expand((idx + 1) as usize);
-			if {
-				let r = unsafe { self.moles.get_unchecked_mut(idx) };
-				*r += amt;
-				if !r.is_normal() || *r <= GAS_MIN_MOLES {
-					true
-				} else {
-					false
-				}
-			} {
+			let r = unsafe { self.moles.get_unchecked_mut(idx) };
+			*r += amt;
+			if amt < 0.0 {
 				self.garbage_collect();
 			}
 			self.cached_heat_capacity.set(None);
@@ -224,7 +218,7 @@ impl GasMixture {
 	}
 	/// Merges one gas mixture into another.
 	pub fn merge(&mut self, giver: &GasMixture) {
-		if self.immutable || giver.is_corrupt() {
+		if self.immutable {
 			return;
 		}
 		let our_heat_capacity = self.heat_capacity();
@@ -250,7 +244,7 @@ impl GasMixture {
 			let orig = self.get_moles(i);
 			if orig > 0.0 {
 				let delta = orig * ratio;
-				heat_transfer += delta * self.heat_capacities[i];
+				heat_transfer += delta * self.temperature * self.heat_capacities[i];
 				*unsafe { self.moles.get_unchecked_mut(i) } -= delta;
 				into.adjust_moles(i, delta);
 			}
@@ -288,7 +282,7 @@ impl GasMixture {
 	}
 	/// Copies from a given gas mixture, if we're mutable.
 	pub fn copy_from_mutable(&mut self, sample: &GasMixture) {
-		if self.immutable && !sample.is_corrupt() {
+		if self.immutable {
 			return;
 		}
 		self.moles = sample.moles.clone();
@@ -399,12 +393,12 @@ impl GasMixture {
 	/// Multiplies every gas molage with this value.
 	pub fn multiply(&mut self, multiplier: f32) {
 		if !self.immutable {
+			self.cached_heat_capacity
+				.set(Some(self.heat_capacity() * multiplier)); // hax
 			for amt in self.moles.iter_mut() {
 				*amt *= multiplier;
 			}
 			self.garbage_collect();
-			self.cached_heat_capacity
-				.set(Some(self.heat_capacity() * multiplier)); // hax
 		}
 	}
 	/// Checks if the proc can react with any reactions.
@@ -451,9 +445,15 @@ impl GasMixture {
 	}
 	// Removes all zeroes from the gas mixture.
 	pub fn garbage_collect(&mut self) {
-		if let Some(idx) = self.moles.iter().rposition(|amt| amt > &GAS_MIN_MOLES) {
-			self.moles.truncate(idx + 1)
+		let mut last_valid_found = 0;
+		for (i, amt) in self.moles.iter_mut().enumerate() {
+			if *amt > GAS_MIN_MOLES {
+				last_valid_found = i;
+			} else {
+				*amt = 0.0;
+			}
 		}
+		self.moles.truncate(last_valid_found + 1);
 	}
 }
 

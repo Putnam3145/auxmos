@@ -393,11 +393,11 @@ impl GasMixture {
 	/// Multiplies every gas molage with this value.
 	pub fn multiply(&mut self, multiplier: f32) {
 		if !self.immutable {
-			self.cached_heat_capacity
-				.set(Some(self.heat_capacity() * multiplier)); // hax
 			for amt in self.moles.iter_mut() {
 				*amt *= multiplier;
 			}
+			self.cached_heat_capacity
+				.set(None);
 			self.garbage_collect();
 		}
 	}

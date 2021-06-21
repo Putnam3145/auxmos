@@ -58,7 +58,7 @@ impl GasMixture {
 			heat_capacities: TinyVec::new(),
 			temperature: 2.7,
 			volume: 2500.0,
-			min_heat_capacity: MINIMUM_HEAT_CAPACITY,
+			min_heat_capacity: 0.0,
 			immutable: false,
 			cached_heat_capacity: Cell::new(None),
 		}
@@ -360,7 +360,7 @@ impl GasMixture {
 	pub fn clear_with_vol(&mut self, vol: f32) {
 		self.temperature = 2.7;
 		self.volume = vol;
-		self.min_heat_capacity = MINIMUM_HEAT_CAPACITY;
+		self.min_heat_capacity = 0.0;
 		self.immutable = false;
 		self.clear();
 	}

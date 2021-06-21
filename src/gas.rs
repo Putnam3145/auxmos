@@ -36,17 +36,27 @@ static NEXT_GAS_IDS: RwLock<Option<Vec<usize>>> = const_rwlock(None);
 static mut REGISTERED_GAS_MIXES: Option<HashSet<u32, FxBuildHasher>> = None;
 
 fn is_registered_mix(i: u32) -> bool {
-	unsafe { REGISTERED_GAS_MIXES.as_ref().map_or(false, |map| {
-		map.contains(&i)
-	})}
+	unsafe {
+		REGISTERED_GAS_MIXES
+			.as_ref()
+			.map_or(false, |map| map.contains(&i))
+	}
 }
 
 pub fn register_mix(v: &Value) {
-	unsafe { REGISTERED_GAS_MIXES.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default())).insert(v.raw.data.id); }
+	unsafe {
+		REGISTERED_GAS_MIXES
+			.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default()))
+			.insert(v.raw.data.id);
+	}
 }
 
 pub fn unregister_mix(i: u32) {
-	unsafe { REGISTERED_GAS_MIXES.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default())).remove(&i); }
+	unsafe {
+		REGISTERED_GAS_MIXES
+			.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default()))
+			.remove(&i);
+	}
 }
 
 #[init(partial)]
@@ -286,17 +296,21 @@ impl GasMixtures {
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
 	pub fn unregister_gasmix(mix: u32) {
 		if is_registered_mix(mix) {
-			use raw_types::values::{ValueTag, ValueData};
+			use raw_types::values::{ValueData, ValueTag};
 			unsafe {
 				let mut raw = raw_types::values::Value {
 					tag: ValueTag::Null,
-					data: ValueData { id: 0}
+					data: ValueData { id: 0 },
 				};
 				let this_mix = raw_types::values::Value {
 					tag: ValueTag::Datum,
-					data: ValueData { id: mix }
+					data: ValueData { id: mix },
 				};
-				let err = raw_types::funcs::get_variable(&mut raw, this_mix, byond_string!("_extools_pointer_gasmixture").get_id());
+				let err = raw_types::funcs::get_variable(
+					&mut raw,
+					this_mix,
+					byond_string!("_extools_pointer_gasmixture").get_id(),
+				);
 				if err == 1 {
 					let idx = raw.data.number.to_bits();
 					{

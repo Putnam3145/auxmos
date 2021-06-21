@@ -258,34 +258,7 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 	let mut energy_released = 0.0;
 	with_gas_info(|gas_info| {
 		if let Some(fire_amount) = with_mix(&byond_air, |air| {
-			let (mut fuels, mut oxidizers): (Vec<_>, Vec<_>) = air
-				.enumerate()
-				.filter_map(|(i, g)| {
-					let this_gas_info = &gas_info[i as usize];
-					if let Some(oxidation) = this_gas_info.oxidation {
-						if air.get_temperature() > oxidation.temperature() {
-							let amount = g
-								* (1.0 - oxidation.temperature() / air.get_temperature()).max(0.0);
-							Some((i, amount, amount * oxidation.power()))
-						} else {
-							None
-						}
-					} else if let Some(fire) = this_gas_info.fire {
-						if air.get_temperature() > fire.temperature() {
-							let amount =
-								g * (1.0 - fire.temperature() / air.get_temperature()).max(0.0);
-							Some((i, amount, -amount / fire.burn_rate()))
-						} else {
-							None
-						}
-					} else {
-						None
-					}
-				})
-				.partition(|&(_, _, power)| power < 0.0);
-			for (_, _, power) in fuels.iter_mut() {
-				*power *= -1.0;
-			}
+			let (mut fuels, mut oxidizers) = air.get_fire_info_with_lock(gas_info);
 			let oxidation_power = oxidizers
 				.iter()
 				.copied()

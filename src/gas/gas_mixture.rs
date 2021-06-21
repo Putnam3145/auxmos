@@ -4,7 +4,7 @@ use std::cell::Cell;
 
 use tinyvec::TinyVec;
 
-use itertools::EitherOrBoth::{Left, Right, Both};
+use itertools::EitherOrBoth::{Both, Left, Right};
 
 use super::reaction::ReactionIdentifier;
 
@@ -155,32 +155,6 @@ impl GasMixture {
 			}
 			self.cached_heat_capacity.set(None);
 		}
-	}
-	pub fn get_burnability(&self) -> (f32, f32) {
-		super::with_gas_info(|gas_info| {
-			self.enumerate().fold((0.0, 0.0), |mut acc, (i, amt)| {
-				let this_gas_info = &gas_info[i as usize];
-				if let Some(oxidation) = this_gas_info.oxidation {
-					if self.temperature > oxidation.temperature() {
-						let amount =
-							amt * (1.0 - oxidation.temperature() / self.temperature).max(0.0);
-						acc.0 += amount * oxidation.power();
-					}
-				} else if let Some(fire) = this_gas_info.fire {
-					if self.temperature > fire.temperature() {
-						let amount = amt * (1.0 - fire.temperature() / self.temperature).max(0.0);
-						acc.1 += amount / fire.burn_rate();
-					}
-				}
-				acc
-			})
-		})
-	}
-	pub fn get_oxidation_power(&self) -> f32 {
-		self.get_burnability().0
-	}
-	pub fn get_fuel_amount(&self) -> f32 {
-		self.get_burnability().1
 	}
 	/// The heat capacity of the material. [joules?]/mole-kelvin.
 	pub fn heat_capacity(&self) -> f32 {
@@ -371,7 +345,7 @@ impl GasMixture {
 			.any(|pair| match pair {
 				Left(a) => a >= amt,
 				Right(b) => b >= amt,
-				Both(a,b) => a != b && (a-b).abs() >= amt
+				Both(a, b) => a != b && (a - b).abs() >= amt,
 			})
 	}
 	/// Clears the moles from the gas.
@@ -396,8 +370,7 @@ impl GasMixture {
 			for amt in self.moles.iter_mut() {
 				*amt *= multiplier;
 			}
-			self.cached_heat_capacity
-				.set(None);
+			self.cached_heat_capacity.set(None);
 			self.garbage_collect();
 		}
 	}
@@ -419,6 +392,69 @@ impl GasMixture {
 				})
 				.collect()
 		})
+	}
+	pub fn get_burnability(&self) -> (f32, f32) {
+		super::with_gas_info(|gas_info| {
+			self.enumerate().fold((0.0, 0.0), |mut acc, (i, amt)| {
+				let this_gas_info = &gas_info[i as usize];
+				if let Some(oxidation) = this_gas_info.oxidation {
+					if self.temperature > oxidation.temperature() {
+						let amount =
+							amt * (1.0 - oxidation.temperature() / self.temperature).max(0.0);
+						acc.0 += amount * oxidation.power();
+					}
+				} else if let Some(fire) = this_gas_info.fire {
+					if self.temperature > fire.temperature() {
+						let amount = amt * (1.0 - fire.temperature() / self.temperature).max(0.0);
+						acc.1 += amount / fire.burn_rate();
+					}
+				}
+				acc
+			})
+		})
+	}
+	pub fn get_oxidation_power(&self) -> f32 {
+		self.get_burnability().0
+	}
+	pub fn get_fuel_amount(&self) -> f32 {
+		self.get_burnability().1
+	}
+	pub fn get_fire_info_with_lock(
+		&self,
+		gas_info: &Vec<super::GasType>,
+	) -> (Vec<(usize, f32, f32)>, Vec<(usize, f32, f32)>) {
+		let (mut fuels, oxidizers): (Vec<_>, Vec<_>) = self
+			.enumerate()
+			.filter_map(|(i, g)| {
+				let this_gas_info = &gas_info[i as usize];
+				if let Some(oxidation) = this_gas_info.oxidation {
+					if self.get_temperature() > oxidation.temperature() {
+						let amount =
+							g * (1.0 - oxidation.temperature() / self.get_temperature()).max(0.0);
+						Some((i, amount, amount * oxidation.power()))
+					} else {
+						None
+					}
+				} else if let Some(fire) = this_gas_info.fire {
+					if self.get_temperature() > fire.temperature() {
+						let amount =
+							g * (1.0 - fire.temperature() / self.get_temperature()).max(0.0);
+						Some((i, amount, -amount / fire.burn_rate()))
+					} else {
+						None
+					}
+				} else {
+					None
+				}
+			})
+			.partition(|&(_, _, power)| power < 0.0);
+		for (_, _, power) in fuels.iter_mut() {
+			*power *= -1.0;
+		}
+		(fuels, oxidizers)
+	}
+	pub fn get_fire_info(&self) -> (Vec<(usize, f32, f32)>, Vec<(usize, f32, f32)>) {
+		super::with_gas_info(|gas_info| self.get_fire_info_with_lock(gas_info))
 	}
 	/// Adds heat directly to the gas mixture, in joules (probably).
 	pub fn adjust_heat(&mut self, heat: f32) {

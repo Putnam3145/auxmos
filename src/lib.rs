@@ -25,7 +25,7 @@ fn _register_gasmixture_hook() {
 #[cfg(not(feature = "auxcleanup_gas_deletion"))]
 #[hook("/datum/gas_mixture/proc/__gasmixture_unregister")]
 fn _unregister_gasmixture_hook() {
-	gas::GasMixtures::unregister_gasmix(unsafe {src.raw.data.id});
+	gas::GasMixtures::unregister_gasmix(unsafe { src.raw.data.id });
 	Ok(Value::null())
 }
 
@@ -331,10 +331,8 @@ fn _multiply_hook() {
 }
 
 #[hook("/datum/gas_mixture/proc/react")]
-fn _react_hook() {
+fn _react_hook(holder: Value) {
 	let mut ret: i32 = 0;
-	let n = Value::null();
-	let holder = args.first().unwrap_or(&n);
 	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
 	for reaction in reactions {
 		ret |= react_by_id(reaction, src, holder)?
@@ -412,6 +410,34 @@ fn _equalize_with_hook() {
 			Ok(Value::null())
 		},
 	)
+}
+
+#[hook("/datum/gas_mixture/proc/get_fuel_amount")]
+fn _fuel_amount_hook(temp: Value) {
+	with_mix(src, |air| {
+		Ok(Value::from(temp.as_number().ok().map_or_else(
+			|| air.get_fuel_amount(),
+			|new_temp| {
+				let mut test_air = air.clone();
+				test_air.set_temperature(new_temp);
+				test_air.get_fuel_amount()
+			},
+		)))
+	})
+}
+
+#[hook("/datum/gas_mixture/proc/get_oxidation_power")]
+fn _oxidation_power_hook(temp: Value) {
+	with_mix(src, |air| {
+		Ok(Value::from(temp.as_number().ok().map_or_else(
+			|| air.get_oxidation_power(),
+			|new_temp| {
+				let mut test_air = air.clone();
+				test_air.set_temperature(new_temp);
+				test_air.get_oxidation_power()
+			},
+		)))
+	})
 }
 
 #[hook("/proc/equalize_all_gases_in_list")]

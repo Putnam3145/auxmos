@@ -66,6 +66,18 @@ fn _init_gas_mixtures() -> Result<(), String> {
 	Ok(())
 }
 
+
+#[shutdown]
+fn _shut_down_gases() {
+	*GAS_MIXTURES.write() = None;
+	*NEXT_GAS_IDS.write() = None;
+	unsafe {
+		REGISTERED_GAS_MIXES
+			.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default()))
+			.clear();
+	}
+}
+
 impl GasMixtures {
 	pub fn with_all_mixtures<T, F>(f: F) -> T
 	where
@@ -322,12 +334,6 @@ impl GasMixtures {
 			}
 		}
 	}
-}
-
-#[shutdown]
-fn _shut_down_gases() {
-	*GAS_MIXTURES.write() = None;
-	*NEXT_GAS_IDS.write() = None;
 }
 
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.

@@ -210,6 +210,7 @@ impl GasMixture {
 		}
 		self.cached_heat_capacity.set(Some(combined_heat_capacity));
 	}
+	/// Transfers only the given gases from us to another mix.
 	pub fn transfer_gases_to(&mut self, r: f32, gases: &[GasIDX], into: &mut GasMixture) {
 		let ratio = r.clamp(0.0, 1.0);
 		let initial_energy = into.thermal_energy();
@@ -227,6 +228,7 @@ impl GasMixture {
 		into.cached_heat_capacity.set(None);
 		into.set_temperature((initial_energy + heat_transfer) / into.heat_capacity());
 	}
+	/// Takes a percentage of this gas mixture's moles and puts it into another mixture. if this mix is mutable, also removes those moles from the original.
 	pub fn remove_ratio_into(&mut self, mut ratio: f32, into: &mut GasMixture) {
 		if ratio <= 0.0 {
 			return;
@@ -241,16 +243,17 @@ impl GasMixture {
 		self.temperature = orig_temp;
 		into.temperature = orig_temp;
 	}
+	/// As remove_ratio_into, but a raw number of moles instead of a ratio.
 	pub fn remove_into(&mut self, amount: f32, into: &mut GasMixture) {
 		self.remove_ratio_into(amount / self.total_moles(), into);
 	}
-	/// Returns a gas mixture that contains a given percentage of this mixture's moles; if this mix is mutable, also removes those moles from the original.
+	/// A convenience function that makes the mixture for remove_ratio_into on the spot and returns it.
 	pub fn remove_ratio(&mut self, ratio: f32) -> GasMixture {
 		let mut removed = GasMixture::from_vol(self.volume);
 		self.remove_ratio_into(ratio, &mut removed);
 		removed
 	}
-	/// As remove_ratio, but a raw number of moles instead of a ratio.
+	/// Like remove_ratio, but with moles.
 	pub fn remove(&mut self, amount: f32) -> GasMixture {
 		self.remove_ratio(amount / self.total_moles())
 	}
@@ -393,6 +396,7 @@ impl GasMixture {
 				.collect()
 		})
 	}
+	/// Returns a tuple with oxidation power and fuel amount of this gas mixture.
 	pub fn get_burnability(&self) -> (f32, f32) {
 		super::with_gas_info(|gas_info| {
 			self.enumerate().fold((0.0, 0.0), |mut acc, (i, amt)| {
@@ -413,12 +417,16 @@ impl GasMixture {
 			})
 		})
 	}
+	/// Returns only the oxidation power. Since this calculates burnability anyway, prefer get_burnability.
 	pub fn get_oxidation_power(&self) -> f32 {
 		self.get_burnability().0
 	}
+	/// Returns only fuel amount. Since this calculates burnability anyway, prefer get_burnability.
 	pub fn get_fuel_amount(&self) -> f32 {
 		self.get_burnability().1
 	}
+	/// Like get_fire_info, but takes a reference to a gas info vector,
+	/// so one doesn't need to do a recursive lock on the global list.
 	pub fn get_fire_info_with_lock(
 		&self,
 		gas_info: &Vec<super::GasType>,
@@ -453,6 +461,9 @@ impl GasMixture {
 		}
 		(fuels, oxidizers)
 	}
+	/// Returns two vectors:
+	/// The first contains all oxidizers in this list, as well as their actual mole amounts and how much fuel they can oxidize.
+	/// The second contains all fuel sources in this list, as well as their actual mole amounts and how much oxidizer they can react with.
 	pub fn get_fire_info(&self) -> (Vec<(usize, f32, f32)>, Vec<(usize, f32, f32)>) {
 		super::with_gas_info(|gas_info| self.get_fire_info_with_lock(gas_info))
 	}

@@ -66,7 +66,6 @@ fn _init_gas_mixtures() -> Result<(), String> {
 	Ok(())
 }
 
-
 #[shutdown]
 fn _shut_down_gases() {
 	*GAS_MIXTURES.write() = None;

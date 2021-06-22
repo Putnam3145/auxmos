@@ -1,16 +1,8 @@
-const PROCESS_NOT_STARTED: u8 = 0;
-
-const PROCESS_PROCESSING: u8 = 1;
-
-const PROCESS_DONE: u8 = 2;
-
 use std::collections::{BTreeSet, VecDeque};
 
 use auxtools::*;
 
 use super::*;
-
-static PROCESSING_TURF_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
 
 use crate::GasMixtures;
 
@@ -19,6 +11,14 @@ use std::time::{Duration, Instant};
 use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+
+const PROCESS_NOT_STARTED: u8 = 0;
+
+const PROCESS_PROCESSING: u8 = 1;
+
+const PROCESS_DONE: u8 = 2;
+
+static PROCESSING_TURF_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
 
 static WAITING_FOR_THREAD: AtomicBool = AtomicBool::new(false);
 
@@ -327,39 +327,38 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 								if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
 									for (_, loc) in adj_tiles {
-										if let Some(turf) = turf_gases().get(&loc) {
-											if turf.simulation_level & SIMULATION_LEVEL_DISABLED
-												!= SIMULATION_LEVEL_DISABLED
-											{
-												if let Some(entry) = all_mixtures.get(turf.mix) {
-													if let Some(mix) = entry.try_read() {
-														if gas.temperature_compare(&mix)
-															|| gas.compare_with(
-																&mix,
-																MINIMUM_MOLES_DELTA_TO_MOVE,
-															) {
-															return true;
-														}
-													} else {
-														return false;
-													}
+										if let Some(entry) = turf_gases()
+											.get(&loc)
+											.filter(|turf| {
+												turf.simulation_level & SIMULATION_LEVEL_DISABLED
+													!= SIMULATION_LEVEL_DISABLED
+											})
+											.and_then(|turf| all_mixtures.get(turf.mix))
+										{
+											if let Some(mix) = entry.try_read() {
+												if gas.temperature_compare(&mix)
+													|| gas.compare_with(
+														&mix,
+														MINIMUM_MOLES_DELTA_TO_MOVE,
+													) {
+													return true;
 												}
+											} else {
+												return false;
 											}
 										}
 									}
 									// Obviously planetary atmos needs love too.
-									if let Some(planet_atmos_id) = m.planetary_atmos {
-										if let Some(planet_atmos_entry) =
-											planetary_atmos().get(&planet_atmos_id)
-										{
-											let planet_atmos = planet_atmos_entry.value();
-											if gas.temperature_compare(&planet_atmos)
-												|| gas.compare_with(
-													&planet_atmos,
-													MINIMUM_MOLES_DELTA_TO_MOVE,
-												) {
-												return true;
-											}
+									if let Some(planet_atmos_entry) =
+										m.planetary_atmos.and_then(|id| planetary_atmos().get(&id))
+									{
+										let planet_atmos = planet_atmos_entry.value();
+										if gas.temperature_compare(&planet_atmos)
+											|| gas.compare_with(
+												&planet_atmos,
+												MINIMUM_MOLES_DELTA_TO_MOVE,
+											) {
+											return true;
 										}
 									}
 								}
@@ -372,85 +371,71 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 							// This is necessary because otherwise we're escaping a reference to the closure below.
 							let m = *m_v.get();
 							let adj = m.adjacency;
+							let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
+							let mut adj_amount = 0;
 							/*
-								We don't want to simulate space turfs or other unsimulated turfs. They're
-								still valid for sharing to and from, they just shouldn't be considered
-								for this particular step.
+								Getting write locks is potential danger zone,
+								so we make sure we don't do that unless we
+								absolutely need to. Saving is fast enough.
 							*/
-							if m.simulation_level > SIMULATION_LEVEL_NONE
-								&& adj > 0 && (m.simulation_level & SIMULATION_LEVEL_DISABLED
-								!= SIMULATION_LEVEL_DISABLED)
-							{
-								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
-								let mut adj_amount = 0;
-								/*
-									Getting write locks is potential danger zone,
-									so we make sure we don't do that unless we
-									absolutely need to. Saving is fast enough.
-								*/
-								let mut end_gas = GasMixture::from_vol(2500.0);
-								let mut pressure_diffs: [(TurfID, f32); 6] = Default::default();
-								/*
-									The pressure here is negative
-									because we're going to be adding it
-									to the base turf's pressure later on.
-									It's multiplied by the diffusion constant
-									because it's not representing the total
-									gas pressure difference but the force exerted
-									due to the pressure gradient.
-									Technically that's ρν², but, like, video games.
-								*/
-								for (j, loc) in adj_tiles {
-									if let Some(turf) = turf_gases().get(&loc) {
-										if turf.simulation_level & SIMULATION_LEVEL_DISABLED
+							let mut end_gas = GasMixture::from_vol(crate::constants::CELL_VOLUME);
+							let mut pressure_diffs: [(TurfID, f32); 6] = Default::default();
+							/*
+								The pressure here is negative
+								because we're going to be adding it
+								to the base turf's pressure later on.
+								It's multiplied by the diffusion constant
+								because it's not representing the total
+								gas pressure difference but the force exerted
+								due to the pressure gradient.
+								Technically that's ρν², but, like, video games.
+							*/
+							for (j, loc) in adj_tiles {
+								if let Some(entry) = turf_gases()
+									.get(&loc)
+									.filter(|turf| {
+										turf.simulation_level & SIMULATION_LEVEL_DISABLED
 											!= SIMULATION_LEVEL_DISABLED
-										{
-											if let Some(entry) = all_mixtures.get(turf.mix) {
-												if let Some(mix) = entry.try_read() {
-													end_gas.merge(&mix);
-													adj_amount += 1;
-													pressure_diffs[j as usize] = (
-														loc,
-														-mix.return_pressure()
-															* GAS_DIFFUSION_CONSTANT,
-													);
-												} else {
-													return None;
-												}
-											}
+									})
+									.and_then(|turf| all_mixtures.get(turf.mix))
+								{
+									match entry.try_read() {
+										Some(mix) => {
+											end_gas.merge(&mix);
+											adj_amount += 1;
+											pressure_diffs[j as usize] = (
+												loc,
+												-mix.return_pressure() * GAS_DIFFUSION_CONSTANT,
+											);
 										}
+										None => return None, // this would lead to inconsistencies--no bueno
 									}
 								}
-								if let Some(planet_atmos_id) = m.planetary_atmos {
-									if let Some(planet_atmos_entry) =
-										planetary_atmos().get(&planet_atmos_id)
-									{
-										let planet_atmos = planet_atmos_entry.value();
-										end_gas.merge(&planet_atmos);
-										adj_amount += 1;
-									}
-								}
-								/*
-									This method of simulating diffusion
-									diverges at coefficients that are
-									larger than the inverse of the number
-									of adjacent finite elements.
-									As such, we must multiply it
-									by a coefficient that is at most
-									as big as this coefficient. The
-									GAS_DIFFUSION_CONSTANT chosen here
-									is 1/8, chosen both because it is
-									smaller than 1/7 and because, in
-									floats, 1/8 is exact and so are
-									all multiples of it up to 1.
-									(Technically up to 2,097,152,
-									but I digress.)
-								*/
-								end_gas.multiply(GAS_DIFFUSION_CONSTANT);
-								Some((i, m, end_gas, pressure_diffs, adj_amount))
-							} else {
-								None
 							}
+							if let Some(planet_atmos_entry) =
+								m.planetary_atmos.and_then(|id| planetary_atmos().get(&id))
+							{
+								end_gas.merge(planet_atmos_entry.value());
+								adj_amount += 1;
+							}
+							/*
+								This method of simulating diffusion
+								diverges at coefficients that are
+								larger than the inverse of the number
+								of adjacent finite elements.
+								As such, we must multiply it
+								by a coefficient that is at most
+								as big as this coefficient. The
+								GAS_DIFFUSION_CONSTANT chosen here
+								is 1/8, chosen both because it is
+								smaller than 1/7 and because, in
+								floats, 1/8 is exact and so are
+								all multiples of it up to 1.
+								(Technically up to 2,097,152,
+								but I digress.)
+							*/
+							end_gas.multiply(GAS_DIFFUSION_CONSTANT);
+							Some((i, m, end_gas, pressure_diffs, adj_amount))
 						})
 						.collect::<Vec<_>>()
 				})

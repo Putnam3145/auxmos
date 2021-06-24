@@ -66,6 +66,7 @@ dependencies = [
  "flume",
  "fxhash",
  "itertools",
+ "nonmax",
  "parking_lot",
  "rayon",
  "tinyvec",
@@ -519,6 +520,12 @@ checksum = "ac1378b66f7c93a1c0f8464a19bf47df8795083842e5090f4b7305973d5a22d0"
 dependencies = [
  "getrandom",
 ]
+
+[[package]]
+name = "nonmax"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "287a6d20c39e398d0046fd7809c83fd3a12d42a3a0f4612f5028a8f5b5c4d0ce"
 
 [[package]]
 name = "num_cpus"

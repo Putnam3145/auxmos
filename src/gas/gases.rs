@@ -163,10 +163,13 @@ static mut GAS_INFO_BY_STRING: Option<DashMap<Box<str>, GasType, FxBuildHasher>>
 
 static GAS_INFO_BY_IDX: RwLock<Option<Vec<GasType>>> = const_rwlock(None);
 
+static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = const_rwlock(None);
+
 #[init(partial)]
 fn _create_gas_info_structs() -> Result<(), String> {
 	unsafe { GAS_INFO_BY_STRING = Some(DashMap::with_hasher(FxBuildHasher::default())) };
 	*GAS_INFO_BY_IDX.write() = Some(Vec::new());
+	*GAS_SPECIFIC_HEATS.write() = Some(Vec::new());
 	Ok(())
 }
 
@@ -174,6 +177,7 @@ fn _create_gas_info_structs() -> Result<(), String> {
 fn _destroy_gas_info_structs() {
 	unsafe { GAS_INFO_BY_STRING = None };
 	*GAS_INFO_BY_IDX.write() = None;
+	*GAS_SPECIFIC_HEATS.write() = None;
 	TOTAL_NUM_GASES.store(0, Ordering::Release);
 	CACHED_GAS_IDS.with(|gas_ids| {
 		gas_ids.borrow_mut().clear();
@@ -187,6 +191,11 @@ fn _hook_register_gas(gas: Value) {
 	unsafe { GAS_INFO_BY_STRING.as_ref() }
 		.unwrap()
 		.insert(gas_id.into_boxed_str(), gas_cache.clone());
+	GAS_SPECIFIC_HEATS
+		.write()
+		.as_mut()
+		.unwrap()
+		.push(gas_cache.specific_heat);
 	GAS_INFO_BY_IDX.write().as_mut().unwrap().push(gas_cache);
 	TOTAL_NUM_GASES.fetch_add(1, Ordering::Release); // this is the only thing that stores it other than shutdown
 	Ok(Value::null())
@@ -236,15 +245,8 @@ where
 		.unwrap_or_else(|| panic!("Reactions not loaded yet! Uh oh!")))
 }
 
-/// Returns a static reference to a vector of all the specific heats of the gases.
-pub fn gas_specific_heat(idx: GasIDX) -> f32 {
-	GAS_INFO_BY_IDX
-		.read()
-		.as_ref()
-		.unwrap_or_else(|| panic!("Gases not loaded yet! Uh oh!"))
-		.get(idx as usize)
-		.unwrap()
-		.specific_heat
+pub fn with_specific_heats<T>(f: impl FnOnce(&[f32]) -> T) -> T {
+	f(GAS_SPECIFIC_HEATS.read().as_ref().unwrap().as_slice())
 }
 
 #[cfg(feature = "reaction_hooks")]

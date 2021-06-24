@@ -317,35 +317,24 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 					shard
 						.read()
 						.iter()
-						.filter(|(&i, m_v)| {
+						.filter(|(_, m_v)| {
 							let m = *m_v.get();
 							let adj = m.adjacency;
 							if m.simulation_level > SIMULATION_LEVEL_NONE
 								&& adj > 0 && (m.simulation_level & SIMULATION_LEVEL_DISABLED
 								!= SIMULATION_LEVEL_DISABLED)
 							{
-								let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 								if let Some(gas) = all_mixtures.get(m.mix).unwrap().try_read() {
-									for (_, loc) in adj_tiles {
-										if let Some(entry) = turf_gases()
-											.get(&loc)
-											.filter(|turf| {
-												turf.simulation_level & SIMULATION_LEVEL_DISABLED
-													!= SIMULATION_LEVEL_DISABLED
-											})
-											.and_then(|turf| all_mixtures.get(turf.mix))
-										{
-											if let Some(mix) = entry.try_read() {
-												if gas.temperature_compare(&mix)
-													|| gas.compare_with(
-														&mix,
-														MINIMUM_MOLES_DELTA_TO_MOVE,
-													) {
-													return true;
-												}
-											} else {
-												return false;
+									for entry in m.adjacent_mixes(all_mixtures) {
+										if let Some(mix) = entry.try_read() {
+											if gas.temperature_compare(&mix)
+												|| gas
+													.compare_with(&mix, MINIMUM_MOLES_DELTA_TO_MOVE)
+											{
+												return true;
 											}
+										} else {
+											return false;
 										}
 									}
 									// Obviously planetary atmos needs love too.
@@ -371,7 +360,6 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 							// This is necessary because otherwise we're escaping a reference to the closure below.
 							let m = *m_v.get();
 							let adj = m.adjacency;
-							let adj_tiles = adjacent_tile_ids(adj, i, max_x, max_y);
 							let mut adj_amount = 0;
 							/*
 								Getting write locks is potential danger zone,
@@ -390,26 +378,18 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 								due to the pressure gradient.
 								Technically that's ρν², but, like, video games.
 							*/
-							for (j, loc) in adj_tiles {
-								if let Some(entry) = turf_gases()
-									.get(&loc)
-									.filter(|turf| {
-										turf.simulation_level & SIMULATION_LEVEL_DISABLED
-											!= SIMULATION_LEVEL_DISABLED
-									})
-									.and_then(|turf| all_mixtures.get(turf.mix))
-								{
-									match entry.try_read() {
-										Some(mix) => {
-											end_gas.merge(&mix);
-											adj_amount += 1;
-											pressure_diffs[j as usize] = (
-												loc,
-												-mix.return_pressure() * GAS_DIFFUSION_CONSTANT,
-											);
-										}
-										None => return None, // this would lead to inconsistencies--no bueno
+							for (entry, (j, loc)) in m
+								.adjacent_mixes(all_mixtures)
+								.zip(adjacent_tile_ids(adj, i, max_x, max_y))
+							{
+								match entry.try_read() {
+									Some(mix) => {
+										end_gas.merge(&mix);
+										adj_amount += 1;
+										pressure_diffs[j as usize] =
+											(loc, -mix.return_pressure() * GAS_DIFFUSION_CONSTANT);
 									}
+									None => return None, // this would lead to inconsistencies--no bueno
 								}
 							}
 							if let Some(planet_atmos_entry) =

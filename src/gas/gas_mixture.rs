@@ -1,10 +1,15 @@
-use itertools::Itertools;
+use itertools::{
+	Either,
+	EitherOrBoth::{Both, Left, Right},
+	Itertools,
+};
 
-use std::cell::Cell;
+use std::{
+	cell::Cell,
+	sync::atomic::{AtomicU64, Ordering::Relaxed},
+};
 
 use tinyvec::TinyVec;
-
-use itertools::EitherOrBoth::{Both, Left, Right};
 
 use super::reaction::ReactionIdentifier;
 
@@ -12,11 +17,21 @@ use super::constants::*;
 
 use super::{gas_visibility, total_num_gases, with_reactions, with_specific_heats, GasIDX};
 
+type SpecificFireInfo = (usize, f32, f32);
+
+struct VisHash(AtomicU64);
+
+impl Clone for VisHash {
+	fn clone(&self) -> Self {
+		VisHash(AtomicU64::new(self.0.load(Relaxed)))
+	}
+}
+
 /// The data structure representing a Space Station 13 gas mixture.
 /// Unlike Monstermos, this doesn't have the archive built-in; instead,
 /// the archive is a feature of the turf grid, only existing during
 /// turf processing.
-/// Also missing is last_share; due to the usage of Rust,
+/// Also missing is `last_share`; due to the usage of Rust,
 /// processing no longer requires sleeping turfs. Instead, we're using
 /// a proper, fully-simulated FDM system, much like LINDA but without
 /// sleeping turfs.
@@ -28,6 +43,7 @@ pub struct GasMixture {
 	immutable: bool,
 	moles: TinyVec<[f32; 8]>,
 	cached_heat_capacity: Cell<Option<f32>>,
+	cached_vis_hash: VisHash,
 }
 
 /*
@@ -59,6 +75,7 @@ impl GasMixture {
 			min_heat_capacity: 0.0,
 			immutable: false,
 			cached_heat_capacity: Cell::new(None),
+			cached_vis_hash: VisHash(AtomicU64::new(0)),
 		}
 	}
 	/// Makes an empty gas mixture with the given volume.
@@ -108,7 +125,7 @@ impl GasMixture {
 	}
 	/// Returns (by value) the amount of moles of a given index the mix has. M
 	pub fn get_moles(&self, idx: GasIDX) -> f32 {
-		*self.moles.get(idx).unwrap_or(&0.0)
+		self.moles.get(idx).copied().unwrap_or(0.0)
 	}
 	/// Sets the mix to be internally immutable. Rust doesn't know about any of this, obviously.
 	pub fn mark_immutable(&mut self) {
@@ -125,12 +142,15 @@ impl GasMixture {
 	}
 	/// If mix is not immutable, sets the gas at the given `idx` to the given `amt`.
 	pub fn set_moles(&mut self, idx: GasIDX, amt: f32) {
-		if !self.immutable && idx < total_num_gases() {
-			if idx <= self.moles.len() || (amt.is_normal() && amt > GAS_MIN_MOLES) {
-				self.maybe_expand((idx + 1) as usize);
-				unsafe { *self.moles.get_unchecked_mut(idx) = amt };
-				self.cached_heat_capacity.set(None);
-			}
+		if !self.immutable
+			&& idx < total_num_gases()
+			&& (idx <= self.moles.len() || (amt > GAS_MIN_MOLES && amt.is_normal()))
+		{
+			self.maybe_expand((idx + 1) as usize);
+			unsafe {
+				*self.moles.get_unchecked_mut(idx) = amt;
+			};
+			self.cached_heat_capacity.set(None);
 		}
 	}
 	pub fn adjust_moles(&mut self, idx: GasIDX, amt: f32) {
@@ -144,6 +164,7 @@ impl GasMixture {
 			self.cached_heat_capacity.set(None);
 		}
 	}
+	#[inline(never)] // mostly this makes it so that heat_capacity itself is inlined
 	fn slow_heat_capacity(&self) -> f32 {
 		let heat_cap = with_specific_heats(|heats| {
 			self.moles
@@ -191,7 +212,9 @@ impl GasMixture {
 		let other_heat_capacity = giver.heat_capacity();
 		self.maybe_expand(giver.moles.len());
 		for (id, amt) in giver.enumerate() {
-			unsafe { *self.moles.get_unchecked_mut(id) += amt };
+			unsafe {
+				*self.moles.get_unchecked_mut(id) += amt;
+			};
 		}
 		let combined_heat_capacity = our_heat_capacity + other_heat_capacity;
 		if combined_heat_capacity > MINIMUM_HEAT_CAPACITY {
@@ -237,17 +260,17 @@ impl GasMixture {
 		self.temperature = orig_temp;
 		into.temperature = orig_temp;
 	}
-	/// As remove_ratio_into, but a raw number of moles instead of a ratio.
+	/// As `remove_ratio_into`, but a raw number of moles instead of a ratio.
 	pub fn remove_into(&mut self, amount: f32, into: &mut GasMixture) {
 		self.remove_ratio_into(amount / self.total_moles(), into);
 	}
-	/// A convenience function that makes the mixture for remove_ratio_into on the spot and returns it.
+	/// A convenience function that makes the mixture for `remove_ratio_into` on the spot and returns it.
 	pub fn remove_ratio(&mut self, ratio: f32) -> GasMixture {
 		let mut removed = GasMixture::from_vol(self.volume);
 		self.remove_ratio_into(ratio, &mut removed);
 		removed
 	}
-	/// Like remove_ratio, but with moles.
+	/// Like `remove_ratio`, but with moles.
 	pub fn remove(&mut self, amount: f32) -> GasMixture {
 		self.remove_ratio(amount / self.total_moles())
 	}
@@ -338,6 +361,7 @@ impl GasMixture {
 			.as_slice()
 			.iter()
 			.zip_longest(sample.moles.as_slice().iter())
+			.rev()
 			.any(|pair| match pair {
 				Left(a) => a >= &amt,
 				Right(b) => b >= &amt,
@@ -409,54 +433,48 @@ impl GasMixture {
 			})
 		})
 	}
-	/// Returns only the oxidation power. Since this calculates burnability anyway, prefer get_burnability.
+	/// Returns only the oxidation power. Since this calculates burnability anyway, prefer `get_burnability`.
 	pub fn get_oxidation_power(&self) -> f32 {
 		self.get_burnability().0
 	}
-	/// Returns only fuel amount. Since this calculates burnability anyway, prefer get_burnability.
+	/// Returns only fuel amount. Since this calculates burnability anyway, prefer `get_burnability`.
 	pub fn get_fuel_amount(&self) -> f32 {
 		self.get_burnability().1
 	}
-	/// Like get_fire_info, but takes a reference to a gas info vector,
+	/// Like `get_fire_info`, but takes a reference to a gas info vector,
 	/// so one doesn't need to do a recursive lock on the global list.
 	pub fn get_fire_info_with_lock(
 		&self,
-		gas_info: &Vec<super::GasType>,
-	) -> (Vec<(usize, f32, f32)>, Vec<(usize, f32, f32)>) {
-		let (mut fuels, oxidizers): (Vec<_>, Vec<_>) = self
-			.enumerate()
+		gas_info: &[super::GasType],
+	) -> (Vec<SpecificFireInfo>, Vec<SpecificFireInfo>) {
+		self.enumerate()
 			.filter_map(|(i, g)| {
 				let this_gas_info = &gas_info[i as usize];
-				if let Some(oxidation) = this_gas_info.oxidation {
-					if self.get_temperature() > oxidation.temperature() {
-						let amount =
-							g * (1.0 - oxidation.temperature() / self.get_temperature()).max(0.0);
-						Some((i, amount, amount * oxidation.power()))
-					} else {
-						None
-					}
-				} else if let Some(fire) = this_gas_info.fire {
-					if self.get_temperature() > fire.temperature() {
-						let amount =
-							g * (1.0 - fire.temperature() / self.get_temperature()).max(0.0);
-						Some((i, amount, -amount / fire.burn_rate()))
-					} else {
-						None
-					}
-				} else {
-					None
-				}
+				this_gas_info
+					.oxidation
+					.and_then(|oxidation| {
+						(self.get_temperature() > oxidation.temperature()).then(|| {
+							let amount = g
+								* (1.0 - oxidation.temperature() / self.get_temperature()).max(0.0);
+							Either::Right((i, amount, amount * oxidation.power()))
+						})
+					})
+					.or_else(|| {
+						this_gas_info.fire.and_then(|fire| {
+							(self.get_temperature() > fire.temperature()).then(|| {
+								let amount = g
+									* (1.0 - fire.temperature() / self.get_temperature()).max(0.0);
+								Either::Left((i, amount, -amount / fire.burn_rate()))
+							})
+						})
+					})
 			})
-			.partition(|&(_, _, power)| power < 0.0);
-		for (_, _, power) in fuels.iter_mut() {
-			*power *= -1.0;
-		}
-		(fuels, oxidizers)
+			.partition_map(|r| r)
 	}
 	/// Returns two vectors:
 	/// The first contains all oxidizers in this list, as well as their actual mole amounts and how much fuel they can oxidize.
 	/// The second contains all fuel sources in this list, as well as their actual mole amounts and how much oxidizer they can react with.
-	pub fn get_fire_info(&self) -> (Vec<(usize, f32, f32)>, Vec<(usize, f32, f32)>) {
+	pub fn get_fire_info(&self) -> (Vec<SpecificFireInfo>, Vec<SpecificFireInfo>) {
 		super::with_gas_info(|gas_info| self.get_fire_info_with_lock(gas_info))
 	}
 	/// Adds heat directly to the gas mixture, in joules (probably).
@@ -470,17 +488,18 @@ impl GasMixture {
 			.any(|(i, gas)| gas_visibility(i as usize).map_or(false, |amt| gas >= amt))
 	}
 	/// A hashed representation of the visibility of a gas, so that it only needs to update vis when actually changed.
-	pub fn visibility_hash(&self, gas_visibility: &[Option<f32>]) -> u64 {
+	pub fn vis_hash_changed(&self, gas_visibility: &[Option<f32>]) -> bool {
 		use std::hash::Hasher;
-		let mut hasher: fxhash::FxHasher64 = Default::default();
+		let mut hasher: fxhash::FxHasher64 = fxhash::FxHasher64::default();
 		for (i, gas) in self.enumerate() {
 			if let Some(amt) = unsafe { gas_visibility.get_unchecked(i) }.filter(|&amt| gas >= amt)
 			{
 				hasher.write_usize(i);
-				hasher.write_usize((FACTOR_GAS_VISIBLE_MAX).min((gas / amt).ceil()) as GasIDX);
+				hasher.write_usize((FACTOR_GAS_VISIBLE_MAX).min((gas / amt).ceil()) as usize);
 			}
 		}
-		hasher.finish()
+		let cur_hash = hasher.finish();
+		self.cached_vis_hash.0.swap(cur_hash, Relaxed) != cur_hash
 	}
 	// Removes all zeroes from the gas mixture.
 	pub fn garbage_collect(&mut self) {
@@ -503,7 +522,7 @@ impl Add<&GasMixture> for GasMixture {
 	type Output = Self;
 
 	fn add(self, rhs: &GasMixture) -> Self {
-		let mut ret = self.clone();
+		let mut ret = self;
 		ret.merge(rhs);
 		ret
 	}
@@ -525,7 +544,7 @@ impl Mul<f32> for GasMixture {
 	type Output = Self;
 
 	fn mul(self, rhs: f32) -> Self {
-		let mut ret = self.clone();
+		let mut ret = self;
 		ret.multiply(rhs);
 		ret
 	}

@@ -176,15 +176,15 @@ fn _set_temperature_hook() {
 				std::column!()
 			)
 		})?;
-	if !v.is_finite() {
-		Err(runtime!(
-			"Attempted to set a temperature to a number that is NaN or infinite."
-		))
-	} else {
+	if v.is_finite() {
 		with_mix_mut(src, |mix| {
 			mix.set_temperature(v.max(2.7));
 			Ok(Value::null())
 		})
+	} else {
+		Err(runtime!(
+			"Attempted to set a temperature to a number that is NaN or infinite."
+		))
 	}
 }
 
@@ -253,7 +253,7 @@ fn _set_moles_hook() {
 fn _adjust_moles_hook(id_val: Value, num_val: Value) {
 	let vf = num_val.as_number().unwrap_or_default();
 	with_mix_mut(src, |mix| {
-		mix.adjust_moles(gas_idx_from_value(&id_val)?, vf);
+		mix.adjust_moles(gas_idx_from_value(id_val)?, vf);
 		Ok(Value::null())
 	})
 }
@@ -279,7 +279,7 @@ fn _scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
 	if gases_to_scrub.len() == 0 {
 		return Ok(Value::from(false));
 	}
-	let gas_scrub_vec = (1..gases_to_scrub.len() + 1)
+	let gas_scrub_vec = (1..=gases_to_scrub.len())
 		.filter_map(|idx| gas_idx_from_value(&gases_to_scrub.get(idx).unwrap()).ok())
 		.collect::<Vec<_>>();
 	with_mixes_mut(src, into, |src_gas, dest_gas| {
@@ -455,7 +455,7 @@ fn _equalize_all_hook() {
 				std::column!()
 			)
 		})?;
-	let gas_list: BTreeSet<usize> = (1..value_list.len() + 1)
+	let gas_list: BTreeSet<usize> = (1..=value_list.len())
 		.map(|i| {
 			value_list
 				.get(i)
@@ -466,26 +466,25 @@ fn _equalize_all_hook() {
 		})
 		.collect(); // collect because get_number is way slower than the one-time allocation
 	GasMixtures::with_all_mixtures(move |all_mixtures| {
-		gas::GasMixtures::with_new_mix_and_lock(0.0, all_mixtures, |tot| {
-			let mut tot_vol: f64 = 0.0;
-			for &id in gas_list.iter() {
-				if let Some(src_gas_lock) = all_mixtures.get(id) {
-					let src_gas = src_gas_lock.read();
-					tot.merge(&src_gas);
-					tot_vol += src_gas.volume as f64;
+		let mut tot = gas_mixture::GasMixture::new();
+		let mut tot_vol: f64 = 0.0;
+		for &id in &gas_list {
+			if let Some(src_gas_lock) = all_mixtures.get(id) {
+				let src_gas = src_gas_lock.read();
+				tot.merge(&src_gas);
+				tot_vol += src_gas.volume as f64;
+			}
+		}
+		if tot_vol > 0.0 {
+			for &id in &gas_list {
+				if let Some(dest_gas_lock) = all_mixtures.get(id) {
+					let dest_gas = &mut dest_gas_lock.write();
+					let vol = dest_gas.volume; // don't wanna borrow it in the below
+					dest_gas.copy_from_mutable(&tot);
+					dest_gas.multiply((vol as f64 / tot_vol) as f32);
 				}
 			}
-			if tot_vol > 0.0 {
-				for &id in gas_list.iter() {
-					if let Some(dest_gas_lock) = all_mixtures.get(id) {
-						let dest_gas = &mut dest_gas_lock.write();
-						let vol = dest_gas.volume; // don't wanna borrow it in the below
-						dest_gas.copy_from_mutable(&tot);
-						dest_gas.multiply((vol as f64 / tot_vol) as f32);
-					}
-				}
-			}
-		})
+		}
 	});
 	Ok(Value::null())
 }

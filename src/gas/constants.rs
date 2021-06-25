@@ -11,7 +11,7 @@ pub const T0C: f32 = 273.15;
 ///  20degC
 pub const T20C: f32 = 293.15;
 /// Amount of gas below which any amounts will be truncated to 0.
-pub const GAS_MIN_MOLES: f32 = 0.00000005;
+pub const GAS_MIN_MOLES: f32 = 0.000_000_05;
 /// Heat capacities below which heat will be considered 0.
 pub const MINIMUM_HEAT_CAPACITY: f32 = 0.0003;
 
@@ -78,7 +78,7 @@ pub const WINDOW_HEAT_TRANSFER_COEFFICIENT: f32 = 0.1;
 pub const HEAT_CAPACITY_VACUUM: f32 = 7000.0;
 
 /// The Stefan-Boltzmann constant. M T^-3 Θ^-4
-pub const STEFAN_BOLTZMANN_CONSTANT: f64 = 5.670373e-08; // watts/(meter^2*kelvin^4)
+pub const STEFAN_BOLTZMANN_CONSTANT: f64 = 5.670_373e-08; // watts/(meter^2*kelvin^4)
 
 const SPACE_TEMP: f64 = T20C as f64;
 
@@ -104,7 +104,7 @@ pub const MAX_TOXIC_GAS_DAMAGE: i32 = 10;
 /// Moles in a standard cell after which gases are visible
 pub const MOLES_GAS_VISIBLE: f32 = 0.25;
 
-/// moles_visible * FACTOR_GAS_VISIBLE_MAX = Moles after which gas is at maximum visibility
+/// `moles_visible` * `FACTOR_GAS_VISIBLE_MAX` = Moles after which gas is at maximum visibility
 pub const FACTOR_GAS_VISIBLE_MAX: f32 = 20.0;
 /// Mole step for alpha updates. This means alpha can update at 0.25, 0.5, 0.75 and so on
 pub const MOLES_GAS_VISIBLE_STEP: f32 = 0.25;

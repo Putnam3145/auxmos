@@ -141,7 +141,7 @@ impl GasType {
 			},
 			fire_products: if let Ok(products) = gas.get_list(byond_string!("fire_products")) {
 				Some(
-					(1..products.len() + 1)
+					(1..=products.len())
 						.map(|i| {
 							let s = products.get(i).unwrap();
 							(
@@ -167,7 +167,9 @@ static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = const_rwlock(None);
 
 #[init(partial)]
 fn _create_gas_info_structs() -> Result<(), String> {
-	unsafe { GAS_INFO_BY_STRING = Some(DashMap::with_hasher(FxBuildHasher::default())) };
+	unsafe {
+		GAS_INFO_BY_STRING = Some(DashMap::with_hasher(FxBuildHasher::default()));
+	};
 	*GAS_INFO_BY_IDX.write() = Some(Vec::new());
 	*GAS_SPECIFIC_HEATS.write() = Some(Vec::new());
 	Ok(())
@@ -175,7 +177,9 @@ fn _create_gas_info_structs() -> Result<(), String> {
 
 #[shutdown]
 fn _destroy_gas_info_structs() {
-	unsafe { GAS_INFO_BY_STRING = None };
+	unsafe {
+		GAS_INFO_BY_STRING = None;
+	};
 	*GAS_INFO_BY_IDX.write() = None;
 	*GAS_SPECIFIC_HEATS.write() = None;
 	TOTAL_NUM_GASES.store(0, Ordering::Release);
@@ -187,7 +191,7 @@ fn _destroy_gas_info_structs() {
 #[hook("/proc/_auxtools_register_gas")]
 fn _hook_register_gas(gas: Value) {
 	let gas_id = gas.get_string(byond_string!("id")).unwrap();
-	let gas_cache = GasType::new(&gas, TOTAL_NUM_GASES.load(Ordering::Relaxed))?;
+	let gas_cache = GasType::new(gas, TOTAL_NUM_GASES.load(Ordering::Relaxed))?;
 	unsafe { GAS_INFO_BY_STRING.as_ref() }
 		.unwrap()
 		.insert(gas_id.into_boxed_str(), gas_cache.clone());
@@ -213,7 +217,9 @@ fn _hook_init() {
 			&mut vec![data.get(data.get(i)?)?],
 		)?;
 	}
-	unsafe { REACTION_INFO = Some(get_reaction_info()) };
+	unsafe {
+		REACTION_INFO = Some(get_reaction_info());
+	};
 	Ok(Value::from(true))
 }
 
@@ -224,16 +230,18 @@ fn get_reaction_info() -> Vec<Reaction> {
 		.get_list(byond_string!("gas_reactions"))
 		.unwrap();
 	let mut reaction_cache: Vec<Reaction> = Vec::with_capacity(gas_reactions.len() as usize);
-	for i in 1..gas_reactions.len() + 1 {
+	for i in 1..=gas_reactions.len() {
 		let reaction = &gas_reactions.get(i).unwrap();
-		reaction_cache.push(Reaction::from_byond_reaction(&reaction));
+		reaction_cache.push(Reaction::from_byond_reaction(reaction));
 	}
 	reaction_cache
 }
 
 #[hook("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
 fn _update_reactions() {
-	unsafe { REACTION_INFO = Some(get_reaction_info()) };
+	unsafe {
+		REACTION_INFO = Some(get_reaction_info());
+	};
 	Ok(Value::from(true))
 }
 
@@ -276,7 +284,7 @@ pub fn gas_visibility(idx: usize) -> Option<f32> {
 		.moles_visible
 }
 
-pub fn visibility_copies<'a>() -> Vec<Option<f32>> {
+pub fn visibility_copies() -> Vec<Option<f32>> {
 	GAS_INFO_BY_IDX
 		.read()
 		.as_ref()
@@ -305,7 +313,7 @@ pub fn update_gas_refs() {
 					product.0.update().unwrap();
 				}
 			}
-		})
+		});
 }
 
 #[hook("/proc/finalize_gas_refs")]
@@ -323,8 +331,7 @@ pub fn gas_idx_from_string(id: &str) -> Result<GasIDX, Runtime> {
 		.ok_or_else(|| runtime!("Gases not loaded yet! Uh oh!"))?
 		.get(id)
 		.ok_or_else(|| runtime!("Invalid gas ID: {}", id))?
-		.idx
-		.clone())
+		.idx)
 }
 
 /// Returns the appropriate index to be used by the game for a given ID string.

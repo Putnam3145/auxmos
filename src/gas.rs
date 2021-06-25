@@ -61,7 +61,7 @@ pub fn unregister_mix(i: u32) {
 
 #[init(partial)]
 fn _init_gas_mixtures() -> Result<(), String> {
-	*GAS_MIXTURES.write() = Some(Vec::with_capacity(120000));
+	*GAS_MIXTURES.write() = Some(Vec::with_capacity(120_000));
 	*NEXT_GAS_IDS.write() = Some(Vec::with_capacity(2000));
 	Ok(())
 }
@@ -80,9 +80,9 @@ fn _shut_down_gases() {
 impl GasMixtures {
 	pub fn with_all_mixtures<T, F>(f: F) -> T
 	where
-		F: FnOnce(&Vec<RwLock<GasMixture>>) -> T,
+		F: FnOnce(&[RwLock<GasMixture>]) -> T,
 	{
-		f(&GAS_MIXTURES.read().as_ref().unwrap())
+		f(GAS_MIXTURES.read().as_ref().unwrap())
 	}
 	fn with_gas_mixture<T, F>(id: usize, f: F) -> Result<T, Runtime>
 	where
@@ -165,7 +165,8 @@ impl GasMixtures {
 			let entry = gas_mixtures
 				.get(src)
 				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?;
-			f(entry, entry.clone())
+			let gas_copy = entry.read().clone();
+			f(entry, &RwLock::new(gas_copy))
 		} else {
 			f(
 				gas_mixtures
@@ -175,81 +176,6 @@ impl GasMixtures {
 					.get(arg)
 					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?,
 			)
-		}
-	}
-	pub fn try_push_with_lock(vol: f32, g: &Vec<RwLock<GasMixture>>) -> Option<usize> {
-		if let Some(idx) = {
-			let mut next_gas_ids = NEXT_GAS_IDS.write();
-			next_gas_ids.as_mut().unwrap().pop()
-		} {
-			g.get(idx).unwrap().write().clear_with_vol(vol);
-			Some(idx)
-		} else {
-			None
-		}
-	}
-	/// Makes a new living gas mixture and returns the index to it. Returns None if an allocation must happen.
-	pub fn try_push(vol: f32) -> Option<usize> {
-		if let Some(idx) = {
-			let mut next_gas_ids = NEXT_GAS_IDS.write();
-			next_gas_ids.as_mut().unwrap().pop()
-		} {
-			GAS_MIXTURES
-				.read()
-				.as_ref()
-				.unwrap()
-				.get(idx)
-				.unwrap()
-				.write()
-				.clear_with_vol(vol);
-			Some(idx)
-		} else if {
-			let lock = GAS_MIXTURES.read();
-			let g = lock.as_ref().unwrap();
-			g.len() == g.capacity()
-		} {
-			if let Some(mut lock) = GAS_MIXTURES.try_write() {
-				let g = lock.as_mut().unwrap();
-				let idx = g.len();
-				g.push(RwLock::new(GasMixture::from_vol(vol)));
-				Some(idx)
-			} else {
-				None
-			}
-		} else {
-			None
-		}
-	}
-	pub fn with_new_mix_and_lock<T>(
-		vol: f32,
-		g: &Vec<RwLock<GasMixture>>,
-		f: impl FnOnce(&mut GasMixture) -> T,
-	) -> T {
-		if let Some(idx) = Self::try_push_with_lock(vol, g) {
-			let mut mix = g.get(idx).unwrap().write();
-			let ret = f(&mut mix);
-			{
-				let mut next_gas_ids = NEXT_GAS_IDS.write();
-				next_gas_ids.as_mut().unwrap().push(idx);
-			}
-			ret
-		} else {
-			f(&mut GasMixture::from_vol(vol))
-		}
-	}
-	pub fn with_new_mix<T>(vol: f32, f: impl FnOnce(&mut GasMixture) -> T) -> T {
-		if let Some(idx) = Self::try_push(vol) {
-			let lock = GAS_MIXTURES.read();
-			let g = lock.as_ref().unwrap();
-			let mut mix = g.get(idx).unwrap().write();
-			let ret = f(&mut mix);
-			{
-				let mut next_gas_ids = NEXT_GAS_IDS.write();
-				next_gas_ids.as_mut().unwrap().push(idx);
-			}
-			ret
-		} else {
-			f(&mut GasMixture::from_vol(vol))
 		}
 	}
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
@@ -355,7 +281,7 @@ where
 	)
 }
 
-/// As with_mix, but mutable.
+/// As `with_mix`, but mutable.
 pub fn with_mix_mut<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
 where
 	F: FnMut(&mut GasMixture) -> Result<T, Runtime>,
@@ -375,7 +301,7 @@ where
 	)
 }
 
-/// As with_mix, but with two mixes.
+/// As `with_mix`, but with two mixes.
 pub fn with_mixes<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
 	F: FnMut(&GasMixture, &GasMixture) -> Result<T, Runtime>,
@@ -407,7 +333,7 @@ where
 	)
 }
 
-/// As with_mix_mut, but with two mixes.
+/// As `with_mix_mut`, but with two mixes.
 pub fn with_mixes_mut<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
 	F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<T, Runtime>,
@@ -439,7 +365,7 @@ where
 	)
 }
 
-/// Allows different lock levels for each gas. Instead of relevant refs to the gases, returns the RWLock object.
+/// Allows different lock levels for each gas. Instead of relevant refs to the gases, returns the `RWLock` object.
 pub fn with_mixes_custom<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
 	F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
@@ -469,24 +395,6 @@ where
 			.to_bits() as usize,
 		f,
 	)
-}
-
-#[hook("/proc/fix_corrupted_atmos")]
-fn _fix_corrupted_atmos() {
-	rayon::spawn(|| {
-		for lock in GAS_MIXTURES.read().as_ref().unwrap().iter() {
-			if {
-				if let Some(gas) = lock.try_read() {
-					gas.is_corrupt()
-				} else {
-					false
-				}
-			} {
-				lock.write().fix_corruption();
-			}
-		}
-	});
-	Ok(Value::null())
 }
 
 pub(crate) fn amt_gases() -> usize {

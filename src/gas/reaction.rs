@@ -26,11 +26,9 @@ pub struct ReactionIdentifier {
 
 impl Ord for ReactionIdentifier {
 	fn cmp(&self, other: &Self) -> Ordering {
-		if let Some(priority_cmp) = self.priority.partial_cmp(&other.priority) {
-			priority_cmp
-		} else {
-			self.string_id_hash.cmp(&other.string_id_hash)
-		}
+		self.priority
+			.partial_cmp(&other.priority)
+			.unwrap_or_else(|| self.string_id_hash.cmp(&other.string_id_hash))
 	}
 }
 
@@ -79,24 +77,25 @@ thread_local! {
 fn clean_up_reaction_values() {
 	REACTION_VALUES.with(|reaction_values| {
 		reaction_values.borrow_mut().clear();
-	})
+	});
 }
 
 pub fn react_by_id(id: ReactionIdentifier, src: &Value, holder: &Value) -> DMResult {
 	REACTION_VALUES.with(|r| {
-		if let Some(reaction) = r.borrow().get(&id) {
-			reaction.call("react", &[src, holder])
-		} else {
-			Err(runtime!("Reaction with invalid id"))
-		}
+		r.borrow().get(&id).map_or_else(
+			|| Err(runtime!("Reaction with invalid id")),
+			|reaction| reaction.call("react", &[src, holder]),
+		)
 	})
 }
 
 impl Reaction {
-	/// Takes a /datum/reaction and makes a byond reaction out of it.
-	///  This will panic if it's given anything that isn't a /datum/reaction.
-	///  Yes, *panic*, not runtime. This is intentional. Please do not give it
-	///  anything but a /datum/reaction.
+	/// Takes a `/datum/gas_reaction` and makes a byond reaction out of it.
+	///
+	/// # Panics
+	///
+	///
+	/// If given anything but a `/datum/gas_reaction`, this will panic.
 	pub fn from_byond_reaction(reaction: &Value) -> Self {
 		let priority = reaction.get_number(byond_string!("priority")).unwrap();
 		let string_id_hash =
@@ -118,24 +117,20 @@ impl Reaction {
 					}
 				}
 				let min_temp_req = min_reqs
-					.get(&Value::from_string("TEMP").unwrap_or(Value::null()))
-					.unwrap_or(Value::null())
-					.as_number()
+					.get(byond_string!("TEMP"))
+					.and_then(|v| v.as_number())
 					.ok();
 				let max_temp_req = min_reqs
-					.get(&Value::from_string("MAX_TEMP").unwrap_or(Value::null()))
-					.unwrap_or(Value::null())
-					.as_number()
+					.get(byond_string!("MAX_TEMP"))
+					.and_then(|v| v.as_number())
 					.ok();
 				let min_ener_req = min_reqs
-					.get(&Value::from_string("ENER").unwrap_or(Value::null()))
-					.unwrap_or(Value::null())
-					.as_number()
+					.get(byond_string!("ENER"))
+					.and_then(|v| v.as_number())
 					.ok();
 				let min_fire_req = min_reqs
-					.get(&Value::from_string("FIRE_REAGENTS").unwrap_or(Value::null()))
-					.unwrap_or(Value::null())
-					.as_number()
+					.get(byond_string!("FIRE_REAGENTS"))
+					.and_then(|v| v.as_number())
 					.ok();
 				Reaction {
 					id,

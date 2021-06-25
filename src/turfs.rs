@@ -10,8 +10,6 @@ use super::gas::gas_mixture::GasMixture;
 
 use auxtools::*;
 
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use crate::constants::*;
 
 use crate::GasMixtures;
@@ -57,52 +55,65 @@ struct TurfMixture {
 
 #[allow(dead_code)]
 impl TurfMixture {
+	pub fn enabled(&self) -> bool {
+		self.simulation_level > 0
+			&& self.simulation_level & SIMULATION_LEVEL_DISABLED != SIMULATION_LEVEL_DISABLED
+	}
 	pub fn adjacent_mixes<'a>(
 		&'a self,
-		all_mixtures: &'a Vec<parking_lot::RwLock<GasMixture>>,
+		all_mixtures: &'a [parking_lot::RwLock<GasMixture>],
 	) -> impl Iterator<Item = &'a parking_lot::RwLock<GasMixture>> {
 		self.adjacents
 			.iter()
 			.filter_map(move |idx| idx.and_then(|i| all_mixtures.get(i.get())))
 	}
+	pub fn adjacent_mixes_with_adj_info<'a>(
+		&'a self,
+		all_mixtures: &'a [parking_lot::RwLock<GasMixture>],
+		this_idx: TurfID,
+		max_x: i32,
+		max_y: i32,
+	) -> impl Iterator<Item = (usize, TurfID, &'a parking_lot::RwLock<GasMixture>)> {
+		self.adjacents
+			.iter()
+			.enumerate()
+			.filter_map(move |(i, idx)| {
+				idx.and_then(|id| all_mixtures.get(id.get()))
+					.map(|g| (i, adjacent_tile_id(i as u8, this_idx, max_x, max_y), g))
+			})
+	}
 	pub fn is_immutable(&self) -> bool {
-		let mut res = false;
 		GasMixtures::with_all_mixtures(|all_mixtures| {
-			res = all_mixtures
+			all_mixtures
 				.get(self.mix)
-				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
+				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
 				.read()
 				.is_immutable()
-		});
-		res
+		})
 	}
 	pub fn return_pressure(&self) -> f32 {
-		let mut res = 0.0;
 		GasMixtures::with_all_mixtures(|all_mixtures| {
-			res = all_mixtures
+			all_mixtures
 				.get(self.mix)
-				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
+				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
 				.read()
 				.return_pressure()
-		});
-		res
+		})
 	}
 	pub fn total_moles(&self) -> f32 {
-		let mut res = 0.0;
 		GasMixtures::with_all_mixtures(|all_mixtures| {
-			res = all_mixtures
+			all_mixtures
 				.get(self.mix)
-				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
+				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
 				.read()
 				.total_moles()
-		});
-		res
+		})
 	}
 	pub fn clear_air(&self) {
 		GasMixtures::with_all_mixtures(|all_mixtures| {
 			all_mixtures
 				.get(self.mix)
-				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
+				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
 				.write()
 				.clear();
 		});
@@ -112,7 +123,7 @@ impl TurfMixture {
 		GasMixtures::with_all_mixtures(|all_mixtures| {
 			let to_copy = all_mixtures
 				.get(self.mix)
-				.expect(&format!("Gas mixture not found for turf: {}", self.mix))
+				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
 				.read();
 			ret.copy_from_mutable(&to_copy);
 			ret.volume = to_copy.volume;
@@ -137,11 +148,6 @@ static mut TURF_GASES: Option<DashMap<TurfID, TurfMixture, FxBuildHasher>> = Non
 static mut TURF_TEMPERATURES: Option<DashMap<TurfID, ThermalInfo, FxBuildHasher>> = None;
 // We store planetary atmos by hash of the initial atmos string here for speed.
 static mut PLANETARY_ATMOS: Option<DashMap<u32, GasMixture, FxBuildHasher>> = None;
-// In a separate dashmap because if it isn't most of the post-process time is spent acquiring write locks
-static mut TURF_VIS_HASH: Option<DashMap<TurfID, AtomicU64, FxBuildHasher>> = None;
-// For monstermos or other hypothetical fast-process systems.
-static mut HIGH_PRESSURE_TURFS: Option<(flume::Sender<Vec<TurfID>>, flume::Receiver<Vec<TurfID>>)> =
-	None;
 
 #[init(partial)]
 fn _initialize_turf_statics() -> Result<(), String> {
@@ -149,8 +155,6 @@ fn _initialize_turf_statics() -> Result<(), String> {
 		TURF_GASES = Some(DashMap::with_hasher(FxBuildHasher::default()));
 		TURF_TEMPERATURES = Some(DashMap::with_hasher(FxBuildHasher::default()));
 		PLANETARY_ATMOS = Some(DashMap::with_hasher(FxBuildHasher::default()));
-		TURF_VIS_HASH = Some(DashMap::with_hasher(FxBuildHasher::default()));
-		HIGH_PRESSURE_TURFS = Some(flume::unbounded());
 	};
 	Ok(())
 }
@@ -161,8 +165,6 @@ fn _shutdown_turfs() {
 		TURF_GASES = None;
 		TURF_TEMPERATURES = None;
 		PLANETARY_ATMOS = None;
-		TURF_VIS_HASH = None;
-		HIGH_PRESSURE_TURFS = None
 	};
 }
 // this would lead to undefined info if it were possible for something to put a None on it during operation, but nothing's going to do that
@@ -176,16 +178,6 @@ fn planetary_atmos() -> &'static DashMap<u32, GasMixture, FxBuildHasher> {
 
 fn turf_temperatures() -> &'static DashMap<TurfID, ThermalInfo, FxBuildHasher> {
 	unsafe { TURF_TEMPERATURES.as_ref().unwrap() }
-}
-
-fn check_and_update_vis_hash(id: TurfID, hash: u64) -> bool {
-	let turf_vis_hash = unsafe { TURF_VIS_HASH.as_ref() }.unwrap();
-	if let Some(existing_hash) = turf_vis_hash.get(&id) {
-		existing_hash.swap(hash, Ordering::Relaxed) != hash
-	} else {
-		turf_vis_hash.insert(id, AtomicU64::new(hash));
-		true
-	}
 }
 
 #[hook("/turf/proc/update_air_ref")]
@@ -202,7 +194,7 @@ fn _hook_register_turf() {
 		turf_gases().remove(&unsafe { src.raw.data.id });
 		Ok(Value::null())
 	} else {
-		let mut to_insert: TurfMixture = Default::default();
+		let mut to_insert: TurfMixture = TurfMixture::default();
 		let air = src.get(byond_string!("air"))?;
 		to_insert.mix = air
 			.get_number(byond_string!("_extools_pointer_gasmixture"))
@@ -344,7 +336,7 @@ fn _hook_adjacent_turfs() {
 	if let Ok(adjacent_list) = src.get_list(byond_string!("atmos_adjacent_turfs")) {
 		let mut adjacent_mixes: [Option<nonmax::NonMaxUsize>; 6] = [None; 6];
 		let mut adjacency = 0;
-		for i in 1..adjacent_list.len() + 1 {
+		for i in 1..=adjacent_list.len() {
 			let adj_val = adjacent_list.get(i)?;
 			let adjacent_num = adjacent_list.get(&adj_val)?.as_number()? as u8;
 			adjacency |= adjacent_num;
@@ -383,7 +375,7 @@ fn _hook_adjacent_turfs() {
 					.get_number(byond_string!("thermal_conductivity"))
 					.unwrap(),
 				heat_capacity: src.get_number(byond_string!("heat_capacity")).unwrap(),
-				adjacency: adjacency,
+				adjacency,
 				adjacent_to_space: args[0].as_number().unwrap() != 0.0,
 			});
 	}
@@ -526,15 +518,14 @@ impl Iterator for AdjacentTileIDs {
 		loop {
 			if self.count > 6 {
 				return None;
-			} else {
-				self.count += 1;
-				let bit = 1 << (self.count - 1);
-				if self.adj & bit == bit {
-					return Some((
-						self.count - 1,
-						adjacent_tile_id(self.count - 1, self.i, self.max_x, self.max_y),
-					));
-				}
+			}
+			self.count += 1;
+			let bit = 1 << (self.count - 1);
+			if self.adj & bit == bit {
+				return Some((
+					self.count - 1,
+					adjacent_tile_id(self.count - 1, self.i, self.max_x, self.max_y),
+				));
 			}
 		}
 	}

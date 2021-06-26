@@ -247,7 +247,7 @@ fn _update_reactions() {
 
 pub fn with_reactions<T, F>(mut f: F) -> T
 where
-	F: FnMut(&Vec<Reaction>) -> T,
+	F: FnMut(&[Reaction]) -> T,
 {
 	f(unsafe { REACTION_INFO.as_ref() }
 		.unwrap_or_else(|| panic!("Reactions not loaded yet! Uh oh!")))

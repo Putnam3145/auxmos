@@ -211,10 +211,8 @@ impl GasMixture {
 		let our_heat_capacity = self.heat_capacity();
 		let other_heat_capacity = giver.heat_capacity();
 		self.maybe_expand(giver.moles.len());
-		for (id, amt) in giver.enumerate() {
-			unsafe {
-				*self.moles.get_unchecked_mut(id) += amt;
-			};
+		for (a, b) in self.moles.iter_mut().zip(giver.moles.iter()) {
+			*a += b;
 		}
 		let combined_heat_capacity = our_heat_capacity + other_heat_capacity;
 		if combined_heat_capacity > MINIMUM_HEAT_CAPACITY {
@@ -232,11 +230,10 @@ impl GasMixture {
 		let mut heat_transfer = 0.0;
 		with_specific_heats(|heats| {
 			for i in gases.iter().copied() {
-				let orig = self.get_moles(i);
-				if orig > 0.0 {
-					let delta = orig * ratio;
+				if let Some(orig) = self.moles.get_mut(i) {
+					let delta = *orig * ratio;
 					heat_transfer += delta * self.temperature * heats[i];
-					*unsafe { self.moles.get_unchecked_mut(i) } -= delta;
+					*orig -= delta;
 					into.adjust_moles(i, delta);
 				}
 			}
@@ -403,11 +400,7 @@ impl GasMixture {
 			reactions
 				.iter()
 				.filter_map(|r| {
-					if r.check_conditions(self) {
-						Some(r.get_id())
-					} else {
-						None
-					}
+					r.check_conditions(self).then(|| r.get_id())
 				})
 				.collect()
 		})
@@ -501,7 +494,7 @@ impl GasMixture {
 		let cur_hash = hasher.finish();
 		self.cached_vis_hash.0.swap(cur_hash, Relaxed) != cur_hash
 	}
-	// Removes all zeroes from the gas mixture.
+	// Removes all redundant zeroes from the gas mixture.
 	pub fn garbage_collect(&mut self) {
 		let mut last_valid_found = 0;
 		for (i, amt) in self.moles.iter_mut().enumerate() {

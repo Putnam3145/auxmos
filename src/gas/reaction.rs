@@ -15,6 +15,7 @@ pub struct Reaction {
 	max_temp_req: Option<f32>,
 	min_ener_req: Option<f32>,
 	min_fire_req: Option<f32>,
+	any_reagent_req: Option<f32>,
 	min_gas_reqs: Vec<(GasIDX, f32)>,
 }
 
@@ -132,21 +133,27 @@ impl Reaction {
 					.get(byond_string!("FIRE_REAGENTS"))
 					.and_then(|v| v.as_number())
 					.ok();
+				let any_reagent_req = min_reqs
+					.get(byond_string!("ANY_REAGENT"))
+					.and_then(|v| v.as_number())
+					.ok();
 				Reaction {
 					id,
 					min_temp_req,
 					max_temp_req,
 					min_ener_req,
 					min_fire_req,
+					any_reagent_req,
 					min_gas_reqs,
 				}
 			} else {
 				Reaction {
 					id,
 					min_temp_req: None,
-					max_temp_req: Some(1.0),
+					max_temp_req: Some(-1.0),
 					min_ener_req: None,
 					min_fire_req: None,
+					any_reagent_req: None,
 					min_gas_reqs: vec![],
 				}
 			}
@@ -164,10 +171,17 @@ impl Reaction {
 			&& self
 				.max_temp_req
 				.map_or(true, |temp_req| mix.get_temperature() <= temp_req)
-			&& self
-				.min_gas_reqs
-				.iter()
-				.all(|&(k, v)| mix.get_moles(k) >= v)
+			&& self.any_reagent_req.map_or(true, |reagent_amt| {
+				super::gases::with_reagent_gases(|reagents| {
+					reagents
+						.iter()
+						.copied()
+						.any(|i| mix.get_moles(i) >= reagent_amt)
+				})
+			}) && self
+			.min_gas_reqs
+			.iter()
+			.all(|&(k, v)| mix.get_moles(k) >= v)
 			&& self
 				.min_ener_req
 				.map_or(true, |ener_req| mix.thermal_energy() >= ener_req)

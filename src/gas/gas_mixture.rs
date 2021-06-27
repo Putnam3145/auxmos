@@ -399,9 +399,7 @@ impl GasMixture {
 		with_reactions(|reactions| {
 			reactions
 				.iter()
-				.filter_map(|r| {
-					r.check_conditions(self).then(|| r.get_id())
-				})
+				.filter_map(|r| r.check_conditions(self).then(|| r.get_id()))
 				.collect()
 		})
 	}

@@ -4,7 +4,7 @@ use fxhash::FxBuildHasher;
 
 use std::cell::RefCell;
 
-use super::reaction::Reaction;
+use crate::reaction::Reaction;
 
 use super::GasIDX;
 
@@ -19,6 +19,8 @@ static mut REACTION_INFO: Option<Vec<Reaction>> = None;
 use auxtools::*;
 
 use parking_lot::{const_rwlock, RwLock};
+
+/// The temperature at which this gas can oxidize and how much fuel it can oxidize when it can.
 #[derive(Clone, Copy)]
 pub struct OxidationInfo {
 	temperature: f32,
@@ -34,13 +36,15 @@ impl OxidationInfo {
 	}
 }
 
+/// The temperature at which this gas can burn and how much it burns when it does.
+/// This may seem redundant with OxidationInfo, but burn_rate is actually the inverse, dimensions-wise, moles^-1 rather than moles.
 #[derive(Clone, Copy)]
-pub struct FireInfo {
+pub struct FuelInfo {
 	temperature: f32,
 	burn_rate: f32,
 }
 
-impl FireInfo {
+impl FuelInfo {
 	pub fn temperature(&self) -> f32 {
 		self.temperature
 	}
@@ -49,6 +53,17 @@ impl FireInfo {
 	}
 }
 
+/// Contains either oxidation info, fuel info or neither.
+/// Just use it with match always, no helpers here.
+#[derive(Clone, Copy)]
+pub enum FireInfo {
+	Oxidation(OxidationInfo),
+	Fuel(FuelInfo),
+	None,
+}
+
+/// We can't guarantee the order of loading gases, so any properties of gases that reference other gases
+/// must have a reference like this that can get the proper index at runtime.
 #[derive(Clone)]
 pub enum GasRef {
 	Deferred(String),
@@ -73,22 +88,35 @@ impl GasRef {
 	}
 }
 
+/// An individual gas type. Contains a whole lot of info attained from Byond when the gas is first registered.
+/// If you don't have any of these, just fork auxmos and remove them, many of these are not necessary--for example,
+/// if you don't have fusion, you can just remove fusion_power.
 #[derive(Clone)]
 pub struct GasType {
+	/// The index of this gas in the moles vector of a mixture. Usually the most common representation in Auxmos, for speed.
 	pub idx: GasIDX,
+	/// The ID on the byond end, as a boxed str. Most convenient way to reference it in code; use the function gas_idx_from_string to get idx from this.
 	pub id: Box<str>,
+	/// The gas's name. Not used in auxmos as of yet.
 	pub name: Box<str>,
+	/// Not used in auxmos, there for completeness. Only flag on Citadel is GAS_DANGEROUS.
 	pub flags: u32,
+	/// The specific heat of the gas. Duplicated in the GAS_SPECIFIC_HEATS vector for speed.
 	pub specific_heat: f32,
+	/// Gas's fusion power. Used in fusion hooking, so this can be removed and ignored if you don't have fusion.
 	pub fusion_power: f32,
+	/// The moles at which the gas's overlay or other appearance shows up. If None, gas is never visible.
 	pub moles_visible: Option<f32>,
+	/// Amount of energy released per mole of material burned in generic fires.
 	pub fire_energy_released: f32,
-	pub oxidation: Option<OxidationInfo>,
-	pub fire: Option<FireInfo>,
+	/// Either fuel info, oxidation info or neither. See the documentation on the respective types.
+	pub fire_info: FireInfo,
+	/// A vector of gas-amount pairs. GasRef is just which gas, the f32 is moles made/mole burned.
 	pub fire_products: Option<Vec<(GasRef, f32)>>,
 }
 
 impl GasType {
+	// This absolute monster is what you want to override to add or remove certain gas properties, based on what a gas datum has.
 	fn new(gas: &Value, idx: GasIDX) -> Result<Self, Runtime> {
 		Ok(Self {
 			idx,
@@ -121,23 +149,20 @@ impl GasType {
 				)
 			})?,
 			moles_visible: gas.get_number(byond_string!("moles_visible")).ok(),
-			oxidation: if let Ok(temperature) =
-				gas.get_number(byond_string!("oxidation_temperature"))
-			{
-				Some(OxidationInfo {
-					temperature,
-					power: gas.get_number(byond_string!("oxidation_rate"))?,
-				})
-			} else {
-				None
-			},
-			fire: if let Ok(temperature) = gas.get_number(byond_string!("fire_temperature")) {
-				Some(FireInfo {
-					temperature,
-					burn_rate: gas.get_number(byond_string!("fire_burn_rate"))?,
-				})
-			} else {
-				None
+			fire_info: {
+				if let Ok(temperature) = gas.get_number(byond_string!("oxidation_temperature")) {
+					FireInfo::Oxidation(OxidationInfo {
+						temperature,
+						power: gas.get_number(byond_string!("oxidation_rate"))?,
+					})
+				} else if let Ok(temperature) = gas.get_number(byond_string!("fire_temperature")) {
+					FireInfo::Fuel(FuelInfo {
+						temperature,
+						burn_rate: gas.get_number(byond_string!("fire_burn_rate"))?,
+					})
+				} else {
+					FireInfo::None
+				}
 			},
 			fire_products: if let Ok(products) = gas.get_list(byond_string!("fire_products")) {
 				Some(
@@ -284,23 +309,27 @@ pub fn gas_visibility(idx: usize) -> Option<f32> {
 		.moles_visible
 }
 
-pub fn visibility_copies() -> Vec<Option<f32>> {
+/// Gets a copy of all the gas visibilities.
+pub fn visibility_copies() -> Box<[Option<f32>]> {
 	GAS_INFO_BY_IDX
 		.read()
 		.as_ref()
 		.unwrap_or_else(|| panic!("Gases not loaded yet! Uh oh!"))
 		.iter()
 		.map(|g| g.moles_visible)
-		.collect()
+		.collect::<Vec<_>>()
+		.into_boxed_slice()
 }
 
-pub fn with_gas_info<T>(f: impl FnOnce(&Vec<GasType>) -> T) -> T {
+/// Allows one to run a closure with a lock on the global gas info vec.
+pub fn with_gas_info<T>(f: impl FnOnce(&[GasType]) -> T) -> T {
 	f(GAS_INFO_BY_IDX
 		.read()
 		.as_ref()
 		.unwrap_or_else(|| panic!("Gases not loaded yet! Uh oh!")))
 }
 
+/// Updates all the GasRefs in the global gas info vec with proper indices instead of strings.
 pub fn update_gas_refs() {
 	GAS_INFO_BY_IDX
 		.write()
@@ -326,6 +355,7 @@ thread_local! {
 	static CACHED_GAS_IDS: RefCell<HashMap<Value, GasIDX, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
 }
 
+/// Returns the appropriate index to be used by auxmos for a given ID string.
 pub fn gas_idx_from_string(id: &str) -> Result<GasIDX, Runtime> {
 	Ok(unsafe { GAS_INFO_BY_STRING.as_ref() }
 		.ok_or_else(|| runtime!("Gases not loaded yet! Uh oh!"))?
@@ -334,7 +364,7 @@ pub fn gas_idx_from_string(id: &str) -> Result<GasIDX, Runtime> {
 		.idx)
 }
 
-/// Returns the appropriate index to be used by the game for a given ID string.
+/// Returns the appropriate index to be used by the game for a given Byond string.
 pub fn gas_idx_from_value(string_val: &Value) -> Result<GasIDX, Runtime> {
 	CACHED_GAS_IDS.with(|c| {
 		let mut cache = c.borrow_mut();

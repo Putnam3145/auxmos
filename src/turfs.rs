@@ -6,13 +6,13 @@ pub mod monstermos;
 #[cfg(feature = "putnamos")]
 pub mod putnamos;
 
-use super::gas::gas_mixture::GasMixture;
+use crate::gas::Mixture;
 
 use auxtools::*;
 
 use crate::constants::*;
 
-use crate::GasMixtures;
+use crate::GasArena;
 
 use dashmap::DashMap;
 
@@ -61,19 +61,19 @@ impl TurfMixture {
 	}
 	pub fn adjacent_mixes<'a>(
 		&'a self,
-		all_mixtures: &'a [parking_lot::RwLock<GasMixture>],
-	) -> impl Iterator<Item = &'a parking_lot::RwLock<GasMixture>> {
+		all_mixtures: &'a [parking_lot::RwLock<Mixture>],
+	) -> impl Iterator<Item = &'a parking_lot::RwLock<Mixture>> {
 		self.adjacents
 			.iter()
 			.filter_map(move |idx| idx.and_then(|i| all_mixtures.get(i.get())))
 	}
 	pub fn adjacent_mixes_with_adj_info<'a>(
 		&'a self,
-		all_mixtures: &'a [parking_lot::RwLock<GasMixture>],
+		all_mixtures: &'a [parking_lot::RwLock<Mixture>],
 		this_idx: TurfID,
 		max_x: i32,
 		max_y: i32,
-	) -> impl Iterator<Item = (usize, TurfID, &'a parking_lot::RwLock<GasMixture>)> {
+	) -> impl Iterator<Item = (usize, TurfID, &'a parking_lot::RwLock<Mixture>)> {
 		self.adjacents
 			.iter()
 			.enumerate()
@@ -83,7 +83,7 @@ impl TurfMixture {
 			})
 	}
 	pub fn is_immutable(&self) -> bool {
-		GasMixtures::with_all_mixtures(|all_mixtures| {
+		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
 				.get(self.mix)
 				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
@@ -92,7 +92,7 @@ impl TurfMixture {
 		})
 	}
 	pub fn return_pressure(&self) -> f32 {
-		GasMixtures::with_all_mixtures(|all_mixtures| {
+		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
 				.get(self.mix)
 				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
@@ -101,7 +101,7 @@ impl TurfMixture {
 		})
 	}
 	pub fn total_moles(&self) -> f32 {
-		GasMixtures::with_all_mixtures(|all_mixtures| {
+		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
 				.get(self.mix)
 				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
@@ -110,7 +110,7 @@ impl TurfMixture {
 		})
 	}
 	pub fn clear_air(&self) {
-		GasMixtures::with_all_mixtures(|all_mixtures| {
+		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
 				.get(self.mix)
 				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
@@ -118,9 +118,9 @@ impl TurfMixture {
 				.clear();
 		});
 	}
-	pub fn get_gas_copy(&self) -> GasMixture {
-		let mut ret: GasMixture = GasMixture::new();
-		GasMixtures::with_all_mixtures(|all_mixtures| {
+	pub fn get_gas_copy(&self) -> Mixture {
+		let mut ret: Mixture = Mixture::new();
+		GasArena::with_all_mixtures(|all_mixtures| {
 			let to_copy = all_mixtures
 				.get(self.mix)
 				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
@@ -147,7 +147,7 @@ static mut TURF_GASES: Option<DashMap<TurfID, TurfMixture, FxBuildHasher>> = Non
 // Turfs with temperatures/heat capacities. This is distinct from the above.
 static mut TURF_TEMPERATURES: Option<DashMap<TurfID, ThermalInfo, FxBuildHasher>> = None;
 // We store planetary atmos by hash of the initial atmos string here for speed.
-static mut PLANETARY_ATMOS: Option<DashMap<u32, GasMixture, FxBuildHasher>> = None;
+static mut PLANETARY_ATMOS: Option<DashMap<u32, Mixture, FxBuildHasher>> = None;
 
 #[init(partial)]
 fn _initialize_turf_statics() -> Result<(), String> {
@@ -172,7 +172,7 @@ fn turf_gases() -> &'static DashMap<TurfID, TurfMixture, FxBuildHasher> {
 	unsafe { TURF_GASES.as_ref().unwrap() }
 }
 
-fn planetary_atmos() -> &'static DashMap<u32, GasMixture, FxBuildHasher> {
+fn planetary_atmos() -> &'static DashMap<u32, Mixture, FxBuildHasher> {
 	unsafe { PLANETARY_ATMOS.as_ref().unwrap() }
 }
 

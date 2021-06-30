@@ -11,11 +11,11 @@ use std::{
 
 use tinyvec::TinyVec;
 
-use super::reaction::ReactionIdentifier;
+use crate::reaction::ReactionIdentifier;
 
-use super::constants::*;
-
-use super::{gas_visibility, total_num_gases, with_reactions, with_specific_heats, GasIDX};
+use super::{
+	constants::*, gas_visibility, total_num_gases, with_reactions, with_specific_heats, GasIDX,
+};
 
 type SpecificFireInfo = (usize, f32, f32);
 
@@ -36,7 +36,7 @@ impl Clone for VisHash {
 /// a proper, fully-simulated FDM system, much like LINDA but without
 /// sleeping turfs.
 #[derive(Clone)]
-pub struct GasMixture {
+pub struct Mixture {
 	temperature: f32,
 	pub volume: f32,
 	min_heat_capacity: f32,
@@ -57,18 +57,18 @@ pub struct GasMixture {
 	which is not correct, and uses it for a calculation, but this cannot happen: thread A would
 	have a write lock, precluding thread B from accessing it.
 */
-unsafe impl Sync for GasMixture {}
+unsafe impl Sync for Mixture {}
 
-impl Default for GasMixture {
+impl Default for Mixture {
 	fn default() -> Self {
 		Self::new()
 	}
 }
 
-impl GasMixture {
+impl Mixture {
 	/// Makes an empty gas mixture.
 	pub fn new() -> Self {
-		GasMixture {
+		Self {
 			moles: TinyVec::new(),
 			temperature: 2.7,
 			volume: 2500.0,
@@ -80,7 +80,7 @@ impl GasMixture {
 	}
 	/// Makes an empty gas mixture with the given volume.
 	pub fn from_vol(vol: f32) -> Self {
-		let mut ret: GasMixture = GasMixture::new();
+		let mut ret = Self::new();
 		ret.volume = vol;
 		ret
 	}
@@ -204,7 +204,7 @@ impl GasMixture {
 		self.heat_capacity() * self.temperature
 	}
 	/// Merges one gas mixture into another.
-	pub fn merge(&mut self, giver: &GasMixture) {
+	pub fn merge(&mut self, giver: &Self) {
 		if self.immutable {
 			return;
 		}
@@ -224,7 +224,7 @@ impl GasMixture {
 		self.cached_heat_capacity.set(Some(combined_heat_capacity));
 	}
 	/// Transfers only the given gases from us to another mix.
-	pub fn transfer_gases_to(&mut self, r: f32, gases: &[GasIDX], into: &mut GasMixture) {
+	pub fn transfer_gases_to(&mut self, r: f32, gases: &[GasIDX], into: &mut Self) {
 		let ratio = r.clamp(0.0, 1.0);
 		let initial_energy = into.thermal_energy();
 		let mut heat_transfer = 0.0;
@@ -243,7 +243,7 @@ impl GasMixture {
 		into.set_temperature((initial_energy + heat_transfer) / into.heat_capacity());
 	}
 	/// Takes a percentage of this gas mixture's moles and puts it into another mixture. if this mix is mutable, also removes those moles from the original.
-	pub fn remove_ratio_into(&mut self, mut ratio: f32, into: &mut GasMixture) {
+	pub fn remove_ratio_into(&mut self, mut ratio: f32, into: &mut Self) {
 		if ratio <= 0.0 {
 			return;
 		}
@@ -258,21 +258,21 @@ impl GasMixture {
 		into.temperature = orig_temp;
 	}
 	/// As `remove_ratio_into`, but a raw number of moles instead of a ratio.
-	pub fn remove_into(&mut self, amount: f32, into: &mut GasMixture) {
+	pub fn remove_into(&mut self, amount: f32, into: &mut Self) {
 		self.remove_ratio_into(amount / self.total_moles(), into);
 	}
 	/// A convenience function that makes the mixture for `remove_ratio_into` on the spot and returns it.
-	pub fn remove_ratio(&mut self, ratio: f32) -> GasMixture {
-		let mut removed = GasMixture::from_vol(self.volume);
+	pub fn remove_ratio(&mut self, ratio: f32) -> Self {
+		let mut removed = Self::from_vol(self.volume);
 		self.remove_ratio_into(ratio, &mut removed);
 		removed
 	}
 	/// Like `remove_ratio`, but with moles.
-	pub fn remove(&mut self, amount: f32) -> GasMixture {
+	pub fn remove(&mut self, amount: f32) -> Self {
 		self.remove_ratio(amount / self.total_moles())
 	}
 	/// Copies from a given gas mixture, if we're mutable.
-	pub fn copy_from_mutable(&mut self, sample: &GasMixture) {
+	pub fn copy_from_mutable(&mut self, sample: &Self) {
 		if self.immutable {
 			return;
 		}
@@ -285,11 +285,7 @@ impl GasMixture {
 	/// Works well enough for our purposes, though perhaps called less often
 	/// than it ought to be while we're working in Rust.
 	/// Differs from the original by not using archive, since we don't put the archive into the gas mix itself anymore.
-	pub fn temperature_share(
-		&mut self,
-		sharer: &mut GasMixture,
-		conduction_coefficient: f32,
-	) -> f32 {
+	pub fn temperature_share(&mut self, sharer: &mut Self, conduction_coefficient: f32) -> f32 {
 		let temperature_delta = self.temperature - sharer.temperature;
 		if temperature_delta.abs() > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER {
 			let self_heat_capacity = self.heat_capacity();
@@ -340,20 +336,20 @@ impl GasMixture {
 		sharer_temperature
 	}
 	/// The second part of old compare(). Compares temperature, but only if this gas has sufficiently high moles.
-	pub fn temperature_compare(&self, sample: &GasMixture) -> bool {
+	pub fn temperature_compare(&self, sample: &Self) -> bool {
 		(self.get_temperature() - sample.get_temperature()).abs()
 			> MINIMUM_TEMPERATURE_DELTA_TO_SUSPEND
 			&& (self.total_moles() > MINIMUM_MOLES_DELTA_TO_MOVE)
 	}
 	/// Returns the maximum mole delta for an individual gas.
-	pub fn compare(&self, sample: &GasMixture) -> f32 {
+	pub fn compare(&self, sample: &Self) -> f32 {
 		self.moles
 			.iter()
 			.copied()
 			.zip_longest(sample.moles.iter().copied())
 			.fold(0.0, |acc, pair| acc.max(pair.reduce(|a, b| (b - a).abs())))
 	}
-	pub fn compare_with(&self, sample: &GasMixture, amt: f32) -> bool {
+	pub fn compare_with(&self, sample: &Self, amt: f32) -> bool {
 		self.moles
 			.as_slice()
 			.iter()
@@ -399,31 +395,40 @@ impl GasMixture {
 		with_reactions(|reactions| {
 			reactions
 				.iter()
-				.filter_map(|r| {
-					r.check_conditions(self).then(|| r.get_id())
-				})
+				.filter_map(|r| r.check_conditions(self).then(|| r.get_id()))
 				.collect()
 		})
 	}
 	/// Returns a tuple with oxidation power and fuel amount of this gas mixture.
 	pub fn get_burnability(&self) -> (f32, f32) {
+		use crate::types::FireInfo;
 		super::with_gas_info(|gas_info| {
-			self.enumerate().fold((0.0, 0.0), |mut acc, (i, amt)| {
-				let this_gas_info = &gas_info[i as usize];
-				if let Some(oxidation) = this_gas_info.oxidation {
-					if self.temperature > oxidation.temperature() {
-						let amount =
-							amt * (1.0 - oxidation.temperature() / self.temperature).max(0.0);
-						acc.0 += amount * oxidation.power();
+			self.moles
+				.iter()
+				.zip(gas_info)
+				.fold((0.0, 0.0), |mut acc, (&amt, this_gas_info)| {
+					if amt > GAS_MIN_MOLES {
+						match this_gas_info.fire_info {
+							FireInfo::Oxidation(oxidation) => {
+								if self.temperature > oxidation.temperature() {
+									let amount = amt
+										* (1.0 - oxidation.temperature() / self.temperature)
+											.max(0.0);
+									acc.0 += amount * oxidation.power();
+								}
+							}
+							FireInfo::Fuel(fire) => {
+								if self.temperature > fire.temperature() {
+									let amount = amt
+										* (1.0 - fire.temperature() / self.temperature).max(0.0);
+									acc.1 += amount / fire.burn_rate();
+								}
+							}
+							FireInfo::None => (),
+						}
 					}
-				} else if let Some(fire) = this_gas_info.fire {
-					if self.temperature > fire.temperature() {
-						let amount = amt * (1.0 - fire.temperature() / self.temperature).max(0.0);
-						acc.1 += amount / fire.burn_rate();
-					}
-				}
-				acc
-			})
+					acc
+				})
 		})
 	}
 	/// Returns only the oxidation power. Since this calculates burnability anyway, prefer `get_burnability`.
@@ -440,27 +445,31 @@ impl GasMixture {
 		&self,
 		gas_info: &[super::GasType],
 	) -> (Vec<SpecificFireInfo>, Vec<SpecificFireInfo>) {
-		self.enumerate()
-			.filter_map(|(i, g)| {
-				let this_gas_info = &gas_info[i as usize];
-				this_gas_info
-					.oxidation
-					.and_then(|oxidation| {
-						(self.get_temperature() > oxidation.temperature()).then(|| {
-							let amount = g
+		use crate::types::FireInfo;
+		self.moles
+			.iter()
+			.zip(gas_info)
+			.enumerate()
+			.filter_map(|(i, (&amt, this_gas_info))| {
+				(amt > GAS_MIN_MOLES)
+					.then(|| match this_gas_info.fire_info {
+						FireInfo::Oxidation(oxidation) => (self.get_temperature()
+							> oxidation.temperature())
+						.then(|| {
+							let amount = amt
 								* (1.0 - oxidation.temperature() / self.get_temperature()).max(0.0);
 							Either::Right((i, amount, amount * oxidation.power()))
-						})
-					})
-					.or_else(|| {
-						this_gas_info.fire.and_then(|fire| {
-							(self.get_temperature() > fire.temperature()).then(|| {
-								let amount = g
-									* (1.0 - fire.temperature() / self.get_temperature()).max(0.0);
-								Either::Left((i, amount, -amount / fire.burn_rate()))
+						}),
+						FireInfo::Fuel(fuel) => {
+							(self.get_temperature() > fuel.temperature()).then(|| {
+								let amount = amt
+									* (1.0 - fuel.temperature() / self.get_temperature()).max(0.0);
+								Either::Left((i, amount, amount / fuel.burn_rate()))
 							})
-						})
+						}
+						FireInfo::None => None,
 					})
+					.flatten()
 			})
 			.partition_map(|r| r)
 	}
@@ -511,10 +520,10 @@ impl GasMixture {
 use std::ops::{Add, Mul};
 
 /// Takes a copy of the mix, merges the right hand side, then returns the copy.
-impl Add<&GasMixture> for GasMixture {
+impl Add<&Mixture> for Mixture {
 	type Output = Self;
 
-	fn add(self, rhs: &GasMixture) -> Self {
+	fn add(self, rhs: &Mixture) -> Self {
 		let mut ret = self;
 		ret.merge(rhs);
 		ret
@@ -522,10 +531,10 @@ impl Add<&GasMixture> for GasMixture {
 }
 
 /// Takes a copy of the mix, merges the right hand side, then returns the copy.
-impl<'a, 'b> Add<&'a GasMixture> for &'b GasMixture {
-	type Output = GasMixture;
+impl<'a, 'b> Add<&'a Mixture> for &'b Mixture {
+	type Output = Mixture;
 
-	fn add(self, rhs: &GasMixture) -> GasMixture {
+	fn add(self, rhs: &Mixture) -> Mixture {
 		let mut ret = self.clone();
 		ret.merge(rhs);
 		ret
@@ -533,7 +542,7 @@ impl<'a, 'b> Add<&'a GasMixture> for &'b GasMixture {
 }
 
 /// Makes a copy of the given mix, multiplied by a scalar.
-impl Mul<f32> for GasMixture {
+impl Mul<f32> for Mixture {
 	type Output = Self;
 
 	fn mul(self, rhs: f32) -> Self {
@@ -544,10 +553,10 @@ impl Mul<f32> for GasMixture {
 }
 
 /// Makes a copy of the given mix, multiplied by a scalar.
-impl<'a> Mul<f32> for &'a GasMixture {
-	type Output = GasMixture;
+impl<'a> Mul<f32> for &'a Mixture {
+	type Output = Mixture;
 
-	fn mul(self, rhs: f32) -> GasMixture {
+	fn mul(self, rhs: f32) -> Mixture {
 		let mut ret = self.clone();
 		ret.multiply(rhs);
 		ret
@@ -560,11 +569,11 @@ mod tests {
 
 	#[test]
 	fn test_merge() {
-		let mut into = GasMixture::new();
+		let mut into = Mixture::new();
 		into.set_moles(0, 82.0);
 		into.set_moles(1, 22.0);
 		into.set_temperature(293.15);
-		let mut source = GasMixture::new();
+		let mut source = Mixture::new();
 		source.set_moles(3, 100.0);
 		source.set_temperature(313.15);
 		into.merge(&source);
@@ -572,7 +581,7 @@ mod tests {
 		assert_eq!(into.get_moles(3), 100.0);
 		assert_eq!(source.get_moles(3), 100.0); // source is not modified by merge
 										/*
-										make sure that the merge successfuly changed the temperature of the mix merged into
+										make sure that the merge successfuly changed the temperature of the mix merged into:
 										test gases have heat capacities of 2,080 and 20,000 respectively, so total thermal energies of
 										609,752 and 6,263,000 respectively once multiplied by temperatures. add those together,
 										then divide by new total heat capacity:
@@ -591,7 +600,7 @@ mod tests {
 	#[test]
 	fn test_remove() {
 		// also tests multiply, copy_from_mutable
-		let mut removed = GasMixture::new();
+		let mut removed = Mixture::new();
 		removed.set_moles(0, 22.0);
 		removed.set_moles(1, 82.0);
 		let new = removed.remove_ratio(0.5);

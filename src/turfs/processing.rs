@@ -4,7 +4,7 @@ use auxtools::*;
 
 use super::*;
 
-use crate::GasMixtures;
+use crate::GasArena;
 
 use std::time::{Duration, Instant};
 
@@ -291,7 +291,8 @@ fn _process_turf_hook() {
 	Ok(Value::from(false))
 }
 
-fn should_process(m: TurfMixture, all_mixtures: &[RwLock<GasMixture>]) -> bool {
+// Compares with neighbors, returning early if any of them are valid.
+fn should_process(m: TurfMixture, all_mixtures: &[RwLock<Mixture>]) -> bool {
 	m.adjacency > 0
 		&& m.enabled()
 		&& all_mixtures
@@ -319,20 +320,21 @@ fn should_process(m: TurfMixture, all_mixtures: &[RwLock<GasMixture>]) -> bool {
 			})
 }
 
+// Creates the combined gas mixture of all this mix's neighbors, as well as gathering some other pertinent info for future processing.
 fn process_cell(
 	i: TurfID,
 	m: TurfMixture,
 	max_x: i32,
 	max_y: i32,
-	all_mixtures: &[RwLock<GasMixture>],
-) -> Option<(TurfID, TurfMixture, GasMixture, [(TurfID, f32); 6], i32)> {
+	all_mixtures: &[RwLock<Mixture>],
+) -> Option<(TurfID, TurfMixture, Mixture, [(TurfID, f32); 6], i32)> {
 	let mut adj_amount = 0;
 	/*
 		Getting write locks is potential danger zone,
 		so we make sure we don't do that unless we
 		absolutely need to. Saving is fast enough.
 	*/
-	let mut end_gas = GasMixture::from_vol(crate::constants::CELL_VOLUME);
+	let mut end_gas = Mixture::from_vol(crate::constants::CELL_VOLUME);
 	let mut pressure_diffs: [(TurfID, f32); 6] = Default::default();
 	/*
 		The pressure here is negative
@@ -378,6 +380,7 @@ fn process_cell(
 	Some((i, m, end_gas, pressure_diffs, adj_amount))
 }
 
+// Solving the heat equation using a Finite Difference Method, an iterative stencil loop.
 fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSet<TurfID>) {
 	/*
 		This is the replacement system for LINDA. LINDA requires a lot of bookkeeping,
@@ -393,7 +396,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 		if cur_count > fdm_max_steps || WAITING_FOR_THREAD.load(Ordering::SeqCst) {
 			break;
 		}
-		GasMixtures::with_all_mixtures(|all_mixtures| {
+		GasArena::with_all_mixtures(|all_mixtures| {
 			let turfs_to_save = turf_gases()
 				/*
 					This uses the DashMap raw API to access the shards directly.
@@ -453,7 +456,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 							exactly the amount those gases "took" from this.
 						*/
 						{
-							let gas: &mut GasMixture = &mut entry.write();
+							let gas: &mut Mixture = &mut entry.write();
 							gas.multiply(1.0 - (*adj_amount as f32 * GAS_DIFFUSION_CONSTANT));
 							gas.merge(end_gas);
 						}
@@ -510,6 +513,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 	(low_pressure_turfs, high_pressure_turfs)
 }
 
+// Finds small differences in turf pressures and equalizes them.
 fn excited_group_processing(
 	max_x: i32,
 	max_y: i32,
@@ -526,10 +530,10 @@ fn excited_group_processing(
 			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
 			let mut min_pressure = initial_mix_ref.return_pressure();
 			let mut max_pressure = min_pressure;
-			let mut fully_mixed = GasMixture::new();
+			let mut fully_mixed = Mixture::new();
 			border_turfs.push_back((initial_turf, *initial_mix_ref.value()));
 			found_turfs.insert(initial_turf);
-			GasMixtures::with_all_mixtures(|all_mixtures| {
+			GasArena::with_all_mixtures(|all_mixtures| {
 				loop {
 					if turfs.len() >= 2500 {
 						break;
@@ -580,10 +584,11 @@ fn excited_group_processing(
 
 static mut PLANET_RESET_TIMER: Option<Instant> = None;
 
+// If this turf has planetary atmos, and it's sufficiently similar, just sets the turf's atmos to the planetary atmos.
 fn remove_trace_planet_gases(
 	m: TurfMixture,
-	planetary_atmos: &'static DashMap<u32, GasMixture, FxBuildHasher>,
-	all_mixtures: &[RwLock<GasMixture>],
+	planetary_atmos: &'static DashMap<u32, Mixture, FxBuildHasher>,
+	all_mixtures: &[RwLock<Mixture>],
 ) {
 	if let Some(planet_atmos_entry) = m.planetary_atmos.and_then(|id| planetary_atmos.get(&id)) {
 		let planet_atmos = planet_atmos_entry.value();
@@ -599,11 +604,12 @@ fn remove_trace_planet_gases(
 	}
 }
 
+// Checks if the gas can react or can update visuals, returns None if not.
 fn post_process_cell(
 	i: TurfID,
 	m: TurfMixture,
 	vis: &[Option<f32>],
-	all_mixtures: &[RwLock<GasMixture>],
+	all_mixtures: &[RwLock<Mixture>],
 ) -> Option<(TurfID, bool, bool)> {
 	all_mixtures
 		.get(m.mix)
@@ -615,6 +621,8 @@ fn post_process_cell(
 		})
 }
 
+// Goes through every turf, checks if it should reset to planet atmos, if it should
+// update visuals, if it should react, sends a callback if it should.
 fn post_process() {
 	let should_check_planet_turfs = unsafe {
 		let timer = PLANET_RESET_TIMER.get_or_insert_with(Instant::now);
@@ -625,13 +633,12 @@ fn post_process() {
 			false
 		}
 	};
-	let vis_vec = crate::gas::visibility_copies();
-	let vis = vis_vec.as_slice();
+	let vis = crate::gas::visibility_copies();
 	turf_gases().shards().par_iter().for_each(|shard| {
 		let sender = byond_callback_sender();
 		let mut reacters = VecDeque::with_capacity(10);
 		let mut visual_updaters = VecDeque::with_capacity(25);
-		GasMixtures::with_all_mixtures(|all_mixtures| {
+		GasArena::with_all_mixtures(|all_mixtures| {
 			if should_check_planet_turfs {
 				let planetary_atmos = planetary_atmos();
 				shard
@@ -648,7 +655,7 @@ fn post_process() {
 				.filter_map(|(&i, m_v)| {
 					let m = m_v.get();
 					m.enabled()
-						.then(|| post_process_cell(i, *m, vis, all_mixtures))
+						.then(|| post_process_cell(i, *m, &vis, all_mixtures))
 						.flatten()
 				})
 				.for_each(|(i, should_update_visuals, reactable)| {
@@ -787,7 +794,7 @@ fn _process_heat_hook() {
 									.get(&i)
 									.filter(|m| m.simulation_level & SIMULATION_LEVEL_ANY > 0)
 									.and_then(|m| {
-										GasMixtures::with_all_mixtures(|all_mixtures| {
+										GasArena::with_all_mixtures(|all_mixtures| {
 											all_mixtures.get(m.mix).and_then(RwLock::try_read).map(
 												|gas| (t.temperature - gas.get_temperature() > 1.0),
 											)
@@ -849,9 +856,9 @@ fn _process_heat_hook() {
 									!= SIMULATION_LEVEL_DISABLED
 						})
 						.and_then(|m| {
-							GasMixtures::with_all_mixtures(|all_mixtures| {
+							GasArena::with_all_mixtures(|all_mixtures| {
 								all_mixtures.get(m.mix).map(|entry| {
-									let gas: &mut GasMixture = &mut entry.write();
+									let gas: &mut Mixture = &mut entry.write();
 									gas.temperature_share_non_gas(
 										/*
 											This value should be lower than the

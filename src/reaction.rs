@@ -1,10 +1,11 @@
+#[cfg(feature = "reaction_hooks")]
+pub mod hooks;
+
 use auxtools::*;
 
 use std::cell::RefCell;
 
-use super::gas_mixture::GasMixture;
-
-use super::{gas_idx_to_id, total_num_gases, GasIDX};
+use crate::gas::{gas_idx_to_id, total_num_gases, GasIDX, Mixture};
 
 use core::cmp::Ordering;
 
@@ -158,7 +159,7 @@ impl Reaction {
 		self.id
 	}
 	/// Checks if the given gas mixture can react with this reaction.
-	pub fn check_conditions(&self, mix: &GasMixture) -> bool {
+	pub fn check_conditions(&self, mix: &Mixture) -> bool {
 		self.min_temp_req
 			.map_or(true, |temp_req| mix.get_temperature() >= temp_req)
 			&& self

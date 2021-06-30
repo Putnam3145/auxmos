@@ -1,14 +1,6 @@
 pub mod constants;
-pub mod gas_mixture;
-pub mod gases;
-pub mod reaction;
-
-#[cfg(feature = "reaction_hooks")]
-pub mod reaction_hooks;
-
-pub use gases::*;
-
-type GasIDX = usize;
+pub mod mixture;
+pub mod types;
 
 use auxtools::*;
 
@@ -16,11 +8,15 @@ use fxhash::FxBuildHasher;
 
 use std::collections::HashSet;
 
-use gas_mixture::GasMixture;
-
 use parking_lot::{const_rwlock, RwLock};
 
-pub struct GasMixtures {}
+pub use types::*;
+
+pub use mixture::Mixture;
+
+pub type GasIDX = usize;
+
+pub struct GasArena {}
 
 /*
 	This is where the gases live.
@@ -29,7 +25,7 @@ pub struct GasMixtures {}
 	of course, it has a RwLock preventing this, and you can't access the
 	vector directly. Seriously, please don't. I have the wrapper functions for a reason.
 */
-static GAS_MIXTURES: RwLock<Option<Vec<RwLock<GasMixture>>>> = const_rwlock(None);
+static GAS_MIXTURES: RwLock<Option<Vec<RwLock<Mixture>>>> = const_rwlock(None);
 
 static NEXT_GAS_IDS: RwLock<Option<Vec<usize>>> = const_rwlock(None);
 
@@ -43,7 +39,7 @@ fn is_registered_mix(i: u32) -> bool {
 	}
 }
 
-pub fn register_mix(v: &Value) {
+fn register_mix(v: &Value) {
 	unsafe {
 		REGISTERED_GAS_MIXES
 			.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default()))
@@ -51,7 +47,7 @@ pub fn register_mix(v: &Value) {
 	}
 }
 
-pub fn unregister_mix(i: u32) {
+fn unregister_mix(i: u32) {
 	unsafe {
 		REGISTERED_GAS_MIXES
 			.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default()))
@@ -77,16 +73,16 @@ fn _shut_down_gases() {
 	}
 }
 
-impl GasMixtures {
+impl GasArena {
 	pub fn with_all_mixtures<T, F>(f: F) -> T
 	where
-		F: FnOnce(&[RwLock<GasMixture>]) -> T,
+		F: FnOnce(&[RwLock<Mixture>]) -> T,
 	{
 		f(GAS_MIXTURES.read().as_ref().unwrap())
 	}
 	fn with_gas_mixture<T, F>(id: usize, f: F) -> Result<T, Runtime>
 	where
-		F: FnOnce(&GasMixture) -> Result<T, Runtime>,
+		F: FnOnce(&Mixture) -> Result<T, Runtime>,
 	{
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
@@ -98,7 +94,7 @@ impl GasMixtures {
 	}
 	fn with_gas_mixture_mut<T, F>(id: usize, f: F) -> Result<T, Runtime>
 	where
-		F: FnOnce(&mut GasMixture) -> Result<T, Runtime>,
+		F: FnOnce(&mut Mixture) -> Result<T, Runtime>,
 	{
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
@@ -110,7 +106,7 @@ impl GasMixtures {
 	}
 	fn with_gas_mixtures<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
-		F: FnOnce(&GasMixture, &GasMixture) -> Result<T, Runtime>,
+		F: FnOnce(&Mixture, &Mixture) -> Result<T, Runtime>,
 	{
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
@@ -126,7 +122,7 @@ impl GasMixtures {
 	}
 	fn with_gas_mixtures_mut<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
-		F: FnOnce(&mut GasMixture, &mut GasMixture) -> Result<T, Runtime>,
+		F: FnOnce(&mut Mixture, &mut Mixture) -> Result<T, Runtime>,
 	{
 		let src = src;
 		let arg = arg;
@@ -155,7 +151,7 @@ impl GasMixtures {
 	}
 	fn with_gas_mixtures_custom<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
-		F: FnOnce(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
+		F: FnOnce(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T, Runtime>,
 	{
 		let src = src;
 		let arg = arg;
@@ -179,12 +175,12 @@ impl GasMixtures {
 		}
 	}
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
-	pub fn register_gasmix(mix: &Value) -> DMResult {
+	pub fn register_mix(mix: &Value) -> DMResult {
 		if NEXT_GAS_IDS.read().as_ref().unwrap().is_empty() {
 			let mut lock = GAS_MIXTURES.write();
 			let gas_mixtures = lock.as_mut().unwrap();
 			let next_idx = gas_mixtures.len();
-			gas_mixtures.push(RwLock::new(GasMixture::from_vol(
+			gas_mixtures.push(RwLock::new(Mixture::from_vol(
 				mix.get_number(byond_string!("initial_volume"))
 					.map_err(|_| {
 						runtime!(
@@ -231,7 +227,7 @@ impl GasMixtures {
 		Ok(Value::null())
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
-	pub fn unregister_gasmix(mix: u32) {
+	pub fn unregister_mix(mix: u32) {
 		if is_registered_mix(mix) {
 			use raw_types::values::{ValueData, ValueTag};
 			unsafe {
@@ -264,9 +260,9 @@ impl GasMixtures {
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.
 pub fn with_mix<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
 where
-	F: FnMut(&GasMixture) -> Result<T, Runtime>,
+	F: FnMut(&Mixture) -> Result<T, Runtime>,
 {
-	GasMixtures::with_gas_mixture(
+	GasArena::with_gas_mixture(
 		mix.get_number(byond_string!("_extools_pointer_gasmixture"))
 			.map_err(|_| {
 				runtime!(
@@ -284,9 +280,9 @@ where
 /// As `with_mix`, but mutable.
 pub fn with_mix_mut<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
 where
-	F: FnMut(&mut GasMixture) -> Result<T, Runtime>,
+	F: FnMut(&mut Mixture) -> Result<T, Runtime>,
 {
-	GasMixtures::with_gas_mixture_mut(
+	GasArena::with_gas_mixture_mut(
 		mix.get_number(byond_string!("_extools_pointer_gasmixture"))
 			.map_err(|_| {
 				runtime!(
@@ -304,9 +300,9 @@ where
 /// As `with_mix`, but with two mixes.
 pub fn with_mixes<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
-	F: FnMut(&GasMixture, &GasMixture) -> Result<T, Runtime>,
+	F: FnMut(&Mixture, &Mixture) -> Result<T, Runtime>,
 {
-	GasMixtures::with_gas_mixtures(
+	GasArena::with_gas_mixtures(
 		src_mix
 			.get_number(byond_string!("_extools_pointer_gasmixture"))
 			.map_err(|_| {
@@ -336,9 +332,9 @@ where
 /// As `with_mix_mut`, but with two mixes.
 pub fn with_mixes_mut<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
-	F: FnMut(&mut GasMixture, &mut GasMixture) -> Result<T, Runtime>,
+	F: FnMut(&mut Mixture, &mut Mixture) -> Result<T, Runtime>,
 {
-	GasMixtures::with_gas_mixtures_mut(
+	GasArena::with_gas_mixtures_mut(
 		src_mix
 			.get_number(byond_string!("_extools_pointer_gasmixture"))
 			.map_err(|_| {
@@ -368,9 +364,9 @@ where
 /// Allows different lock levels for each gas. Instead of relevant refs to the gases, returns the `RWLock` object.
 pub fn with_mixes_custom<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
-	F: FnMut(&RwLock<GasMixture>, &RwLock<GasMixture>) -> Result<T, Runtime>,
+	F: FnMut(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T, Runtime>,
 {
-	GasMixtures::with_gas_mixtures_custom(
+	GasArena::with_gas_mixtures_custom(
 		src_mix
 			.get_number(byond_string!("_extools_pointer_gasmixture"))
 			.map_err(|_| {

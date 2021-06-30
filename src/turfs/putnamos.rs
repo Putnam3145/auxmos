@@ -142,7 +142,7 @@ pub fn equalize(
 ) -> usize {
 	let sender = byond_callback_sender();
 	let mut turfs_processed = 0;
-	let mut merger = GasMixture::new();
+	let mut merger = Mixture::new();
 	let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
 	'turf_loop: for &initial_idx in high_pressure_turfs.iter() {
 		if let Some(initial_turf) = turf_gases().get(&initial_idx) {
@@ -215,7 +215,7 @@ pub fn equalize(
 					.with_min_len(50)
 					.map(|(cur_idx, cur_turf, parent_turf, pressure_delta)| {
 						if let Some(entry) = all_mixtures.get(cur_turf.mix) {
-							let gas: &mut GasMixture = &mut entry.write();
+							let gas: &mut Mixture = &mut entry.write();
 							gas.copy_from_mutable(&merger);
 						}
 						(*cur_idx, *parent_turf, *pressure_delta)

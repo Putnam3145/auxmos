@@ -1,17 +1,14 @@
-use super::{with_mix, with_mix_mut};
-
-use super::constants::*;
-
 use auxtools::*;
 
-use crate::{gas_fusion_power, gas_idx_from_string};
-
-use super::{with_gas_info, GasIDX};
+use crate::gas::{
+	constants::*, gas_fusion_power, gas_idx_from_string, with_gas_info, with_mix, with_mix_mut,
+	GasIDX,
+};
 
 #[cfg(feature = "plasma_fire_hook")]
 #[hook("/datum/gas_reaction/plasmafire/react")]
 fn _plasma_fire(byond_air: &Value, holder: &Value) {
-	const PLASMA_UPPER_TEMPERATURE: f32 = 1390.0 + super::constants::T0C;
+	const PLASMA_UPPER_TEMPERATURE: f32 = 1390.0 + T0C;
 	const OXYGEN_BURN_RATE_BASE: f32 = 1.4;
 	const SUPER_SATURATION_THRESHOLD: f32 = 96.0;
 	const PLASMA_OXYGEN_FULLBURN: f32 = 10.0;
@@ -50,7 +47,7 @@ fn _plasma_fire(byond_air: &Value, holder: &Value) {
 					plasma_burn_rate,
 					oxy,
 					plas,
-					air.heat_capacity() * air.get_temperature(),
+					air.thermal_energy(),
 				))
 			} else {
 				Ok((0.0, -1.0, 0.0, 0.0, 0.0))
@@ -114,6 +111,8 @@ fn tritfire(byond_air: &Value, holder: &Value) {
 				air.set_moles(tritium, initial_trit - r);
 				r
 			} else {
+				// yes, we set burned_fuel to trit times ten. times ten!! and then the actual amount burned is 1% of that.
+				// this is why trit bombs are Like That.
 				let r = initial_trit * TRITIUM_BURN_TRIT_FACTOR;
 				air.set_moles(
 					tritium,
@@ -170,7 +169,7 @@ fn fusion(byond_air: Value, holder: Value) {
 			))
 		})?;
 	let instability = (gas_power * INSTABILITY_GAS_FACTOR)
-		.powf(2.0)
+		.powi(2)
 		.rem_euclid(toroidal_size);
 	byond_air.call("set_analyzer_results", &[&Value::from(instability)])?;
 	let mut plasma = (initial_plasma - FUSION_MOLE_THRESHOLD) / scale_factor;
@@ -267,8 +266,14 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 				.iter()
 				.copied()
 				.fold(0.0, |acc, (_, _, power)| acc + power);
-			if oxidation_power <= 0.0 || total_fuel <= 0.0 {
-				Ok(None)
+			if oxidation_power < GAS_MIN_MOLES {
+				Err(runtime!(
+					"Gas has no oxidizer even though it passed oxidizer check!"
+				))
+			} else if total_fuel <= GAS_MIN_MOLES {
+				Err(runtime!(
+					"Gas has no fuel even though it passed fuel check!"
+				))
 			} else {
 				let oxidation_ratio = oxidation_power / total_fuel;
 				if oxidation_ratio > 1.0 {
@@ -282,7 +287,9 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 						*power *= oxidation_ratio;
 					}
 				}
-				for (i, amt, power) in oxidizers.iter().copied().chain(fuels.iter().copied()) {
+				for (i, a, p) in oxidizers.iter().copied().chain(fuels.iter().copied()) {
+					let amt = FIRE_MAXIMUM_BURN_RATE * a;
+					let power = FIRE_MAXIMUM_BURN_RATE * p;
 					let this_gas_info = &gas_info[i as usize];
 					energy_released += power * this_gas_info.fire_energy_released;
 					if let Some(products) = this_gas_info.fire_products.as_ref() {
@@ -298,11 +305,9 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 						.and_modify(|r| *r -= amt)
 						.or_insert(-amt);
 				}
-				Ok(Some(oxidation_power.min(total_fuel) * 2.0))
+				Ok(Some(oxidation_power.min(total_fuel) * 2.0 * FIRE_MAXIMUM_BURN_RATE))
 			}
-		})
-		.unwrap()
-		{
+		})? {
 			let temperature = with_mix_mut(&byond_air, |air| {
 				let final_energy = air.thermal_energy() + energy_released;
 				for (&i, &amt) in burn_results.iter() {
@@ -310,8 +315,7 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 				}
 				air.set_temperature(final_energy / air.heat_capacity());
 				Ok(air.get_temperature())
-			})
-			.unwrap();
+			})?;
 			let cached_results = byond_air
 				.get_list(byond_string!("reaction_results"))
 				.map_err(|_| {

@@ -2,13 +2,15 @@ pub mod gas;
 
 pub mod turfs;
 
+pub mod reaction;
+
 use auxtools::*;
 
 use auxcleanup::*;
 
 use gas::*;
 
-use gas::reaction::react_by_id;
+use reaction::react_by_id;
 
 use gas::constants::*;
 
@@ -19,20 +21,20 @@ fn _atmos_callback_handle() {
 
 #[hook("/datum/gas_mixture/proc/__gasmixture_register")]
 fn _register_gasmixture_hook() {
-	gas::GasMixtures::register_gasmix(src)
+	gas::GasArena::register_mix(src)
 }
 
 #[cfg(not(feature = "auxcleanup_gas_deletion"))]
 #[hook("/datum/gas_mixture/proc/__gasmixture_unregister")]
 fn _unregister_gasmixture_hook() {
-	gas::GasMixtures::unregister_gasmix(unsafe { src.raw.data.id });
+	gas::GasMixtures::unregister_mix(unsafe { src.raw.data.id });
 	Ok(Value::null())
 }
 
 #[cfg(feature = "auxcleanup_gas_deletion")]
 #[datum_del]
 fn _unregister_gasmixture_hook(v: u32) {
-	gas::GasMixtures::unregister_gasmix(v);
+	gas::GasArena::unregister_mix(v);
 }
 
 #[hook("/datum/gas_mixture/proc/heat_capacity")]
@@ -465,8 +467,8 @@ fn _equalize_all_hook() {
 				.to_bits() as usize
 		})
 		.collect(); // collect because get_number is way slower than the one-time allocation
-	GasMixtures::with_all_mixtures(move |all_mixtures| {
-		let mut tot = gas_mixture::GasMixture::new();
+	GasArena::with_all_mixtures(move |all_mixtures| {
+		let mut tot = gas::Mixture::new();
 		let mut tot_vol: f64 = 0.0;
 		for &id in &gas_list {
 			if let Some(src_gas_lock) = all_mixtures.get(id) {

@@ -91,27 +91,38 @@ impl GasRef {
 /// An individual gas type. Contains a whole lot of info attained from Byond when the gas is first registered.
 /// If you don't have any of these, just fork auxmos and remove them, many of these are not necessary--for example,
 /// if you don't have fusion, you can just remove fusion_power.
+/// Each individual member also has the byond /datum/gas equivalent listed.
 #[derive(Clone)]
 pub struct GasType {
 	/// The index of this gas in the moles vector of a mixture. Usually the most common representation in Auxmos, for speed.
+	/// No byond equivalent.
 	pub idx: GasIDX,
 	/// The ID on the byond end, as a boxed str. Most convenient way to reference it in code; use the function gas_idx_from_string to get idx from this.
+	/// Byond: `id`, a string.
 	pub id: Box<str>,
 	/// The gas's name. Not used in auxmos as of yet.
+	/// Byond: `name`, a string.
 	pub name: Box<str>,
 	/// Not used in auxmos, there for completeness. Only flag on Citadel is GAS_DANGEROUS.
+	/// Byond: `flags`, a number (bitflags).
 	pub flags: u32,
 	/// The specific heat of the gas. Duplicated in the GAS_SPECIFIC_HEATS vector for speed.
+	/// Byond: `specific_heat`, a number.
 	pub specific_heat: f32,
 	/// Gas's fusion power. Used in fusion hooking, so this can be removed and ignored if you don't have fusion.
+	/// Byond: `fusion_power`, a number.
 	pub fusion_power: f32,
 	/// The moles at which the gas's overlay or other appearance shows up. If None, gas is never visible.
+	/// Byond: `moles_visible`, a number.
 	pub moles_visible: Option<f32>,
 	/// Amount of energy released per mole of material burned in generic fires.
+	/// Byond: `fire_energy_released`, a number.
 	pub fire_energy_released: f32,
 	/// Either fuel info, oxidation info or neither. See the documentation on the respective types.
+	/// Byond: `oxidation_temperature` and `oxidation_rate` XOR `fire_temperature` and `fire_burn_rate`
 	pub fire_info: FireInfo,
 	/// A vector of gas-amount pairs. GasRef is just which gas, the f32 is moles made/mole burned.
+	/// Byond: `fire_products`, a list of gas IDs associated with amounts.
 	pub fire_products: Option<Vec<(GasRef, f32)>>,
 }
 

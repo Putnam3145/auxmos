@@ -305,7 +305,9 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 						.and_modify(|r| *r -= amt)
 						.or_insert(-amt);
 				}
-				Ok(Some(oxidation_power.min(total_fuel) * 2.0 * FIRE_MAXIMUM_BURN_RATE))
+				Ok(Some(
+					oxidation_power.min(total_fuel) * 2.0 * FIRE_MAXIMUM_BURN_RATE,
+				))
 			}
 		})? {
 			let temperature = with_mix_mut(&byond_air, |air| {

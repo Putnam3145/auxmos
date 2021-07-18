@@ -181,7 +181,7 @@ impl Mixture {
 	pub fn heat_capacity(&self) -> f32 {
 		self.cached_heat_capacity
 			.get()
-			.filter(|cap| cap.is_normal())
+			.filter(|cap| cap.is_finite() && cap.is_sign_positive())
 			.unwrap_or_else(|| self.slow_heat_capacity())
 	}
 	/// Heat capacity of exactly one gas in this mix.

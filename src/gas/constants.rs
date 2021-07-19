@@ -11,7 +11,7 @@ pub const T0C: f32 = 273.15;
 ///  20degC
 pub const T20C: f32 = 293.15;
 /// Amount of gas below which any amounts will be truncated to 0.
-pub const GAS_MIN_MOLES: f32 = 0.000_000_05;
+pub const GAS_MIN_MOLES: f32 = 0.0001;
 /// Heat capacities below which heat will be considered 0.
 pub const MINIMUM_HEAT_CAPACITY: f32 = 0.0003;
 

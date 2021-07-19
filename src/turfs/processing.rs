@@ -470,7 +470,7 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 						(*i, pressure_diffs, max_diff)
 					})
 				})
-				.partition(|&(_, _, max_diff)| max_diff <= 5.0);
+				.partition(|&(_, _, max_diff)| max_diff <= 1.0);
 			if cur_count == 1 {
 				let pressure_deltas_chunked = high_pressure.par_chunks(20).collect::<Vec<_>>();
 				pressure_deltas_chunked

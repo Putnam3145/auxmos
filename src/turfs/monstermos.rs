@@ -718,9 +718,15 @@ pub(crate) fn equalize(
 			for &(i, m) in &turfs {
 				monstermos_fast_process(i, m, max_x, max_y, &mut info);
 			}
-			let (repart_givers, repart_takers) = partition_turfs(&turfs, &mut info, average_moles);
-			giver_turfs = repart_givers;
-			taker_turfs = repart_takers;
+			giver_turfs.clear();
+			taker_turfs.clear();
+			for &(i,m) in &turfs {
+				if info.entry(i).or_default().get().mole_delta > 0.0 {
+					giver_turfs.push((i,m));
+				} else {
+					taker_turfs.push((i,m));
+				}
+			}
 		}
 		// alright this is the part that can become O(n^2).
 		if giver_turfs.len() < taker_turfs.len() {

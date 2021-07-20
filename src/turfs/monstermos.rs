@@ -305,6 +305,7 @@ fn flood_fill_equalize_turfs(
 	let sender = byond_callback_sender();
 	let mut total_moles = 0.0_f64;
 	border_turfs.push_back((i, m));
+	found_turfs.insert(i);
 	#[allow(unused_mut)]
 	let mut space_this_time = false;
 	loop {
@@ -312,7 +313,6 @@ fn flood_fill_equalize_turfs(
 			break;
 		}
 		if let Some((cur_idx, cur_turf)) = border_turfs.pop_front() {
-			found_turfs.insert(cur_idx);
 			if turfs.len() < equalize_turf_limit {
 				if cur_turf.planetary_atmos.is_some() {
 					planet_turfs.push((cur_idx, cur_turf));
@@ -446,11 +446,11 @@ fn give_to_takers(
 			}
 			let (idx, turf) = *queue.get(queue_idx).unwrap();
 			for (j, loc) in adjacent_tile_ids(turf.adjacency, idx, max_x, max_y) {
+				if giver_info.mole_delta <= 0.0 {
+					break;
+				}
 				if let Some(adj_orig) = info.get(&loc) {
 					if let Some(adj_mix) = turf_gases().get(&loc) {
-						if giver_info.mole_delta <= 0.0 {
-							break;
-						}
 						let mut adj_info = adj_orig.get();
 						if adj_info.last_slow_queue_cycle != *queue_cycle_slow {
 							queue.push((loc, *adj_mix.value()));
@@ -524,12 +524,12 @@ fn take_from_givers(
 			}
 			let (idx, turf) = *queue.get(queue_idx).unwrap();
 			for (j, loc) in adjacent_tile_ids(turf.adjacency, idx, max_x, max_y) {
+				if taker_info.mole_delta >= 0.0 {
+					break;
+				}
 				if let Some(adj_orig) = info.get(&loc) {
 					if let Some(adj_mix) = turf_gases().get(&loc) {
 						let mut adj_info = adj_orig.get();
-						if taker_info.mole_delta >= 0.0 {
-							break;
-						}
 						if adj_info.last_slow_queue_cycle != *queue_cycle_slow {
 							queue.push((loc, *adj_mix));
 							adj_info.last_slow_queue_cycle = *queue_cycle_slow;

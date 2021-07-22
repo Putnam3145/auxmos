@@ -677,7 +677,11 @@ fn post_process() {
 							let _ = sender.try_send(Box::new(move || {
 								for &i in &copy {
 									let turf = unsafe { Value::turf_by_id_unchecked(i) };
-									turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+									if cfg!(target_os="linux") {
+										turf.get(byond_string!("air"))?.call("react_unhooked", &[&turf])?;
+									} else {
+										turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+									}
 								}
 								Ok(Value::null())
 							}));
@@ -688,7 +692,11 @@ fn post_process() {
 		let _ = sender.try_send(Box::new(move || {
 			for &i in &reacters {
 				let turf = unsafe { Value::turf_by_id_unchecked(i) };
-				turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+				if cfg!(target_os="linux") {
+					turf.get(byond_string!("air"))?.call("react_unhooked", &[&turf])?;
+				} else {
+					turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+				}
 			}
 			for &i in &visual_updaters {
 				let turf = unsafe { Value::turf_by_id_unchecked(i) };

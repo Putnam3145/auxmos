@@ -678,7 +678,7 @@ fn post_process() {
 								for &i in &copy {
 									let turf = unsafe { Value::turf_by_id_unchecked(i) };
 									if cfg!(target_os="linux") {
-										turf.get(byond_string!("air"))?.call("react_unhooked", &[&turf])?;
+										turf.get(byond_string!("air"))?.call("vv_react", &[&turf])?;
 									} else {
 										turf.get(byond_string!("air"))?.call("react", &[&turf])?;
 									}
@@ -693,7 +693,7 @@ fn post_process() {
 			for &i in &reacters {
 				let turf = unsafe { Value::turf_by_id_unchecked(i) };
 				if cfg!(target_os="linux") {
-					turf.get(byond_string!("air"))?.call("react_unhooked", &[&turf])?;
+					turf.get(byond_string!("air"))?.call("vv_react", &[&turf])?;
 				} else {
 					turf.get(byond_string!("air"))?.call("react", &[&turf])?;
 				}

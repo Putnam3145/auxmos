@@ -125,6 +125,17 @@ fn tritfire(byond_air: &Value, holder: &Value) {
 		air.adjust_moles(water, burned_fuel / TRITIUM_BURN_OXY_FACTOR);
 		let energy_released = FIRE_HYDROGEN_ENERGY_RELEASED * burned_fuel;
 		let new_temp = (initial_energy + energy_released) / air.heat_capacity();
+		let cached_results = byond_air
+			.get_list(byond_string!("reaction_results"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-list value as list {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})?;
+		cached_results.set(byond_string!("fire"), Value::from(burned_fuel))?;
 		air.set_temperature(new_temp);
 		air.garbage_collect();
 		Ok((burned_fuel, energy_released, new_temp))

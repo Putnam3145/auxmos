@@ -1,0 +1,16 @@
+name: Linux build
+on:
+  push:
+    branches: [master]
+jobs:
+  linux-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: i686-unknown-linux-gnu
+          override: true
+
+      - run: cargo build --target=i686-unknown-linux-gnu --release --features "all_reaction_hooks"

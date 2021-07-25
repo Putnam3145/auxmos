@@ -57,7 +57,6 @@ dependencies = [
  "auxcallback",
  "auxcleanup",
  "auxtools",
- "coarsetime",
  "crossbeam",
  "dashmap 4.0.2",
  "float-ord",
@@ -132,18 +131,6 @@ name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
-
-[[package]]
-name = "coarsetime"
-version = "0.1.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2918e2ffa91a49dabbba4965fe38a37a1ba0b6953a29e32cc250a8d59cd42232"
-dependencies = [
- "libc",
- "once_cell",
- "wasi",
- "wasm-bindgen",
-]
 
 [[package]]
 name = "const-random"

@@ -19,3 +19,7 @@ jobs:
           sudo apt install g++-multilib -y
       - name: Build auxmos
         run: cargo build --target=i686-unknown-linux-gnu --release --features "all_reaction_hooks"
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Linux compile
+          path: target/i686-unknown-linux-gnu/release/libauxmos.*

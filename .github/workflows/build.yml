@@ -13,4 +13,9 @@ jobs:
           target: i686-unknown-linux-gnu
           override: true
 
-      - run: cargo build --target=i686-unknown-linux-gnu --release --features "all_reaction_hooks"
+      - name: Install g++-multilib
+        run: |
+          sudo apt update
+          sudo apt install g++-multilib -y
+      - name: Build auxmos
+        run: cargo build --target=i686-unknown-linux-gnu --release --features "all_reaction_hooks"

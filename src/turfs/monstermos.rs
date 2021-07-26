@@ -337,13 +337,19 @@ fn flood_fill_equalize_turfs(
 							// (I just made explosions less laggy, you're welcome)
 							turfs.push((loc, *adj_turf.value()));
 							let map_copy = found_turfs.clone();
-							let turf_copy = *m;
-							let info_copy = info.clone();
+							let fake_cloned = info
+								.iter()
+								.map(|(&k, v)| (k, v.get()))
+								.collect::<BTreeMap<TurfID, MonstermosInfo>>();
 							let _ = sender.send(Box::new(move || {
+								let cloned = fake_cloned
+									.iter()
+									.map(|(&k, &v)| (k, Cell::new(v)))
+									.collect::<BTreeMap<TurfID, Cell<MonstermosInfo>>>();
 								explosively_depressurize(
 									i,
-									turf_copy,
-									info_copy,
+									m,
+									cloned,
 									map_copy.clone(),
 									equalize_hard_turf_limit,
 									max_x,

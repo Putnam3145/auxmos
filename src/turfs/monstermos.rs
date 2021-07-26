@@ -152,12 +152,12 @@ fn finalize_eq_neighbors(
 fn explosively_depressurize(
 	turf_idx: TurfID,
 	turf: TurfMixture,
+	mut info: BTreeMap<TurfID, Cell<MonstermosInfo>>,
 	mut found_turfs: BTreeSet<TurfID>,
 	equalize_hard_turf_limit: usize,
 	max_x: i32,
 	max_y: i32,
 ) -> DMResult {
-	let mut info: BTreeMap<TurfID, Cell<MonstermosInfo>> = BTreeMap::new();
 	let mut turfs: Vec<MixWithID> = Vec::new();
 	let mut space_turfs: Vec<MixWithID> = Vec::new();
 	turfs.push((turf_idx, turf));
@@ -338,10 +338,12 @@ fn flood_fill_equalize_turfs(
 							turfs.push((loc, *adj_turf.value()));
 							let map_copy = found_turfs.clone();
 							let turf_copy = *m;
+							let info_copy = info.clone();
 							let _ = sender.send(Box::new(move || {
 								explosively_depressurize(
 									i,
 									turf_copy,
+									info_copy,
 									map_copy.clone(),
 									equalize_hard_turf_limit,
 									max_x,

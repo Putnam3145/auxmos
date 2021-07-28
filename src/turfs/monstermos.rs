@@ -1,8 +1,6 @@
 use super::*;
 
-use std::collections::VecDeque;
-
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use auxcallback::byond_callback_sender;
 
@@ -59,7 +57,10 @@ fn finalize_eq(
 		let monstermos_orig = info.get(&i).unwrap();
 		let mut monstermos_copy = monstermos_orig.get();
 		let transfer_dirs = monstermos_copy.transfer_dirs;
-		monstermos_copy.transfer_dirs.iter_mut().for_each(|a| *a = 0.0); // null it out to prevent infinite recursion.
+		monstermos_copy
+			.transfer_dirs
+			.iter_mut()
+			.for_each(|a| *a = 0.0); // null it out to prevent infinite recursion.
 		monstermos_orig.set(monstermos_copy);
 		transfer_dirs
 	};
@@ -136,7 +137,7 @@ fn finalize_eq(
 fn finalize_eq_neighbors(
 	i: TurfID,
 	turf: &TurfMixture,
-	transfer_dirs: [f32;7],
+	transfer_dirs: [f32; 7],
 	info: &BTreeMap<TurfID, Cell<MonstermosInfo>>,
 	max_x: i32,
 	max_y: i32,
@@ -320,6 +321,7 @@ fn flood_fill_equalize_turfs(
 		if let Some((cur_idx, cur_turf)) = border_turfs.pop_front() {
 			if turfs.len() < equalize_turf_limit {
 				if cur_turf.planetary_atmos.is_some() {
+					turfs.push((cur_idx, cur_turf));
 					planet_turfs.push((cur_idx, cur_turf));
 					continue;
 				}
@@ -331,7 +333,7 @@ fn flood_fill_equalize_turfs(
 				}
 				found_turfs.insert(loc);
 				if let Some(adj_turf) = turf_gases().get(&loc) {
-					let adj_orig = info.entry(cur_idx).or_default();
+					let adj_orig = info.entry(loc).or_default();
 					#[cfg(feature = "explosive_decompression")]
 					{
 						adj_orig.take();
@@ -382,18 +384,6 @@ fn flood_fill_equalize_turfs(
 		}
 	}
 	(!space_this_time).then(|| (turfs, planet_turfs, total_moles))
-}
-
-fn partition_turfs(
-	turfs: &Vec<MixWithID>,
-	info: &mut BTreeMap<TurfID, Cell<MonstermosInfo>>,
-	average_moles: f32,
-) -> (Vec<MixWithID>, Vec<MixWithID>) {
-	turfs.iter().partition(|&(i, m)| {
-		let cur_info = info.entry(*i).or_default().get_mut();
-		cur_info.mole_delta = m.total_moles() - average_moles;
-		cur_info.mole_delta > 0.0
-	})
 }
 
 fn monstermos_fast_process(
@@ -471,11 +461,14 @@ fn give_to_takers(
 							adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 							adj_info.curr_transfer_amount = 0.0;
 							if adj_info.mole_delta < 0.0 {
+								// this turf needs gas. Let's give it to 'em.
 								if -adj_info.mole_delta > giver_info.mole_delta {
+									// we don't have enough gas
 									adj_info.curr_transfer_amount -= giver_info.mole_delta;
 									adj_info.mole_delta += giver_info.mole_delta;
 									giver_info.mole_delta = 0.0;
 								} else {
+									// we have enough gas.
 									adj_info.curr_transfer_amount += adj_info.mole_delta;
 									giver_info.mole_delta += adj_info.mole_delta;
 									adj_info.mole_delta = 0.0;
@@ -549,11 +542,14 @@ fn take_from_givers(
 							adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 							adj_info.curr_transfer_amount = 0.0;
 							if adj_info.mole_delta > 0.0 {
+								// this turf has gas we can succ. Time to succ.
 								if adj_info.mole_delta > -taker_info.mole_delta {
+									// they have enough gase
 									adj_info.curr_transfer_amount -= taker_info.mole_delta;
 									adj_info.mole_delta += taker_info.mole_delta;
 									taker_info.mole_delta = 0.0;
 								} else {
+									// they don't have neough gas
 									adj_info.curr_transfer_amount += adj_info.mole_delta;
 									taker_info.mole_delta += adj_info.mole_delta;
 									adj_info.mole_delta = 0.0;
@@ -722,7 +718,12 @@ pub(crate) fn equalize(
 			}
 		}
 		let average_moles = (total_moles / (turfs.len() - planet_turfs.len()) as f64) as f32;
-		let (mut giver_turfs, mut taker_turfs) = partition_turfs(&turfs, &mut info, average_moles);
+		let (mut giver_turfs, mut taker_turfs): (Vec<_>, Vec<_>) =
+			turfs.iter().partition(|&(i, m)| {
+				let cur_info = info.entry(*i).or_default().get_mut();
+				cur_info.mole_delta = m.total_moles() - average_moles;
+				cur_info.mole_delta > 0.0
+			});
 		let log_n = ((turfs.len() as f32).log2().floor()) as usize;
 		if giver_turfs.len() > log_n && taker_turfs.len() > log_n {
 			turfs.sort_by_cached_key(|(idx, _)| {
@@ -733,11 +734,11 @@ pub(crate) fn equalize(
 			}
 			giver_turfs.clear();
 			taker_turfs.clear();
-			for &(i,m) in &turfs {
+			for &(i, m) in &turfs {
 				if info.entry(i).or_default().get().mole_delta > 0.0 {
-					giver_turfs.push((i,m));
+					giver_turfs.push((i, m));
 				} else {
-					taker_turfs.push((i,m));
+					taker_turfs.push((i, m));
 				}
 			}
 		}

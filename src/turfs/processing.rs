@@ -677,8 +677,9 @@ fn post_process() {
 							let _ = sender.try_send(Box::new(move || {
 								for &i in &copy {
 									let turf = unsafe { Value::turf_by_id_unchecked(i) };
-									if cfg!(target_os="linux") {
-										turf.get(byond_string!("air"))?.call("vv_react", &[&turf])?;
+									if cfg!(target_os = "linux") {
+										turf.get(byond_string!("air"))?
+											.call("vv_react", &[&turf])?;
 									} else {
 										turf.get(byond_string!("air"))?.call("react", &[&turf])?;
 									}
@@ -692,7 +693,7 @@ fn post_process() {
 		let _ = sender.try_send(Box::new(move || {
 			for &i in &reacters {
 				let turf = unsafe { Value::turf_by_id_unchecked(i) };
-				if cfg!(target_os="linux") {
+				if cfg!(target_os = "linux") {
 					turf.get(byond_string!("air"))?.call("vv_react", &[&turf])?;
 				} else {
 					turf.get(byond_string!("air"))?.call("react", &[&turf])?;

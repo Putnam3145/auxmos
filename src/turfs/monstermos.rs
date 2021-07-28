@@ -145,9 +145,6 @@ fn finalize_eq_neighbors(
 	}
 }
 
-#[deprecated(
-	note = "It panics when trying to get the 'pressure_direction' string from byond. I don't even know, man, it's cursed."
-)]
 #[cfg(feature = "explosive_decompression")]
 fn explosively_depressurize(
 	turf_idx: TurfID,
@@ -245,7 +242,13 @@ fn explosively_depressurize(
 			cur_queue_idx += 1;
 		}
 	}
+	let mut iter = (progression_order.len() - 1) as i8;
 	for (i, m) in progression_order.iter().rev() {
+		iter -= 1;
+		if iter < 0 {
+			break;
+		}
+
 		let cur_orig = info.get(i).unwrap();
 		let mut cur_info = cur_orig.get();
 		if cur_info.curr_transfer_dir == 6 {
@@ -259,28 +262,30 @@ fn explosively_depressurize(
 			let sum = adj_m.total_moles();
 			cur_info.curr_transfer_amount += sum;
 			adj_info.curr_transfer_amount += cur_info.curr_transfer_amount;
+
+			let byond_turf = unsafe { Value::turf_by_id_unchecked(*i) };
+			byond_turf.set(
+				byond_string!("pressure_difference"),
+				Value::from(cur_info.curr_transfer_amount),
+			)?;
+			byond_turf.set(
+				byond_string!("pressure_direction"),
+				Value::from((1 << cur_info.curr_transfer_dir) as f32),
+			)?;
+
 			if adj_info.curr_transfer_dir == 6 {
 				let byond_turf = unsafe { Value::turf_by_id_unchecked(*adj_i) };
 				byond_turf.set(
 					byond_string!("pressure_difference"),
-					cur_info.curr_transfer_amount,
+					Value::from(cur_info.curr_transfer_amount),
 				)?;
 				byond_turf.set(
 					byond_string!("pressure_direction"),
-					(1 << cur_info.curr_transfer_dir) as f32,
+					Value::from((1 << cur_info.curr_transfer_dir) as f32),
 				)?;
 			}
 			m.clear_air();
-			let byond_turf = unsafe { Value::turf_by_id_unchecked(*i) };
-			byond_turf.set(
-				byond_string!("pressure_difference"),
-				cur_info.curr_transfer_amount,
-			)?;
-			byond_turf.set(
-				byond_string!("pressure_direction"),
-				(1 << cur_info.curr_transfer_dir) as f32,
-			)?;
-			byond_turf.call("handle decompression floor rip", &[&Value::from(sum)])?;
+			byond_turf.call("handle_decompression_floor_rip", &[&Value::from(sum)])?;
 		}
 	}
 	Ok(Value::null())
@@ -484,12 +489,17 @@ fn give_to_takers(
 			}
 			queue_idx += 1;
 		}
-		for (idx, _) in queue.drain(..) {
+		let mut iter = (queue.len() - 1) as i8;
+		for (idx, _) in queue.iter().rev() {
+			iter -= 1;
+			if iter < 0 {
+				break;
+			}
 			let turf_orig = info.get(&idx).unwrap();
 			let mut turf_info = turf_orig.get();
 			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir != 6 {
 				let adj_tile_id =
-					adjacent_tile_id(turf_info.curr_transfer_dir as u8, idx, max_x, max_y);
+					adjacent_tile_id(turf_info.curr_transfer_dir as u8, *idx, max_x, max_y);
 				let adj_orig = info.get(&adj_tile_id).unwrap();
 				let mut adj_info = adj_orig.get();
 				turf_info.adjust_eq_movement(
@@ -562,14 +572,19 @@ fn take_from_givers(
 			}
 			queue_idx += 1;
 		}
-		for (idx, _) in queue.drain(..) {
+		let mut iter = (queue.len() - 1) as i8;
+		for (idx, _) in queue.iter().rev() {
+			iter -= 1;
+			if iter < 0 {
+				break;
+			}
 			let turf_orig = info.get(&idx).unwrap();
 			let mut turf_info = turf_orig.get();
 			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir != 6 {
 				let adj_orig = info
 					.get(&adjacent_tile_id(
 						turf_info.curr_transfer_dir as u8,
-						idx,
+						*idx,
 						max_x,
 						max_y,
 					))
@@ -645,7 +660,12 @@ fn process_planet_turfs(
 		}
 		queue_idx += 1;
 	}
+	let mut iter = (progression_order.len() - 1) as i8;
 	for (i, _) in progression_order.iter().rev() {
+		iter -= 1;
+		if iter < 0 {
+			break;
+		}
 		let cur_orig = info.get(i).unwrap();
 		let mut cur_info = cur_orig.get();
 		let airflow = cur_info.mole_delta - target_delta;

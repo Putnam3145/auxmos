@@ -55,12 +55,18 @@ fn finalize_eq(
 	max_y: i32,
 ) {
 	let sender = byond_callback_sender();
-	let monstermos_orig = info.get(&i).unwrap();
-	let transfer_dirs = monstermos_orig.get().transfer_dirs;
+	let transfer_dirs = {
+		let monstermos_orig = info.get(&i).unwrap();
+		let mut monstermos_copy = monstermos_orig.get();
+		let transfer_dirs = monstermos_copy.transfer_dirs;
+		monstermos_copy.transfer_dirs.iter_mut().for_each(|a| *a = 0.0); // null it out to prevent infinite recursion.
+		monstermos_orig.set(monstermos_copy);
+		transfer_dirs
+	};
 	let planet_transfer_amount = transfer_dirs[6];
 	if planet_transfer_amount > 0.0 {
 		if turf.total_moles() < planet_transfer_amount {
-			finalize_eq_neighbors(i, turf, info, max_x, max_y);
+			finalize_eq_neighbors(i, turf, transfer_dirs, info, max_x, max_y);
 		}
 		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
@@ -88,7 +94,7 @@ fn finalize_eq(
 		let amount = transfer_dirs[j as usize];
 		if amount > 0.0 {
 			if turf.total_moles() < amount {
-				finalize_eq_neighbors(i, turf, info, max_x, max_y);
+				finalize_eq_neighbors(i, turf, transfer_dirs, info, max_x, max_y);
 			}
 			if let Some(adj_orig) = info.get(&adj_id) {
 				if let Some(adj_turf) = turf_gases().get(&adj_id) {
@@ -130,11 +136,11 @@ fn finalize_eq(
 fn finalize_eq_neighbors(
 	i: TurfID,
 	turf: &TurfMixture,
+	transfer_dirs: [f32;7],
 	info: &BTreeMap<TurfID, Cell<MonstermosInfo>>,
 	max_x: i32,
 	max_y: i32,
 ) {
-	let transfer_dirs = info.get(&i).unwrap().get().transfer_dirs;
 	for (j, adjacent_id) in adjacent_tile_ids(turf.adjacency, i, max_x, max_y) {
 		let amount = transfer_dirs[j as usize];
 		if amount < 0.0 {
@@ -242,13 +248,7 @@ fn explosively_depressurize(
 			cur_queue_idx += 1;
 		}
 	}
-	let mut iter = (progression_order.len() - 1) as i8;
 	for (i, m) in progression_order.iter().rev() {
-		iter -= 1;
-		if iter < 0 {
-			break;
-		}
-
 		let cur_orig = info.get(i).unwrap();
 		let mut cur_info = cur_orig.get();
 		if cur_info.curr_transfer_dir == 6 {
@@ -489,17 +489,12 @@ fn give_to_takers(
 			}
 			queue_idx += 1;
 		}
-		let mut iter = (queue.len() - 1) as i8;
-		for (idx, _) in queue.iter().rev() {
-			iter -= 1;
-			if iter < 0 {
-				break;
-			}
+		for (idx, _) in queue.drain(..).rev() {
 			let turf_orig = info.get(&idx).unwrap();
 			let mut turf_info = turf_orig.get();
 			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir != 6 {
 				let adj_tile_id =
-					adjacent_tile_id(turf_info.curr_transfer_dir as u8, *idx, max_x, max_y);
+					adjacent_tile_id(turf_info.curr_transfer_dir as u8, idx, max_x, max_y);
 				let adj_orig = info.get(&adj_tile_id).unwrap();
 				let mut adj_info = adj_orig.get();
 				turf_info.adjust_eq_movement(
@@ -572,19 +567,14 @@ fn take_from_givers(
 			}
 			queue_idx += 1;
 		}
-		let mut iter = (queue.len() - 1) as i8;
-		for (idx, _) in queue.iter().rev() {
-			iter -= 1;
-			if iter < 0 {
-				break;
-			}
+		for (idx, _) in queue.drain(..).rev() {
 			let turf_orig = info.get(&idx).unwrap();
 			let mut turf_info = turf_orig.get();
 			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir != 6 {
 				let adj_orig = info
 					.get(&adjacent_tile_id(
 						turf_info.curr_transfer_dir as u8,
-						*idx,
+						idx,
 						max_x,
 						max_y,
 					))
@@ -660,12 +650,7 @@ fn process_planet_turfs(
 		}
 		queue_idx += 1;
 	}
-	let mut iter = (progression_order.len() - 1) as i8;
 	for (i, _) in progression_order.iter().rev() {
-		iter -= 1;
-		if iter < 0 {
-			break;
-		}
 		let cur_orig = info.get(i).unwrap();
 		let mut cur_info = cur_orig.get();
 		let airflow = cur_info.mole_delta - target_delta;
@@ -741,7 +726,7 @@ pub(crate) fn equalize(
 		let log_n = ((turfs.len() as f32).log2().floor()) as usize;
 		if giver_turfs.len() > log_n && taker_turfs.len() > log_n {
 			turfs.sort_by_cached_key(|(idx, _)| {
-				float_ord::FloatOrd(info.get(idx).unwrap().get().mole_delta)
+				float_ord::FloatOrd(-info.get(idx).unwrap().get().mole_delta)
 			});
 			for &(i, m) in &turfs {
 				monstermos_fast_process(i, m, max_x, max_y, &mut info);

@@ -151,23 +151,23 @@ fn finalize_eq_neighbors(
 		}
 	}
 }
-
+#[inline(never)]
 #[cfg(feature = "explosive_decompression")]
 fn explosively_depressurize(
 	turf_idx: TurfID,
 	turf: TurfMixture,
 	mut info: BTreeMap<TurfID, Cell<MonstermosInfo>>,
-	mut found_turfs: BTreeSet<TurfID>,
 	equalize_hard_turf_limit: usize,
 	max_x: i32,
 	max_y: i32,
 ) -> DMResult {
 	let mut turfs: Vec<MixWithID> = Vec::new();
 	let mut space_turfs: Vec<MixWithID> = Vec::new();
+	let mut decomp_found_turfs: BTreeSet<TurfID> = BTreeSet::new();
 	turfs.push((turf_idx, turf));
-	let cur_orig = info.get(&turf_idx).unwrap();
+	let cur_orig = info.entry(turf_idx).or_default();
 	let mut cur_info: MonstermosInfo = Default::default();
-	found_turfs.insert(turf_idx);
+	decomp_found_turfs.insert(turf_idx);
 	cur_info.curr_transfer_dir = 6;
 	cur_orig.set(cur_info);
 	let mut warned_about_planet_atmos = false;
@@ -175,9 +175,9 @@ fn explosively_depressurize(
 	while cur_queue_idx < turfs.len() {
 		let (i, m) = turfs[cur_queue_idx];
 		cur_queue_idx += 1;
-		let cur_orig = info.get(&i).unwrap();
+		let cur_orig = info.entry(i).or_default();
 		let mut cur_info = cur_orig.get();
-		found_turfs.insert(i);
+		decomp_found_turfs.insert(i);
 		cur_info.curr_transfer_dir = 6;
 		cur_orig.set(cur_info);
 		if m.planetary_atmos.is_some() {
@@ -198,7 +198,7 @@ fn explosively_depressurize(
 				let bit = 1 << j;
 				if m.adjacency & bit == bit {
 					let loc = adjacent_tile_id(j as u8, i, max_x, max_y);
-					if found_turfs.contains(&loc) {
+					if decomp_found_turfs.contains(&loc) {
 						continue;
 					}
 					if let Some(adj) = turf_gases().get(&loc) {
@@ -209,7 +209,7 @@ fn explosively_depressurize(
 						)?;
 						let new_m = turf_gases().get(&i).unwrap();
 						if new_m.adjacency & bit == bit {
-							found_turfs.insert(loc);
+							decomp_found_turfs.insert(loc);
 							info.entry(loc).or_default().take();
 							turfs.push((adj_i, adj_m));
 						}
@@ -221,50 +221,86 @@ fn explosively_depressurize(
 			return Ok(Value::null()); // planet atmos > space
 		}
 	}
+	decomp_found_turfs.clear();
+	decomp_found_turfs.insert(turf_idx);
 	let mut progression_order: Vec<MixWithID> = Vec::with_capacity(space_turfs.len());
 	for (i, m) in space_turfs.iter() {
 		progression_order.push((*i, *m));
-		let cur_info = info.get_mut(i).unwrap().get_mut();
+		let cur_info = info.entry(*i).or_default().get_mut();
 		cur_info.curr_transfer_dir = 6;
 	}
 	cur_queue_idx = 0;
 	while cur_queue_idx < progression_order.len() {
 		let (i, m) = progression_order[cur_queue_idx];
-		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
-			if let Some(adj) = turf_gases().get(&loc) {
-				let (adj_i, adj_m) = (adj.key(), adj.value());
-				let adj_orig = info.entry(loc).or_default();
-				let mut adj_info = adj_orig.get();
-				if !adj_m.is_immutable() {
-					adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
-					adj_info.curr_transfer_amount = 0.0;
-					unsafe { Value::turf_by_id_unchecked(*adj_i) }
-						.set(byond_string!("pressure_specific_target"), &unsafe {
-							Value::turf_by_id_unchecked(i)
-						})?;
-					adj_orig.set(adj_info);
-					progression_order.push((*adj_i, *adj_m));
+		decomp_found_turfs.insert(i);
+		if cur_queue_idx > equalize_hard_turf_limit {
+			break;
+		}
+		cur_queue_idx += 1;
+		for j in 0..6 {
+			let bit = 1 << j;
+			if m.adjacency & bit == bit {
+				let loc = adjacent_tile_id(j as u8, i, max_x, max_y);
+				if decomp_found_turfs.contains(&loc) {
+					continue;
+				}
+				if let Some(adj) = turf_gases().get(&loc) {
+					let (adj_i, adj_m) = (adj.key(), adj.value());
+					let adj_orig = info.entry(loc).or_default();
+					let mut adj_info = adj_orig.get();
+					if !adj_m.is_immutable() {
+						adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
+						adj_info.curr_transfer_amount = 0.0;
+						unsafe { Value::turf_by_id_unchecked(*adj_i) }
+							.set(byond_string!("pressure_specific_target"), &unsafe {
+								Value::turf_by_id_unchecked(i)
+							})?;
+						decomp_found_turfs.insert(loc);
+						adj_orig.set(adj_info);
+						progression_order.push((*adj_i, *adj_m));
+					}
 				}
 			}
-			cur_queue_idx += 1;
 		}
 	}
+	let hpd = auxtools::Value::globals()
+		.get(byond_string!("SSair"))?
+		.get_list(byond_string!("high_pressure_delta"))
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-list value as list {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 	for (i, m) in progression_order.iter().rev() {
-		let cur_orig = info.get(i).unwrap();
+		let cur_orig = info.entry(*i).or_default();
 		let mut cur_info = cur_orig.get();
 		if cur_info.curr_transfer_dir == 6 {
 			continue;
 		}
+		let mut in_hpd = false;
+		for k in 1..hpd.len() {
+			if hpd.get(k).unwrap() == unsafe { Value::turf_by_id_unchecked(*i) } {
+				in_hpd = true;
+				break;
+			}
+		}
+		if !in_hpd {
+			hpd.append(&unsafe { Value::turf_by_id_unchecked(*i) });
+		}
 		let loc = adjacent_tile_id(cur_info.curr_transfer_dir as u8, *i, max_x, max_y);
 		if let Some(adj) = turf_gases().get(&loc) {
 			let (adj_i, adj_m) = (adj.key(), adj.value());
-			let adj_orig = info.get(&loc).unwrap();
+			let adj_orig = info.entry(loc).or_default();
 			let mut adj_info = adj_orig.get();
 			let sum = adj_m.total_moles();
 			cur_info.curr_transfer_amount += sum;
 			adj_info.curr_transfer_amount += cur_info.curr_transfer_amount;
 
 			let byond_turf = unsafe { Value::turf_by_id_unchecked(*i) };
+
 			byond_turf.set(
 				byond_string!("pressure_difference"),
 				Value::from(cur_info.curr_transfer_amount),
@@ -343,7 +379,6 @@ fn flood_fill_equalize_turfs(
 							// NOT ONE OF YOU IS GONNA SURVIVE THIS
 							// (I just made explosions less laggy, you're welcome)
 							turfs.push((loc, *adj_turf.value()));
-							let map_copy = found_turfs.clone();
 							let fake_cloned = info
 								.iter()
 								.map(|(&k, v)| (k, v.get()))
@@ -357,7 +392,6 @@ fn flood_fill_equalize_turfs(
 									i,
 									m,
 									cloned,
-									map_copy.clone(),
 									equalize_hard_turf_limit,
 									max_x,
 									max_y,

@@ -310,12 +310,12 @@ fn explosively_depressurize(
 			)?;
 
 			if adj_info.curr_transfer_dir == 6 {
-				let byond_turf = unsafe { Value::turf_by_id_unchecked(*adj_i) };
-				byond_turf.set(
+				let byond_turf_adj = unsafe { Value::turf_by_id_unchecked(*adj_i) };
+				byond_turf_adj.set(
 					byond_string!("pressure_difference"),
-					Value::from(cur_info.curr_transfer_amount),
+					Value::from(adj_info.curr_transfer_amount),
 				)?;
-				byond_turf.set(
+				byond_turf_adj.set(
 					byond_string!("pressure_direction"),
 					Value::from((1 << cur_info.curr_transfer_dir) as f32),
 				)?;

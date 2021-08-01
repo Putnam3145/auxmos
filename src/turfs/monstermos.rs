@@ -151,7 +151,6 @@ fn finalize_eq_neighbors(
 		}
 	}
 }
-#[inline(never)]
 #[cfg(feature = "explosive_decompression")]
 fn explosively_depressurize(
 	turf_idx: TurfID,

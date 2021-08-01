@@ -151,6 +151,7 @@ fn finalize_eq_neighbors(
 		}
 	}
 }
+
 #[cfg(feature = "explosive_decompression")]
 fn explosively_depressurize(
 	turf_idx: TurfID,
@@ -201,17 +202,14 @@ fn explosively_depressurize(
 						continue;
 					}
 					if let Some(adj) = turf_gases().get(&loc) {
-						let (&adj_i, &adj_m) = (adj.key(), adj.value());
+						let (adj_i, adj_m) = (adj.key(), adj.value());
 						unsafe { Value::turf_by_id_unchecked(i) }.call(
 							"consider_firelocks",
 							&[&unsafe { Value::turf_by_id_unchecked(loc) }],
 						)?;
-						let new_m = turf_gases().get(&i).unwrap();
-						if new_m.adjacency & bit == bit {
-							decomp_found_turfs.insert(loc);
-							info.entry(loc).or_default().take();
-							turfs.push((adj_i, adj_m));
-						}
+						decomp_found_turfs.insert(loc);
+						info.entry(loc).or_default().take();
+						turfs.push((*adj_i, *adj_m));
 					}
 				}
 			}

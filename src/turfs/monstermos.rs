@@ -233,10 +233,10 @@ fn explosively_depressurize(
 	while cur_queue_idx < progression_order.len() {
 		let (i, m) = progression_order[cur_queue_idx];
 		decomp_found_turfs.insert(i);
-		if cur_queue_idx > equalize_hard_turf_limit {
-			break;
-		}
 		cur_queue_idx += 1;
+		if cur_queue_idx > equalize_hard_turf_limit {
+			continue;
+		}
 		for j in 0..6 {
 			let bit = 1 << j;
 			if m.adjacency & bit == bit {

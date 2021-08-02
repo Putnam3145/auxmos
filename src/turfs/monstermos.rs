@@ -201,16 +201,17 @@ fn explosively_depressurize(
 					if decomp_found_turfs.contains(&loc) {
 						continue;
 					}
-					if let Some(adj) = turf_gases().get(&loc) {
-						let (adj_i, adj_m) = (adj.key(), adj.value());
-						unsafe { Value::turf_by_id_unchecked(i) }.call(
-							"consider_firelocks",
-							&[&unsafe { Value::turf_by_id_unchecked(loc) }],
-						)?;
-						decomp_found_turfs.insert(loc);
-						info.entry(loc).or_default().take();
-						turfs.push((*adj_i, *adj_m));
-					}
+					let adj_m = {
+						*turf_gases().get(&loc).unwrap()
+					};
+					unsafe { Value::turf_by_id_unchecked(i) }.call(
+						"consider_firelocks",
+						&[&unsafe { Value::turf_by_id_unchecked(loc) }],
+					)?;
+					decomp_found_turfs.insert(loc);
+					info.entry(loc).or_default().take();
+					turfs.push((loc, adj_m));
+
 				}
 			}
 		}
@@ -241,21 +242,21 @@ fn explosively_depressurize(
 				if decomp_found_turfs.contains(&loc) {
 					continue;
 				}
-				if let Some(adj) = turf_gases().get(&loc) {
-					let (adj_i, adj_m) = (adj.key(), adj.value());
-					let adj_orig = info.entry(loc).or_default();
-					let mut adj_info = adj_orig.get();
-					if !adj_m.is_immutable() {
-						adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
-						adj_info.curr_transfer_amount = 0.0;
-						unsafe { Value::turf_by_id_unchecked(*adj_i) }
-							.set(byond_string!("pressure_specific_target"), &unsafe {
-								Value::turf_by_id_unchecked(i)
-							})?;
-						decomp_found_turfs.insert(loc);
-						adj_orig.set(adj_info);
-						progression_order.push((*adj_i, *adj_m));
-					}
+				let adj_m = {
+					*turf_gases().get(&loc).unwrap()
+				};
+				let adj_orig = info.entry(loc).or_default();
+				let mut adj_info = adj_orig.get();
+				if !adj_m.is_immutable() {
+					adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
+					adj_info.curr_transfer_amount = 0.0;
+					unsafe { Value::turf_by_id_unchecked(loc) }
+						.set(byond_string!("pressure_specific_target"), &unsafe {
+							Value::turf_by_id_unchecked(i)
+						})?;
+					decomp_found_turfs.insert(loc);
+					adj_orig.set(adj_info);
+					progression_order.push((loc, adj_m));
 				}
 			}
 		}
@@ -288,39 +289,39 @@ fn explosively_depressurize(
 			hpd.append(&unsafe { Value::turf_by_id_unchecked(*i) });
 		}
 		let loc = adjacent_tile_id(cur_info.curr_transfer_dir as u8, *i, max_x, max_y);
-		if let Some(adj) = turf_gases().get(&loc) {
-			let (adj_i, adj_m) = (adj.key(), adj.value());
-			let adj_orig = info.entry(loc).or_default();
-			let mut adj_info = adj_orig.get();
-			let sum = adj_m.total_moles();
-			cur_info.curr_transfer_amount += sum;
-			adj_info.curr_transfer_amount += cur_info.curr_transfer_amount;
+		let adj_m = {
+			*turf_gases().get(&loc).unwrap()
+		};
+		let adj_orig = info.entry(loc).or_default();
+		let mut adj_info = adj_orig.get();
+		let sum = adj_m.total_moles();
+		cur_info.curr_transfer_amount += sum;
+		adj_info.curr_transfer_amount += cur_info.curr_transfer_amount;
 
-			let byond_turf = unsafe { Value::turf_by_id_unchecked(*i) };
+		let byond_turf = unsafe { Value::turf_by_id_unchecked(*i) };
 
-			byond_turf.set(
+		byond_turf.set(
+			byond_string!("pressure_difference"),
+			Value::from(cur_info.curr_transfer_amount),
+		)?;
+		byond_turf.set(
+			byond_string!("pressure_direction"),
+			Value::from((1 << cur_info.curr_transfer_dir) as f32),
+		)?;
+
+		if adj_info.curr_transfer_dir == 6 {
+			let byond_turf_adj = unsafe { Value::turf_by_id_unchecked(loc) };
+			byond_turf_adj.set(
 				byond_string!("pressure_difference"),
-				Value::from(cur_info.curr_transfer_amount),
+				Value::from(adj_info.curr_transfer_amount),
 			)?;
-			byond_turf.set(
+			byond_turf_adj.set(
 				byond_string!("pressure_direction"),
 				Value::from((1 << cur_info.curr_transfer_dir) as f32),
 			)?;
-
-			if adj_info.curr_transfer_dir == 6 {
-				let byond_turf_adj = unsafe { Value::turf_by_id_unchecked(*adj_i) };
-				byond_turf_adj.set(
-					byond_string!("pressure_difference"),
-					Value::from(adj_info.curr_transfer_amount),
-				)?;
-				byond_turf_adj.set(
-					byond_string!("pressure_direction"),
-					Value::from((1 << cur_info.curr_transfer_dir) as f32),
-				)?;
-			}
-			m.clear_air();
-			byond_turf.call("handle_decompression_floor_rip", &[&Value::from(sum)])?;
 		}
+		m.clear_air();
+		byond_turf.call("handle_decompression_floor_rip", &[&Value::from(sum)])?;
 	}
 	Ok(Value::null())
 	//	if (total_gases_deleted / turfs.len() as f32) > 20.0 && turfs.len() > 10 { // logging I guess

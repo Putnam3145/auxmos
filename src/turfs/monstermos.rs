@@ -457,10 +457,10 @@ fn monstermos_fast_process(
 			cur_info.adjust_eq_movement(&mut adj_info, j as usize, moles_to_move);
 			cur_info.mole_delta -= moles_to_move;
 			adj_info.mole_delta += moles_to_move;
+			cur_orig.set(cur_info);
 			adj_orig.set(adj_info);
 		}
 	}
-	cur_orig.set(cur_info);
 }
 
 fn give_to_takers(
@@ -481,6 +481,7 @@ fn give_to_takers(
 		queue.clear();
 		queue.push((*i, *m));
 		giver_info.last_slow_queue_cycle = *queue_cycle_slow;
+		giver_orig.set(giver_info);
 		let mut queue_idx = 0;
 		while queue_idx < queue.len() {
 			if giver_info.mole_delta <= 0.0 {
@@ -513,8 +514,8 @@ fn give_to_takers(
 									adj_info.mole_delta = 0.0;
 								}
 							}
-							adj_orig.set(adj_info);
 							giver_orig.set(giver_info);
+							adj_orig.set(adj_info);
 						}
 					}
 				}
@@ -540,7 +541,6 @@ fn give_to_takers(
 				adj_orig.set(adj_info);
 			}
 		}
-		giver_orig.set(giver_info);
 	}
 }
 
@@ -562,6 +562,7 @@ fn take_from_givers(
 		queue.clear();
 		queue.push((*i, *m));
 		taker_info.last_slow_queue_cycle = *queue_cycle_slow;
+		taker_orig.set(taker_info);
 		let mut queue_idx = 0;
 		while queue_idx < queue.len() {
 			if taker_info.mole_delta >= 0.0 {

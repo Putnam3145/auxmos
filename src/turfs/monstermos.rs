@@ -461,6 +461,7 @@ fn monstermos_fast_process(
 			adj_orig.set(adj_info);
 		}
 	}
+	cur_orig.set(cur_info);
 }
 
 fn give_to_takers(

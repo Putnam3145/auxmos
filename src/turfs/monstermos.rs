@@ -116,6 +116,8 @@ fn finalize_eq(
 							let real_amount = Value::from(-amount);
 							let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
 							let other_turf = unsafe { Value::turf_by_id_unchecked(adj_id as u32) };
+							turf.call("update_visuals", &[])?;
+							other_turf.call("update_visuals", &[])?;
 							if let Err(e) = turf
 								.call("consider_pressure_difference", &[&other_turf, &real_amount])
 							{
@@ -250,10 +252,10 @@ fn explosively_depressurize(
 				if !adj_m.is_immutable() {
 					adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 					adj_info.curr_transfer_amount = 0.0;
+					let cur_target_turf = unsafe { Value::turf_by_id_unchecked(i) }
+						.get(byond_string!("pressure_specific_target"))?;
 					unsafe { Value::turf_by_id_unchecked(loc) }
-						.set(byond_string!("pressure_specific_target"), &unsafe {
-							Value::turf_by_id_unchecked(i)
-						})?;
+						.set(byond_string!("pressure_specific_target"), &cur_target_turf)?;
 					decomp_found_turfs.insert(loc);
 					adj_orig.set(adj_info);
 					progression_order.push((loc, adj_m));
@@ -279,7 +281,7 @@ fn explosively_depressurize(
 			continue;
 		}
 		let mut in_hpd = false;
-		for k in 1..hpd.len() {
+		for k in 1..=hpd.len() {
 			if hpd.get(k).unwrap() == unsafe { Value::turf_by_id_unchecked(*i) } {
 				in_hpd = true;
 				break;
@@ -292,11 +294,15 @@ fn explosively_depressurize(
 		let adj_m = {
 			*turf_gases().get(&loc).unwrap()
 		};
-		let adj_orig = info.entry(loc).or_default();
-		let mut adj_info = adj_orig.get();
 		let sum = adj_m.total_moles();
 		cur_info.curr_transfer_amount += sum;
+		cur_orig.set(cur_info);
+
+		let adj_orig = info.entry(loc).or_default();
+		let mut adj_info = adj_orig.get();
+
 		adj_info.curr_transfer_amount += cur_info.curr_transfer_amount;
+		adj_orig.set(adj_info);
 
 		let byond_turf = unsafe { Value::turf_by_id_unchecked(*i) };
 
@@ -321,6 +327,7 @@ fn explosively_depressurize(
 			)?;
 		}
 		m.clear_air();
+		byond_turf.call("update_visuals", &[])?;
 		byond_turf.call("handle_decompression_floor_rip", &[&Value::from(sum)])?;
 	}
 	Ok(Value::null())

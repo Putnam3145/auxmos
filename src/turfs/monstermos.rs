@@ -1,6 +1,6 @@
 use super::*;
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque, HashSet};
 
 use auxcallback::byond_callback_sender;
 
@@ -165,7 +165,7 @@ fn explosively_depressurize(
 ) -> DMResult {
 	let mut turfs: Vec<MixWithID> = Vec::new();
 	let mut space_turfs: Vec<MixWithID> = Vec::new();
-	let mut decomp_found_turfs: BTreeSet<TurfID> = BTreeSet::new();
+	let mut decomp_found_turfs: HashSet<TurfID> = HashSet::new();
 	turfs.push((turf_idx, turf));
 	let cur_orig = info.entry(turf_idx).or_default();
 	let mut cur_info: MonstermosInfo = Default::default();

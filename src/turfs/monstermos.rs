@@ -10,6 +10,22 @@ type TransferInfo = [f32; 7];
 
 type MixWithID = (TurfID, TurfMixture);
 
+#[cfg(feature = "explosive_decompression")]
+#[hook("/turf/proc/register_firelocks")]
+fn _hook_register_firelocks() {
+	let id = unsafe { src.raw.data.id };
+	firelock_turfs().insert(id, ());
+	Ok(Value::null())
+}
+
+#[cfg(feature = "explosive_decompression")]
+#[hook("/turf/proc/unregister_firelocks")]
+fn _hook_unregister_firelocks() {
+	let id = unsafe { src.raw.data.id };
+	firelock_turfs().remove(&id);
+	Ok(Value::null())
+}
+
 #[derive(Copy, Clone, Default)]
 struct MonstermosInfo {
 	transfer_dirs: TransferInfo,
@@ -164,7 +180,6 @@ fn explosively_depressurize(
 	max_y: i32,
 ) -> DMResult {
 	let mut turfs: Vec<MixWithID> = Vec::new();
-	let mut space_turfs: Vec<MixWithID> = Vec::new();
 	let mut decomp_found_turfs: HashSet<TurfID> = HashSet::new();
 	turfs.push((turf_idx, turf));
 	let cur_orig = info.entry(turf_idx).or_default();
@@ -174,6 +189,8 @@ fn explosively_depressurize(
 	cur_orig.set(cur_info);
 	let mut warned_about_planet_atmos = false;
 	let mut cur_queue_idx = 0;
+
+	//find the airlocks that could contain the air and close them
 	while cur_queue_idx < turfs.len() {
 		let (i, m) = turfs[cur_queue_idx];
 		cur_queue_idx += 1;
@@ -187,7 +204,8 @@ fn explosively_depressurize(
 			continue;
 		}
 		if m.is_immutable() {
-			space_turfs.push((i, m));
+			let cur_info = info.entry(i).or_default().get_mut();
+			cur_info.curr_transfer_dir = 6;
 			unsafe { Value::turf_by_id_unchecked(i) }
 				.set(byond_string!("pressure_specific_target"), &unsafe {
 					Value::turf_by_id_unchecked(i)
@@ -206,10 +224,15 @@ fn explosively_depressurize(
 					let adj_m = {
 						*turf_gases().get(&loc).unwrap()
 					};
-					unsafe { Value::turf_by_id_unchecked(i) }.call(
-						"consider_firelocks",
-						&[&unsafe { Value::turf_by_id_unchecked(loc) }],
-					)?;
+					if firelock_turfs().contains_key(&loc) {
+						unsafe { Value::turf_by_id_unchecked(i) }.call(
+							"consider_firelocks",
+							&[&unsafe { Value::turf_by_id_unchecked(loc) }],
+						)?;
+						decomp_found_turfs.insert(loc);
+						info.entry(loc).or_default().take();
+						continue;
+					}
 					decomp_found_turfs.insert(loc);
 					info.entry(loc).or_default().take();
 					turfs.push((loc, adj_m));
@@ -221,17 +244,14 @@ fn explosively_depressurize(
 			return Ok(Value::null()); // planet atmos > space
 		}
 	}
+
 	decomp_found_turfs.clear();
 	decomp_found_turfs.insert(turf_idx);
-	let mut progression_order: Vec<MixWithID> = Vec::with_capacity(space_turfs.len());
-	for (i, m) in space_turfs.iter() {
-		progression_order.push((*i, *m));
-		let cur_info = info.entry(*i).or_default().get_mut();
-		cur_info.curr_transfer_dir = 6;
-	}
 	cur_queue_idx = 0;
-	while cur_queue_idx < progression_order.len() {
-		let (i, m) = progression_order[cur_queue_idx];
+
+	//set the infos
+	while cur_queue_idx < turfs.len() {
+		let (i, m) = turfs[cur_queue_idx];
 		decomp_found_turfs.insert(i);
 		cur_queue_idx += 1;
 		if cur_queue_idx > equalize_hard_turf_limit {
@@ -258,7 +278,6 @@ fn explosively_depressurize(
 						.set(byond_string!("pressure_specific_target"), &cur_target_turf)?;
 					decomp_found_turfs.insert(loc);
 					adj_orig.set(adj_info);
-					progression_order.push((loc, adj_m));
 				}
 			}
 		}
@@ -274,7 +293,9 @@ fn explosively_depressurize(
 				std::column!()
 			)
 		})?;
-	for (i, m) in progression_order.iter().rev() {
+
+	//move the air & toss things around
+	for (i, m) in turfs.iter().rev() {
 		let cur_orig = info.entry(*i).or_default();
 		let mut cur_info = cur_orig.get();
 		if cur_info.curr_transfer_dir == 6 {

@@ -148,6 +148,9 @@ static mut TURF_GASES: Option<DashMap<TurfID, TurfMixture, FxBuildHasher>> = Non
 static mut TURF_TEMPERATURES: Option<DashMap<TurfID, ThermalInfo, FxBuildHasher>> = None;
 // We store planetary atmos by hash of the initial atmos string here for speed.
 static mut PLANETARY_ATMOS: Option<DashMap<u32, Mixture, FxBuildHasher>> = None;
+// Turfs with firelocks are stored for explosive decompression speed
+#[cfg(feature = "explosive_decompression")]
+static mut FIRELOCK_TURFS: Option<DashMap<TurfID, (), FxBuildHasher>> = None;
 
 #[init(partial)]
 fn _initialize_turf_statics() -> Result<(), String> {
@@ -155,6 +158,10 @@ fn _initialize_turf_statics() -> Result<(), String> {
 		TURF_GASES = Some(DashMap::with_hasher(FxBuildHasher::default()));
 		TURF_TEMPERATURES = Some(DashMap::with_hasher(FxBuildHasher::default()));
 		PLANETARY_ATMOS = Some(DashMap::with_hasher(FxBuildHasher::default()));
+		#[cfg(feature = "explosive_decompression")]
+		{
+			FIRELOCK_TURFS = Some(DashMap::with_hasher(FxBuildHasher::default()));
+		}
 	};
 	Ok(())
 }
@@ -165,6 +172,10 @@ fn _shutdown_turfs() {
 		TURF_GASES = None;
 		TURF_TEMPERATURES = None;
 		PLANETARY_ATMOS = None;
+		#[cfg(feature = "explosive_decompression")]
+		{
+			FIRELOCK_TURFS = None;
+		}
 	};
 }
 // this would lead to undefined info if it were possible for something to put a None on it during operation, but nothing's going to do that
@@ -178,6 +189,11 @@ fn planetary_atmos() -> &'static DashMap<u32, Mixture, FxBuildHasher> {
 
 fn turf_temperatures() -> &'static DashMap<TurfID, ThermalInfo, FxBuildHasher> {
 	unsafe { TURF_TEMPERATURES.as_ref().unwrap() }
+}
+
+#[cfg(feature = "explosive_decompression")]
+fn firelock_turfs() -> &'static DashMap<TurfID, (), FxBuildHasher> {
+	unsafe { FIRELOCK_TURFS.as_ref().unwrap() }
 }
 
 #[hook("/turf/proc/update_air_ref")]

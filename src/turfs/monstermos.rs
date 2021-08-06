@@ -1,6 +1,6 @@
 use super::*;
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque, HashSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use auxcallback::byond_callback_sender;
 
@@ -116,8 +116,6 @@ fn finalize_eq(
 							let real_amount = Value::from(-amount);
 							let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
 							let other_turf = unsafe { Value::turf_by_id_unchecked(adj_id as u32) };
-							turf.call("update_visuals", &[])?;
-							other_turf.call("update_visuals", &[])?;
 							if let Err(e) = turf
 								.call("consider_pressure_difference", &[&other_turf, &real_amount])
 							{
@@ -165,7 +163,7 @@ fn explosively_depressurize(
 ) -> DMResult {
 	let mut turfs: Vec<MixWithID> = Vec::new();
 	let mut space_turfs: Vec<MixWithID> = Vec::new();
-	let mut decomp_found_turfs: HashSet<TurfID> = HashSet::new();
+	let mut decomp_found_turfs: std::collections::HashSet<TurfID> = std::collections::HashSet::new();
 	turfs.push((turf_idx, turf));
 	let cur_orig = info.entry(turf_idx).or_default();
 	let mut cur_info: MonstermosInfo = Default::default();
@@ -327,7 +325,6 @@ fn explosively_depressurize(
 			)?;
 		}
 		m.clear_air();
-		byond_turf.call("update_visuals", &[])?;
 		byond_turf.call("handle_decompression_floor_rip", &[&Value::from(sum)])?;
 	}
 	Ok(Value::null())

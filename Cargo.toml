@@ -36,6 +36,7 @@ flume = "0.10.5"
 parking_lot = "0.11.1"
 fxhash = "0.2.1"
 nonmax = "0.5.0"
+indexmap = "1.7.0"
 
 [dependencies.dashmap]
 version = "4.0.2"

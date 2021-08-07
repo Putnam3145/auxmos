@@ -44,7 +44,7 @@ const fn adj_flag_to_idx(adj_flag: u8) -> usize {
 type TurfID = u32;
 
 // TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Hash, Eq, PartialEq)]
 struct TurfMixture {
 	pub mix: usize,
 	pub adjacency: u8,

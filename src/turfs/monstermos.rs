@@ -2,6 +2,8 @@ use super::*;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use indexmap::IndexSet;
+
 use auxcallback::byond_callback_sender;
 
 use std::cell::Cell;
@@ -161,13 +163,11 @@ fn explosively_depressurize(
 	max_x: i32,
 	max_y: i32,
 ) -> DMResult {
-	let mut turfs: Vec<MixWithID> = Vec::new();
-	let mut space_turfs: Vec<MixWithID> = Vec::new();
-	let mut decomp_found_turfs: std::collections::HashSet<TurfID> = std::collections::HashSet::new();
-	turfs.push((turf_idx, turf));
+	let mut turfs: IndexSet<MixWithID> = IndexSet::new();
+	let mut progression_order: IndexSet<MixWithID> = IndexSet::new();
+	turfs.insert((turf_idx, turf));
 	let cur_orig = info.entry(turf_idx).or_default();
 	let mut cur_info: MonstermosInfo = Default::default();
-	decomp_found_turfs.insert(turf_idx);
 	cur_info.curr_transfer_dir = 6;
 	cur_orig.set(cur_info);
 	let mut warned_about_planet_atmos = false;
@@ -177,7 +177,6 @@ fn explosively_depressurize(
 		cur_queue_idx += 1;
 		let cur_orig = info.entry(i).or_default();
 		let mut cur_info = cur_orig.get();
-		decomp_found_turfs.insert(i);
 		cur_info.curr_transfer_dir = 6;
 		cur_orig.set(cur_info);
 		if m.planetary_atmos.is_some() {
@@ -185,33 +184,26 @@ fn explosively_depressurize(
 			continue;
 		}
 		if m.is_immutable() {
-			space_turfs.push((i, m));
-			unsafe { Value::turf_by_id_unchecked(i) }
-				.set(byond_string!("pressure_specific_target"), &unsafe {
-					Value::turf_by_id_unchecked(i)
-				})?;
+			if progression_order.insert((i, m)) {
+				unsafe { Value::turf_by_id_unchecked(i) }
+					.set(byond_string!("pressure_specific_target"), &unsafe {
+						Value::turf_by_id_unchecked(i)
+					})?;
+			}
 		} else {
 			if cur_queue_idx > equalize_hard_turf_limit {
 				continue;
 			}
-			for j in 0..6 {
-				let bit = 1 << j;
-				if m.adjacency & bit == bit {
-					let loc = adjacent_tile_id(j as u8, i, max_x, max_y);
-					if decomp_found_turfs.contains(&loc) {
-						continue;
-					}
-					let adj_m = {
-						*turf_gases().get(&loc).unwrap()
-					};
+			for (_, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
+				let adj_m = {
+					*turf_gases().get(&loc).unwrap()
+				};
+				if turfs.insert((loc, adj_m)) {
 					unsafe { Value::turf_by_id_unchecked(i) }.call(
 						"consider_firelocks",
 						&[&unsafe { Value::turf_by_id_unchecked(loc) }],
 					)?;
-					decomp_found_turfs.insert(loc);
 					info.entry(loc).or_default().take();
-					turfs.push((loc, adj_m));
-
 				}
 			}
 		}
@@ -219,44 +211,32 @@ fn explosively_depressurize(
 			return Ok(Value::null()); // planet atmos > space
 		}
 	}
-	decomp_found_turfs.clear();
-	decomp_found_turfs.insert(turf_idx);
-	let mut progression_order: Vec<MixWithID> = Vec::with_capacity(space_turfs.len());
-	for (i, m) in space_turfs.iter() {
-		progression_order.push((*i, *m));
+	for (i, _) in progression_order.iter() {
 		let cur_info = info.entry(*i).or_default().get_mut();
 		cur_info.curr_transfer_dir = 6;
 	}
 	cur_queue_idx = 0;
 	while cur_queue_idx < progression_order.len() {
 		let (i, m) = progression_order[cur_queue_idx];
-		decomp_found_turfs.insert(i);
 		cur_queue_idx += 1;
 		if cur_queue_idx > equalize_hard_turf_limit {
 			continue;
 		}
-		for j in 0..6 {
-			let bit = 1 << j;
-			if m.adjacency & bit == bit {
-				let loc = adjacent_tile_id(j as u8, i, max_x, max_y);
-				if decomp_found_turfs.contains(&loc) {
-					continue;
-				}
-				let adj_m = {
-					*turf_gases().get(&loc).unwrap()
-				};
-				let adj_orig = info.entry(loc).or_default();
-				let mut adj_info = adj_orig.get();
-				if !adj_m.is_immutable() {
+		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
+			let adj_m = {
+				*turf_gases().get(&loc).unwrap()
+			};
+			let adj_orig = info.entry(loc).or_default();
+			let mut adj_info = adj_orig.get();
+			if !adj_m.is_immutable() {
+				if progression_order.insert((loc, adj_m)) {
 					adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 					adj_info.curr_transfer_amount = 0.0;
 					let cur_target_turf = unsafe { Value::turf_by_id_unchecked(i) }
 						.get(byond_string!("pressure_specific_target"))?;
 					unsafe { Value::turf_by_id_unchecked(loc) }
 						.set(byond_string!("pressure_specific_target"), &cur_target_turf)?;
-					decomp_found_turfs.insert(loc);
 					adj_orig.set(adj_info);
-					progression_order.push((loc, adj_m));
 				}
 			}
 		}

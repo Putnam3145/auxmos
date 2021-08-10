@@ -57,7 +57,7 @@ fn unregister_mix(i: u32) {
 
 #[init(partial)]
 fn _init_gas_mixtures() -> Result<(), String> {
-	*GAS_MIXTURES.write() = Some(Vec::with_capacity(120_000));
+	*GAS_MIXTURES.write() = Some(Vec::with_capacity(240_000));
 	*NEXT_GAS_IDS.write() = Some(Vec::with_capacity(2000));
 	Ok(())
 }

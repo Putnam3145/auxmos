@@ -4,7 +4,7 @@ use auxtools::*;
 
 use super::*;
 
-use crate::GasArena;
+use crate::gas::{constants::*, GasArena};
 
 use std::time::{Duration, Instant};
 
@@ -334,7 +334,7 @@ fn process_cell(
 		so we make sure we don't do that unless we
 		absolutely need to. Saving is fast enough.
 	*/
-	let mut end_gas = Mixture::from_vol(crate::constants::CELL_VOLUME);
+	let mut end_gas = Mixture::from_vol(CELL_VOLUME);
 	let mut pressure_diffs: [(TurfID, f32); 6] = Default::default();
 	/*
 		The pressure here is negative

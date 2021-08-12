@@ -14,7 +14,8 @@ use tinyvec::TinyVec;
 use crate::reaction::ReactionIdentifier;
 
 use super::{
-	constants::*, gas_visibility, total_num_gases, with_reactions, with_specific_heats, GasIDX,
+	constants::*, gas_visibility, total_num_gases, with_molar_masses, with_reactions,
+	with_specific_heats, GasIDX,
 };
 
 type SpecificFireInfo = (usize, f32, f32);
@@ -177,7 +178,7 @@ impl Mixture {
 		self.cached_heat_capacity.set(Some(heat_cap));
 		heat_cap
 	}
-	/// The heat capacity of the material. [joules?]/mole-kelvin.
+	/// The heat capacity of the mixture. [joules?]/mole-kelvin.
 	pub fn heat_capacity(&self) -> f32 {
 		self.cached_heat_capacity
 			.get()
@@ -190,6 +191,30 @@ impl Mixture {
 			.get(idx)
 			.filter(|amt| amt.is_normal())
 			.map_or(0.0, |amt| amt * with_specific_heats(|heats| heats[idx]))
+	}
+	/// Specific entropy of the mixture, the dimensional analysis is too strong for me sorry
+	pub fn specific_entropy(&self) -> f32 {
+		if self.total_moles() < GAS_MIN_MOLES {
+			SPECIFIC_ENTROPY_VACUUM
+		} else {
+			with_specific_heats(|heats| {
+				with_molar_masses(|masses| {
+					self.moles
+						.iter()
+						.copied()
+						.zip(heats)
+						.zip(masses)
+						.filter(|((amt, _), _)| amt.is_normal())
+						.fold(0.0, |acc, ((amt, cap), mass)| {
+							acc + R_IDEAL_GAS_EQUATION
+								* (((IDEAL_GAS_ENTROPY_CONSTANT * self.volume
+									/ (amt * self.temperature)) * (mass * cap * self.temperature)
+									.powf(2.0 / 3.0) + 1.0)
+									.ln() + 15.0)
+						})
+				})
+			})
+		}
 	}
 	/// The total mole count of the mixture. Moles.
 	pub fn total_moles(&self) -> f32 {
@@ -401,7 +426,7 @@ impl Mixture {
 	}
 	/// Returns a tuple with oxidation power and fuel amount of this gas mixture.
 	pub fn get_burnability(&self) -> (f32, f32) {
-		use crate::types::FireInfo;
+		use super::types::FireInfo;
 		super::with_gas_info(|gas_info| {
 			self.moles
 				.iter()
@@ -445,7 +470,7 @@ impl Mixture {
 		&self,
 		gas_info: &[super::GasType],
 	) -> (Vec<SpecificFireInfo>, Vec<SpecificFireInfo>) {
-		use crate::types::FireInfo;
+		use super::types::FireInfo;
 		self.moles
 			.iter()
 			.zip(gas_info)

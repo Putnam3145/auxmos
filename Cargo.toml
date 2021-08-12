@@ -9,6 +9,7 @@ edition = "2018"
 [features]
 default = ["auxcleanup_gas_deletion"]
 auxcleanup_gas_deletion = ["auxcleanup"]
+specific_entropy = []
 equalization = []
 monstermos = ["equalization"]
 putnamos = ["equalization"]

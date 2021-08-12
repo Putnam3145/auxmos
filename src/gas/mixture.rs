@@ -216,6 +216,25 @@ impl Mixture {
 			})
 		}
 	}
+	/// Specific entropy of a specific gas
+	pub fn specific_entropy_gas(&self, idx: GasIDX) -> f32 {
+		with_specific_heats(|heats| {
+			with_molar_masses(|masses| {
+				self.moles
+					.get(idx)
+					.map(|amt| {
+						let cap = heats.get(idx).unwrap_or(&20.0);
+						let mass = masses.get(idx).unwrap_or(&0.032);
+						R_IDEAL_GAS_EQUATION
+							* (((IDEAL_GAS_ENTROPY_CONSTANT * self.volume
+								/ (amt * self.temperature)) * (mass * cap * self.temperature)
+								.powf(2.0 / 3.0) + 1.0)
+								.ln() + 15.0)
+					})
+					.unwrap_or(SPECIFIC_ENTROPY_VACUUM)
+			})
+		})
+	}
 	/// The total mole count of the mixture. Moles.
 	pub fn total_moles(&self) -> f32 {
 		self.moles.iter().sum()

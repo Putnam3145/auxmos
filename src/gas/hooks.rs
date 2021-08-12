@@ -432,7 +432,15 @@ fn _oxidation_power_hook(temp: Value) {
 #[cfg(feature = "specific_entropy")]
 #[hook("/datum/gas_mixture/proc/specific_entropy")]
 fn _specific_entropy_hook() {
+	with_mix(src, |air| Ok(Value::from(air.specific_entropy())))
+}
+
+#[cfg(feature = "specific_entropy")]
+#[hook("/datum/gas_mixture/proc/specific_entropy_gas")]
+fn _specific_entropy_gas_hook(gas: Value) {
 	with_mix(src, |air| {
-		Ok(Value::from(air.specific_entropy()))
+		Ok(Value::from(
+			air.specific_entropy_gas(gas_idx_from_value(&gas)?),
+		))
 	})
 }

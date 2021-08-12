@@ -163,7 +163,8 @@ fn explosively_depressurize(
 ) -> DMResult {
 	let mut turfs: Vec<MixWithID> = Vec::new();
 	let mut space_turfs: Vec<MixWithID> = Vec::new();
-	let mut decomp_found_turfs: std::collections::HashSet<TurfID> = std::collections::HashSet::new();
+	let mut decomp_found_turfs: std::collections::HashSet<TurfID> =
+		std::collections::HashSet::new();
 	turfs.push((turf_idx, turf));
 	let cur_orig = info.entry(turf_idx).or_default();
 	let mut cur_info: MonstermosInfo = Default::default();
@@ -201,9 +202,7 @@ fn explosively_depressurize(
 					if decomp_found_turfs.contains(&loc) {
 						continue;
 					}
-					let adj_m = {
-						*turf_gases().get(&loc).unwrap()
-					};
+					let adj_m = { *turf_gases().get(&loc).unwrap() };
 					unsafe { Value::turf_by_id_unchecked(i) }.call(
 						"consider_firelocks",
 						&[&unsafe { Value::turf_by_id_unchecked(loc) }],
@@ -211,7 +210,6 @@ fn explosively_depressurize(
 					decomp_found_turfs.insert(loc);
 					info.entry(loc).or_default().take();
 					turfs.push((loc, adj_m));
-
 				}
 			}
 		}
@@ -242,9 +240,7 @@ fn explosively_depressurize(
 				if decomp_found_turfs.contains(&loc) {
 					continue;
 				}
-				let adj_m = {
-					*turf_gases().get(&loc).unwrap()
-				};
+				let adj_m = { *turf_gases().get(&loc).unwrap() };
 				let adj_orig = info.entry(loc).or_default();
 				let mut adj_info = adj_orig.get();
 				if !adj_m.is_immutable() {
@@ -289,9 +285,7 @@ fn explosively_depressurize(
 			hpd.append(&unsafe { Value::turf_by_id_unchecked(*i) });
 		}
 		let loc = adjacent_tile_id(cur_info.curr_transfer_dir as u8, *i, max_x, max_y);
-		let adj_m = {
-			*turf_gases().get(&loc).unwrap()
-		};
+		let adj_m = { *turf_gases().get(&loc).unwrap() };
 		let sum = adj_m.total_moles();
 		cur_info.curr_transfer_amount += sum;
 		cur_orig.set(cur_info);

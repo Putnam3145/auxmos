@@ -109,6 +109,9 @@ pub struct GasType {
 	/// The specific heat of the gas. Duplicated in the GAS_SPECIFIC_HEATS vector for speed.
 	/// Byond: `specific_heat`, a number.
 	pub specific_heat: f32,
+	/// Gas's molar mass, in g/mol. Used for certain operations in bay machinery, can be used for
+	/// calculating gas movement on turfs (but isn't)
+	pub molar_mass: f32,
 	/// Gas's fusion power. Used in fusion hooking, so this can be removed and ignored if you don't have fusion.
 	/// Byond: `fusion_power`, a number.
 	pub fusion_power: f32,
@@ -133,32 +136,17 @@ impl GasType {
 			idx,
 			id: gas.get_string(byond_string!("id"))?.into_boxed_str(),
 			name: gas.get_string(byond_string!("name"))?.into_boxed_str(),
-			flags: gas.get_number(byond_string!("flags")).map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})? as u32,
+			flags: gas.get_number(byond_string!("flags")).unwrap_or_default() as u32,
 			specific_heat: gas
 				.get_number(byond_string!("specific_heat"))
-				.map_err(|_| {
-					runtime!(
-						"Attempt to interpret non-number value as number {} {}:{}",
-						std::file!(),
-						std::line!(),
-						std::column!()
-					)
-				})?,
-			fusion_power: gas.get_number(byond_string!("fusion_power")).map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?,
+				.unwrap_or(20.0),
+			molar_mass: gas
+				.get_number(byond_string!("molar_mass"))
+				// https://github.com/Baystation12/Baystation12/blob/dev/code/modules/xgm/xgm_gas_data.dm#L39
+				.unwrap_or(0.032),
+			fusion_power: gas
+				.get_number(byond_string!("fusion_power"))
+				.unwrap_or_default(),
 			moles_visible: gas.get_number(byond_string!("moles_visible")).ok(),
 			fire_info: {
 				if let Ok(temperature) = gas.get_number(byond_string!("oxidation_temperature")) {
@@ -175,8 +163,10 @@ impl GasType {
 					FireInfo::None
 				}
 			},
-			fire_products: if let Ok(products) = gas.get_list(byond_string!("fire_products")) {
-				Some(
+			fire_products: gas
+				.get_list(byond_string!("fire_products"))
+				.ok()
+				.map(|products| {
 					(1..=products.len())
 						.map(|i| {
 							let s = products.get(i).unwrap();
@@ -185,12 +175,11 @@ impl GasType {
 								products.get(s).unwrap().as_number().unwrap(),
 							)
 						})
-						.collect(),
-				)
-			} else {
-				None
-			},
-			fire_energy_released: gas.get_number(byond_string!("fire_energy_released"))?,
+						.collect()
+				}),
+			fire_energy_released: gas
+				.get_number(byond_string!("fire_energy_released"))
+				.unwrap_or_default(),
 		})
 	}
 }
@@ -201,6 +190,8 @@ static GAS_INFO_BY_IDX: RwLock<Option<Vec<GasType>>> = const_rwlock(None);
 
 static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = const_rwlock(None);
 
+static GAS_MOLAR_MASSES: RwLock<Option<Vec<f32>>> = const_rwlock(None);
+
 #[init(partial)]
 fn _create_gas_info_structs() -> Result<(), String> {
 	unsafe {
@@ -208,6 +199,7 @@ fn _create_gas_info_structs() -> Result<(), String> {
 	};
 	*GAS_INFO_BY_IDX.write() = Some(Vec::new());
 	*GAS_SPECIFIC_HEATS.write() = Some(Vec::new());
+	*GAS_MOLAR_MASSES.write() = Some(Vec::new());
 	Ok(())
 }
 
@@ -218,6 +210,7 @@ fn _destroy_gas_info_structs() {
 	};
 	*GAS_INFO_BY_IDX.write() = None;
 	*GAS_SPECIFIC_HEATS.write() = None;
+	*GAS_MOLAR_MASSES.write() = None;
 	TOTAL_NUM_GASES.store(0, Ordering::Release);
 	CACHED_GAS_IDS.with(|gas_ids| {
 		gas_ids.borrow_mut().clear();
@@ -236,6 +229,11 @@ fn _hook_register_gas(gas: Value) {
 		.as_mut()
 		.unwrap()
 		.push(gas_cache.specific_heat);
+	GAS_MOLAR_MASSES
+		.write()
+		.as_mut()
+		.unwrap()
+		.push(gas_cache.molar_mass);
 	GAS_INFO_BY_IDX.write().as_mut().unwrap().push(gas_cache);
 	TOTAL_NUM_GASES.fetch_add(1, Ordering::Release); // this is the only thing that stores it other than shutdown
 	Ok(Value::null())
@@ -291,6 +289,10 @@ where
 
 pub fn with_specific_heats<T>(f: impl FnOnce(&[f32]) -> T) -> T {
 	f(GAS_SPECIFIC_HEATS.read().as_ref().unwrap().as_slice())
+}
+
+pub fn with_molar_masses<T>(f: impl FnOnce(&[f32]) -> T) -> T {
+	f(GAS_MOLAR_MASSES.read().as_ref().unwrap().as_slice())
 }
 
 #[cfg(feature = "reaction_hooks")]

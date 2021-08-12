@@ -10,9 +10,7 @@ use crate::gas::Mixture;
 
 use auxtools::*;
 
-use crate::constants::*;
-
-use crate::GasArena;
+use crate::gas::{constants::*, GasArena};
 
 use dashmap::DashMap;
 

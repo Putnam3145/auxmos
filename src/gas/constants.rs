@@ -1,5 +1,9 @@
 /// kPa*L/(K*mol)
 pub const R_IDEAL_GAS_EQUATION: f32 = 8.31;
+// (mol^3 * s^3) / (kg^3 * L).
+pub const IDEAL_GAS_ENTROPY_CONSTANT: f32 = 1164.0;
+// Makes the math better on vacuum stuff, arbitrary constant taken from bay
+pub const SPECIFIC_ENTROPY_VACUUM: f32 = 150_000.0;
 /// kPa
 pub const ONE_ATMOSPHERE: f32 = 101.325;
 ///  -270.3degC

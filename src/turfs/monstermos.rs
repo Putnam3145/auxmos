@@ -207,9 +207,9 @@ fn explosively_depressurize(
 				}
 			}
 		}
-		if warned_about_planet_atmos {
-			return Ok(Value::null()); // planet atmos > space
-		}
+	}
+	if warned_about_planet_atmos {
+		return Ok(Value::null()); // planet atmos > space
 	}
 	for (i, _) in progression_order.iter() {
 		let cur_info = info.entry(*i).or_default().get_mut();

@@ -1,6 +1,6 @@
 use super::*;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{HashMap, BTreeSet};
 
 use indexmap::IndexSet;
 
@@ -50,7 +50,7 @@ mod tests {
 fn finalize_eq(
 	i: TurfID,
 	turf: &TurfMixture,
-	info: &BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &HashMap<TurfID, Cell<MonstermosInfo>>,
 	max_x: i32,
 	max_y: i32,
 ) {
@@ -140,7 +140,7 @@ fn finalize_eq_neighbors(
 	i: TurfID,
 	turf: &TurfMixture,
 	transfer_dirs: [f32; 7],
-	info: &BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &HashMap<TurfID, Cell<MonstermosInfo>>,
 	max_x: i32,
 	max_y: i32,
 ) {
@@ -158,7 +158,7 @@ fn finalize_eq_neighbors(
 fn explosively_depressurize(
 	turf_idx: TurfID,
 	turf: TurfMixture,
-	mut info: BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	mut info: HashMap<TurfID, Cell<MonstermosInfo>>,
 	equalize_hard_turf_limit: usize,
 	max_x: i32,
 	max_y: i32,
@@ -320,7 +320,7 @@ fn flood_fill_equalize_turfs(
 	max_x: i32,
 	max_y: i32,
 	found_turfs: &mut BTreeSet<TurfID>,
-	info: &mut BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &mut HashMap<TurfID, Cell<MonstermosInfo>>,
 ) -> Option<(IndexSet<MixWithID>, IndexSet<MixWithID>, f64)> {
 	let mut turfs: IndexSet<MixWithID> = IndexSet::with_capacity(equalize_hard_turf_limit);
 	let mut border_turfs: IndexSet<MixWithID> = IndexSet::with_capacity(equalize_turf_limit);
@@ -361,12 +361,12 @@ fn flood_fill_equalize_turfs(
 								let fake_cloned = info
 									.iter()
 									.map(|(&k, v)| (k, v.get()))
-									.collect::<BTreeMap<TurfID, MonstermosInfo>>();
+									.collect::<HashMap<TurfID, MonstermosInfo>>();
 								let _ = sender.send(Box::new(move || {
 									let cloned = fake_cloned
 										.iter()
 										.map(|(&k, &v)| (k, Cell::new(v)))
-										.collect::<BTreeMap<TurfID, Cell<MonstermosInfo>>>();
+										.collect::<HashMap<TurfID, Cell<MonstermosInfo>>>();
 									explosively_depressurize(
 										i,
 										m,
@@ -405,7 +405,7 @@ fn monstermos_fast_process(
 	m: TurfMixture,
 	max_x: i32,
 	max_y: i32,
-	info: &mut BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &mut HashMap<TurfID, Cell<MonstermosInfo>>,
 ) {
 	let cur_orig = info.get(&i).unwrap();
 	let mut cur_info = cur_orig.get();
@@ -444,7 +444,7 @@ fn give_to_takers(
 	taker_turfs: &Vec<MixWithID>,
 	max_x: i32,
 	max_y: i32,
-	info: &BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &HashMap<TurfID, Cell<MonstermosInfo>>,
 	queue_cycle_slow: &mut i32,
 ) {
 	let mut queue: IndexSet<MixWithID> = IndexSet::with_capacity(taker_turfs.len());
@@ -526,7 +526,7 @@ fn take_from_givers(
 	giver_turfs: &Vec<MixWithID>,
 	max_x: i32,
 	max_y: i32,
-	info: &BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &HashMap<TurfID, Cell<MonstermosInfo>>,
 	queue_cycle_slow: &mut i32,
 ) {
 	let mut queue: IndexSet<MixWithID> = IndexSet::with_capacity(giver_turfs.len());
@@ -613,7 +613,7 @@ fn process_planet_turfs(
 	average_moles: f32,
 	max_x: i32,
 	max_y: i32,
-	info: &mut BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &mut HashMap<TurfID, Cell<MonstermosInfo>>,
 	mut queue_cycle_slow: i32,
 ) -> DMResult {
 	let (_, sample_turf) = planet_turfs[0];
@@ -689,7 +689,7 @@ pub(crate) fn equalize(
 	max_y: i32,
 	high_pressure_turfs: BTreeSet<TurfID>,
 ) -> usize {
-	let mut info: BTreeMap<TurfID, Cell<MonstermosInfo>> = BTreeMap::new();
+	let mut info: HashMap<TurfID, Cell<MonstermosInfo>> = HashMap::new();
 	let mut turfs_processed = 0;
 	let mut queue_cycle_slow = 1;
 	let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
@@ -784,12 +784,12 @@ pub(crate) fn equalize(
 			let fake_cloned = info
 				.iter()
 				.map(|(&k, v)| (k, v.get()))
-				.collect::<BTreeMap<TurfID, MonstermosInfo>>();
+				.collect::<HashMap<TurfID, MonstermosInfo>>();
 			let _ = sender.send(Box::new(move || {
 				let mut cloned = fake_cloned
 					.iter()
 					.map(|(&k, &v)| (k, Cell::new(v)))
-					.collect::<BTreeMap<TurfID, Cell<MonstermosInfo>>>();
+					.collect::<HashMap<TurfID, Cell<MonstermosInfo>>>();
 				process_planet_turfs(
 					&planet_turfs,
 					average_moles,

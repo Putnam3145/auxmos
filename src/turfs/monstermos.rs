@@ -742,7 +742,7 @@ pub(crate) fn equalize(
 				let (x, _) = idx;
 				let (y, _) = idy;
 				float_ord::FloatOrd(info.get(x).unwrap().get().mole_delta)
-					.cmp(&float_ord::FloatOrd(info.get(y).unwrap().get().mole_delta))
+					.cmp(&float_ord::FloatOrd(info.get(y).unwrap().get().mole_delta)).reverse()
 			});
 			for &(i, m) in &turfs {
 				monstermos_fast_process(i, m, max_x, max_y, &mut info);

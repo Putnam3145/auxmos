@@ -444,3 +444,17 @@ fn _specific_entropy_gas_hook(gas: Value) {
 		))
 	})
 }
+
+#[hook("/proc/radiate_heat")]
+fn _radiate_heat(temperature_v: Value, area_v: Value, heat_cap_v: Value, env_temperature_v: Value) {
+	let temperature = temperature_v.as_number()? as f64;
+	let area = area_v.as_number()? as f64;
+	let heat_cap = heat_cap_v.as_number()? as f64;
+	let env_temperature = env_temperature_v.as_number().unwrap_or(TCMB) as f64;
+	let initial_energy = temperature * heat_cap;
+	let total_radiation = (STEFAN_BOLTZMANN_CONSTANT * env_temperature.powi(4) * area)
+		- (STEFAN_BOLTZMANN_CONSTANT * temperature.powi(4) * area);
+	Ok(Value::from(
+		((initial_energy + total_radiation) / heat_cap) as f32,
+	))
+}

@@ -339,7 +339,6 @@ fn flood_fill_equalize_turfs(
 		if let Some((cur_idx, cur_turf)) = border_turfs.shift_remove_index(0 as usize) {
 			if turfs.len() < equalize_turf_limit {
 				if cur_turf.planetary_atmos.is_some() {
-					turfs.insert((cur_idx, cur_turf));
 					planet_turfs.insert((cur_idx, cur_turf));
 					continue;
 				}

@@ -85,24 +85,10 @@ fn _process_turf_hook() {
 			.unwrap_or(1.0) as i32;
 		let equalize_turf_limit = src
 			.get_number(byond_string!("equalize_turf_limit"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})? as usize;
+			.unwrap_or(100.0) as usize;
 		let equalize_hard_turf_limit = src
 			.get_number(byond_string!("equalize_hard_turf_limit"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})? as usize;
+			.unwrap_or(2000.0) as usize;
 		let equalize_enabled = cfg!(feature = "equalization")
 			&& src
 				.get_number(byond_string!("equalize_enabled"))
@@ -116,14 +102,7 @@ fn _process_turf_hook() {
 				})? != 0.0;
 		let group_pressure_goal = src
 			.get_number(byond_string!("excited_group_pressure_goal"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?;
+			.unwrap_or(0.5);
 		let max_x = auxtools::Value::world()
 			.get_number(byond_string!("maxx"))
 			.map_err(|_| {
@@ -144,6 +123,9 @@ fn _process_turf_hook() {
 					std::column!()
 				)
 			})? as i32;
+		let planet_enabled: bool = src
+			.get_number(byond_string!("planet_equalize_enabled"))
+			.unwrap_or(1.0) != 0.0;
 		rayon::spawn(move || {
 			PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
 			let sender = byond_callback_sender();
@@ -230,6 +212,7 @@ fn _process_turf_hook() {
 							max_x,
 							max_y,
 							high_pressure_turfs,
+							planet_enabled
 						)
 					}
 					#[cfg(not(feature = "equalization"))]

@@ -195,9 +195,7 @@ fn explosively_depressurize(
 				continue;
 			}
 			for (_, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
-				let adj_m = {
-					*turf_gases().get(&loc).unwrap()
-				};
+				let adj_m = { *turf_gases().get(&loc).unwrap() };
 				if turfs.insert((loc, adj_m)) {
 					unsafe { Value::turf_by_id_unchecked(i) }.call(
 						"consider_firelocks",
@@ -223,9 +221,7 @@ fn explosively_depressurize(
 			continue;
 		}
 		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
-			let adj_m = {
-				*turf_gases().get(&loc).unwrap()
-			};
+			let adj_m = { *turf_gases().get(&loc).unwrap() };
 			let adj_orig = info.entry(loc).or_default();
 			let mut adj_info = adj_orig.get();
 			if !adj_m.is_immutable() {
@@ -269,9 +265,7 @@ fn explosively_depressurize(
 			hpd.append(&unsafe { Value::turf_by_id_unchecked(*i) });
 		}
 		let loc = adjacent_tile_id(cur_info.curr_transfer_dir as u8, *i, max_x, max_y);
-		let adj_m = {
-			*turf_gases().get(&loc).unwrap()
-		};
+		let adj_m = { *turf_gases().get(&loc).unwrap() };
 		let sum = adj_m.total_moles();
 		cur_info.curr_transfer_amount += sum;
 		cur_orig.set(cur_info);
@@ -694,6 +688,7 @@ pub(crate) fn equalize(
 	max_x: i32,
 	max_y: i32,
 	high_pressure_turfs: BTreeSet<TurfID>,
+	do_planet_atmos: bool,
 ) -> usize {
 	let mut info: BTreeMap<TurfID, Cell<MonstermosInfo>> = BTreeMap::new();
 	let mut turfs_processed = 0;
@@ -781,7 +776,12 @@ pub(crate) fn equalize(
 				&mut queue_cycle_slow,
 			);
 		}
-		if !planet_turfs.is_empty() {
+		if planet_turfs.is_empty() {
+			turfs_processed += turfs.len();
+			for (i, turf) in turfs.iter() {
+				finalize_eq(*i, turf, &info, max_x, max_y);
+			}
+		} else if do_planet_atmos {
 			turfs_processed += turfs.len() + planet_turfs.len();
 			let sender = byond_callback_sender();
 			let fake_cloned = info
@@ -806,11 +806,6 @@ pub(crate) fn equalize(
 				}
 				Ok(Value::null())
 			}));
-		} else {
-			turfs_processed += turfs.len();
-			for (i, turf) in turfs.iter() {
-				finalize_eq(*i, turf, &info, max_x, max_y);
-			}
 		}
 	}
 	turfs_processed

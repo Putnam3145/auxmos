@@ -1,6 +1,6 @@
 use super::*;
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{HashMap, BTreeSet};
 
 use indexmap::IndexSet;
 
@@ -50,7 +50,7 @@ mod tests {
 fn finalize_eq(
 	i: TurfID,
 	turf: &TurfMixture,
-	info: &BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &HashMap<TurfID, Cell<MonstermosInfo>>,
 	max_x: i32,
 	max_y: i32,
 ) {
@@ -140,7 +140,7 @@ fn finalize_eq_neighbors(
 	i: TurfID,
 	turf: &TurfMixture,
 	transfer_dirs: [f32; 7],
-	info: &BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &HashMap<TurfID, Cell<MonstermosInfo>>,
 	max_x: i32,
 	max_y: i32,
 ) {
@@ -158,7 +158,7 @@ fn finalize_eq_neighbors(
 fn explosively_depressurize(
 	turf_idx: TurfID,
 	turf: TurfMixture,
-	mut info: BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	mut info: HashMap<TurfID, Cell<MonstermosInfo>>,
 	equalize_hard_turf_limit: usize,
 	max_x: i32,
 	max_y: i32,
@@ -320,73 +320,70 @@ fn flood_fill_equalize_turfs(
 	max_x: i32,
 	max_y: i32,
 	found_turfs: &mut BTreeSet<TurfID>,
-	info: &mut BTreeMap<TurfID, Cell<MonstermosInfo>>,
-) -> Option<(Vec<MixWithID>, Vec<MixWithID>, f64)> {
-	let mut turfs: Vec<MixWithID> = Vec::with_capacity(equalize_hard_turf_limit);
-	let mut border_turfs: VecDeque<MixWithID> = VecDeque::with_capacity(equalize_turf_limit);
-	let mut planet_turfs: Vec<MixWithID> = Vec::new();
+	info: &mut HashMap<TurfID, Cell<MonstermosInfo>>,
+) -> Option<(IndexSet<MixWithID>, IndexSet<MixWithID>, f64)> {
+	let mut turfs: IndexSet<MixWithID> = IndexSet::with_capacity(equalize_hard_turf_limit);
+	let mut border_turfs: IndexSet<MixWithID> = IndexSet::with_capacity(equalize_turf_limit);
+	let mut planet_turfs: IndexSet<MixWithID> = IndexSet::new();
 	#[cfg(feature = "explosive_decompression")]
 	let sender = byond_callback_sender();
 	let mut total_moles = 0.0_f64;
-	border_turfs.push_back((i, m));
+	border_turfs.insert((i, m));
 	found_turfs.insert(i);
 	#[allow(unused_mut)]
 	let mut space_this_time = false;
 	loop {
-		if turfs.len() > equalize_hard_turf_limit {
+		if turfs.len() >= equalize_hard_turf_limit {
 			break;
 		}
-		if let Some((cur_idx, cur_turf)) = border_turfs.pop_front() {
+		if let Some((cur_idx, cur_turf)) = border_turfs.shift_remove_index(0 as usize) {
 			if turfs.len() < equalize_turf_limit {
 				if cur_turf.planetary_atmos.is_some() {
-					turfs.push((cur_idx, cur_turf));
-					planet_turfs.push((cur_idx, cur_turf));
+					planet_turfs.insert((cur_idx, cur_turf));
 					continue;
 				}
 				total_moles += cur_turf.total_moles() as f64;
 			}
 			for (_, loc) in adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y) {
-				if found_turfs.contains(&loc) {
-					continue;
-				}
-				found_turfs.insert(loc);
-				if let Some(adj_turf) = turf_gases().get(&loc) {
-					let adj_orig = info.entry(loc).or_default();
-					#[cfg(feature = "explosive_decompression")]
-					{
-						adj_orig.take();
-						border_turfs.push_back((loc, *adj_turf.value()));
-						if adj_turf.value().is_immutable() {
-							// Uh oh! looks like someone opened an airlock to space! TIME TO SUCK ALL THE AIR OUT!!!
-							// NOT ONE OF YOU IS GONNA SURVIVE THIS
-							// (I just made explosions less laggy, you're welcome)
-							turfs.push((loc, *adj_turf.value()));
-							let fake_cloned = info
-								.iter()
-								.map(|(&k, v)| (k, v.get()))
-								.collect::<BTreeMap<TurfID, MonstermosInfo>>();
-							let _ = sender.send(Box::new(move || {
-								let cloned = fake_cloned
-									.iter()
-									.map(|(&k, &v)| (k, Cell::new(v)))
-									.collect::<BTreeMap<TurfID, Cell<MonstermosInfo>>>();
-								explosively_depressurize(
-									i,
-									m,
-									cloned,
-									equalize_hard_turf_limit,
-									max_x,
-									max_y,
-								)
-							}));
-							space_this_time = true;
-						}
-					}
-					#[cfg(not(feature = "explosive_decompression"))]
-					{
-						if adj_turf.enabled() {
+				if found_turfs.insert(loc) {
+					if let Some(adj_turf) = turf_gases().get(&loc) {
+						let adj_orig = info.entry(loc).or_default();
+						#[cfg(feature = "explosive_decompression")]
+						{
 							adj_orig.take();
-							border_turfs.push_back((loc, *adj_turf.value()));
+							border_turfs.insert((loc, *adj_turf.value()));
+							if adj_turf.value().is_immutable() {
+								// Uh oh! looks like someone opened an airlock to space! TIME TO SUCK ALL THE AIR OUT!!!
+								// NOT ONE OF YOU IS GONNA SURVIVE THIS
+								// (I just made explosions less laggy, you're welcome)
+								turfs.insert((loc, *adj_turf.value()));
+								let fake_cloned = info
+									.iter()
+									.map(|(&k, v)| (k, v.get()))
+									.collect::<HashMap<TurfID, MonstermosInfo>>();
+								let _ = sender.send(Box::new(move || {
+									let cloned = fake_cloned
+										.iter()
+										.map(|(&k, &v)| (k, Cell::new(v)))
+										.collect::<HashMap<TurfID, Cell<MonstermosInfo>>>();
+									explosively_depressurize(
+										i,
+										m,
+										cloned,
+										equalize_hard_turf_limit,
+										max_x,
+										max_y,
+									)
+								}));
+								space_this_time = true;
+							}
+						}
+						#[cfg(not(feature = "explosive_decompression"))]
+						{
+							if adj_turf.enabled() {
+								adj_orig.take();
+								border_turfs.insert((loc, *adj_turf.value()));
+							}
 						}
 					}
 				}
@@ -394,7 +391,7 @@ fn flood_fill_equalize_turfs(
 					break;
 				}
 			}
-			turfs.push((cur_idx, cur_turf));
+			turfs.insert((cur_idx, cur_turf));
 		} else {
 			break;
 		}
@@ -407,7 +404,7 @@ fn monstermos_fast_process(
 	m: TurfMixture,
 	max_x: i32,
 	max_y: i32,
-	info: &mut BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &mut HashMap<TurfID, Cell<MonstermosInfo>>,
 ) {
 	let cur_orig = info.get(&i).unwrap();
 	let mut cur_info = cur_orig.get();
@@ -446,10 +443,10 @@ fn give_to_takers(
 	taker_turfs: &Vec<MixWithID>,
 	max_x: i32,
 	max_y: i32,
-	info: &BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &HashMap<TurfID, Cell<MonstermosInfo>>,
 	queue_cycle_slow: &mut i32,
 ) {
-	let mut queue: Vec<MixWithID> = Vec::with_capacity(taker_turfs.len());
+	let mut queue: IndexSet<MixWithID> = IndexSet::with_capacity(taker_turfs.len());
 	for (i, m) in giver_turfs {
 		let giver_orig = info.get(i).unwrap();
 		let mut giver_info = giver_orig.get();
@@ -457,7 +454,7 @@ fn give_to_takers(
 		giver_info.curr_transfer_amount = 0.0;
 		*queue_cycle_slow += 1;
 		queue.clear();
-		queue.push((*i, *m));
+		queue.insert((*i, *m));
 		giver_info.last_slow_queue_cycle = *queue_cycle_slow;
 		giver_orig.set(giver_info);
 		let mut queue_idx = 0;
@@ -465,7 +462,7 @@ fn give_to_takers(
 			if giver_info.mole_delta <= 0.0 {
 				break;
 			}
-			let (idx, turf) = *queue.get(queue_idx).unwrap();
+			let (idx, turf) = queue[queue_idx];
 			for (j, loc) in adjacent_tile_ids(turf.adjacency, idx, max_x, max_y) {
 				if giver_info.mole_delta <= 0.0 {
 					break;
@@ -474,26 +471,27 @@ fn give_to_takers(
 					if let Some(adj_mix) = turf_gases().get(&loc) {
 						let mut adj_info = adj_orig.get();
 						if adj_info.last_slow_queue_cycle != *queue_cycle_slow {
-							queue.push((loc, *adj_mix.value()));
-							adj_info.last_slow_queue_cycle = *queue_cycle_slow;
-							adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
-							adj_info.curr_transfer_amount = 0.0;
-							if adj_info.mole_delta < 0.0 {
-								// this turf needs gas. Let's give it to 'em.
-								if -adj_info.mole_delta > giver_info.mole_delta {
-									// we don't have enough gas
-									adj_info.curr_transfer_amount -= giver_info.mole_delta;
-									adj_info.mole_delta += giver_info.mole_delta;
-									giver_info.mole_delta = 0.0;
-								} else {
-									// we have enough gas.
-									adj_info.curr_transfer_amount += adj_info.mole_delta;
-									giver_info.mole_delta += adj_info.mole_delta;
-									adj_info.mole_delta = 0.0;
+							if queue.insert((loc, *adj_mix.value())) {
+								adj_info.last_slow_queue_cycle = *queue_cycle_slow;
+								adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
+								adj_info.curr_transfer_amount = 0.0;
+								if adj_info.mole_delta < 0.0 {
+									// this turf needs gas. Let's give it to 'em.
+									if -adj_info.mole_delta > giver_info.mole_delta {
+										// we don't have enough gas
+										adj_info.curr_transfer_amount -= giver_info.mole_delta;
+										adj_info.mole_delta += giver_info.mole_delta;
+										giver_info.mole_delta = 0.0;
+									} else {
+										// we have enough gas.
+										adj_info.curr_transfer_amount += adj_info.mole_delta;
+										giver_info.mole_delta += adj_info.mole_delta;
+										adj_info.mole_delta = 0.0;
+									}
 								}
+								giver_orig.set(giver_info);
+								adj_orig.set(adj_info);
 							}
-							giver_orig.set(giver_info);
-							adj_orig.set(adj_info);
 						}
 					}
 				}
@@ -527,10 +525,10 @@ fn take_from_givers(
 	giver_turfs: &Vec<MixWithID>,
 	max_x: i32,
 	max_y: i32,
-	info: &BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &HashMap<TurfID, Cell<MonstermosInfo>>,
 	queue_cycle_slow: &mut i32,
 ) {
-	let mut queue: Vec<MixWithID> = Vec::with_capacity(giver_turfs.len());
+	let mut queue: IndexSet<MixWithID> = IndexSet::with_capacity(giver_turfs.len());
 	for (i, m) in taker_turfs {
 		let taker_orig = info.get(i).unwrap();
 		let mut taker_info = taker_orig.get();
@@ -538,7 +536,7 @@ fn take_from_givers(
 		taker_info.curr_transfer_amount = 0.0;
 		*queue_cycle_slow += 1;
 		queue.clear();
-		queue.push((*i, *m));
+		queue.insert((*i, *m));
 		taker_info.last_slow_queue_cycle = *queue_cycle_slow;
 		taker_orig.set(taker_info);
 		let mut queue_idx = 0;
@@ -546,7 +544,7 @@ fn take_from_givers(
 			if taker_info.mole_delta >= 0.0 {
 				break;
 			}
-			let (idx, turf) = *queue.get(queue_idx).unwrap();
+			let (idx, turf) = queue[queue_idx];
 			for (j, loc) in adjacent_tile_ids(turf.adjacency, idx, max_x, max_y) {
 				if taker_info.mole_delta >= 0.0 {
 					break;
@@ -555,26 +553,27 @@ fn take_from_givers(
 					if let Some(adj_mix) = turf_gases().get(&loc) {
 						let mut adj_info = adj_orig.get();
 						if adj_info.last_slow_queue_cycle != *queue_cycle_slow {
-							queue.push((loc, *adj_mix));
-							adj_info.last_slow_queue_cycle = *queue_cycle_slow;
-							adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
-							adj_info.curr_transfer_amount = 0.0;
-							if adj_info.mole_delta > 0.0 {
-								// this turf has gas we can succ. Time to succ.
-								if adj_info.mole_delta > -taker_info.mole_delta {
-									// they have enough gase
-									adj_info.curr_transfer_amount -= taker_info.mole_delta;
-									adj_info.mole_delta += taker_info.mole_delta;
-									taker_info.mole_delta = 0.0;
-								} else {
-									// they don't have neough gas
-									adj_info.curr_transfer_amount += adj_info.mole_delta;
-									taker_info.mole_delta += adj_info.mole_delta;
-									adj_info.mole_delta = 0.0;
+							if queue.insert((loc, *adj_mix)) {
+								adj_info.last_slow_queue_cycle = *queue_cycle_slow;
+								adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
+								adj_info.curr_transfer_amount = 0.0;
+								if adj_info.mole_delta > 0.0 {
+									// this turf has gas we can succ. Time to succ.
+									if adj_info.mole_delta > -taker_info.mole_delta {
+										// they have enough gase
+										adj_info.curr_transfer_amount -= taker_info.mole_delta;
+										adj_info.mole_delta += taker_info.mole_delta;
+										taker_info.mole_delta = 0.0;
+									} else {
+										// they don't have neough gas
+										adj_info.curr_transfer_amount += adj_info.mole_delta;
+										taker_info.mole_delta += adj_info.mole_delta;
+										adj_info.mole_delta = 0.0;
+									}
 								}
+								adj_orig.set(adj_info);
+								taker_orig.set(taker_info);
 							}
-							adj_orig.set(adj_info);
-							taker_orig.set(taker_info);
 						}
 					}
 				}
@@ -609,11 +608,11 @@ fn take_from_givers(
 }
 
 fn process_planet_turfs(
-	planet_turfs: &Vec<MixWithID>,
+	planet_turfs: &IndexSet<MixWithID>,
 	average_moles: f32,
 	max_x: i32,
 	max_y: i32,
-	info: &mut BTreeMap<TurfID, Cell<MonstermosInfo>>,
+	info: &mut HashMap<TurfID, Cell<MonstermosInfo>>,
 	mut queue_cycle_slow: i32,
 ) -> DMResult {
 	let (_, sample_turf) = planet_turfs[0];
@@ -624,9 +623,9 @@ fn process_planet_turfs(
 		.total_moles();
 	let target_delta = planet_sum - average_moles;
 	queue_cycle_slow += 1;
-	let mut progression_order: Vec<MixWithID> = Vec::with_capacity(planet_turfs.len());
+	let mut progression_order: IndexSet<MixWithID> = IndexSet::with_capacity(planet_turfs.len());
 	for (i, m) in planet_turfs.iter() {
-		progression_order.push((*i, *m));
+		progression_order.insert((*i, *m));
 		let mut cur_info = info.entry(*i).or_default().get_mut();
 		cur_info.curr_transfer_dir = 6;
 		cur_info.last_slow_queue_cycle = queue_cycle_slow;
@@ -635,29 +634,23 @@ fn process_planet_turfs(
 	let mut queue_idx = 0;
 	while queue_idx < progression_order.len() {
 		let (i, m) = progression_order[queue_idx];
-		for j in 0..6 {
-			let bit = 1 << j;
-			if m.adjacency & bit == bit {
-				let loc = adjacent_tile_id(j, i, max_x, max_y);
-				if let Some(adj_orig) = info.get(&loc) {
-					let mut adj_info = adj_orig.get();
-					if let Some(adj) = turf_gases().get(&loc) {
-						if adj_info.last_slow_queue_cycle == queue_cycle_slow
+		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
+			if let Some(adj_orig) = info.get(&loc) {
+				let mut adj_info = adj_orig.get();
+				if let Some(adj) = turf_gases().get(&loc) {
+					if adj_info.last_slow_queue_cycle == queue_cycle_slow
 							|| adj.value().planetary_atmos.is_some()
 						{
 							continue;
 						}
+					if progression_order.insert((*adj.key(), *adj.value())) {
 						unsafe { Value::turf_by_id_unchecked(i as u32) }.call(
 							"consider_firelocks",
 							&[&unsafe { Value::turf_by_id_unchecked(loc as u32) }],
 						)?;
-						let (_, new_m) = progression_order[queue_idx];
-						if new_m.adjacency & bit == bit {
-							adj_info.last_slow_queue_cycle = queue_cycle_slow;
-							adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
-							progression_order.push((*adj.key(), *adj.value()));
-							adj_orig.set(adj_info);
-						}
+						adj_info.last_slow_queue_cycle = queue_cycle_slow;
+						adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
+						adj_orig.set(adj_info);
 					}
 				}
 			}
@@ -695,7 +688,7 @@ pub(crate) fn equalize(
 	max_y: i32,
 	high_pressure_turfs: BTreeSet<TurfID>,
 ) -> usize {
-	let mut info: BTreeMap<TurfID, Cell<MonstermosInfo>> = BTreeMap::new();
+	let mut info: HashMap<TurfID, Cell<MonstermosInfo>> = HashMap::new();
 	let mut turfs_processed = 0;
 	let mut queue_cycle_slow = 1;
 	let mut found_turfs: BTreeSet<TurfID> = BTreeSet::new();
@@ -744,8 +737,11 @@ pub(crate) fn equalize(
 			});
 		let log_n = ((turfs.len() as f32).log2().floor()) as usize;
 		if giver_turfs.len() > log_n && taker_turfs.len() > log_n {
-			turfs.sort_by_cached_key(|(idx, _)| {
-				float_ord::FloatOrd(-info.get(idx).unwrap().get().mole_delta)
+			turfs.sort_by(|idx, idy| {
+				let (x, _) = idx;
+				let (y, _) = idy;
+				float_ord::FloatOrd(info.get(x).unwrap().get().mole_delta)
+					.cmp(&float_ord::FloatOrd(info.get(y).unwrap().get().mole_delta)).reverse()
 			});
 			for &(i, m) in &turfs {
 				monstermos_fast_process(i, m, max_x, max_y, &mut info);
@@ -787,12 +783,12 @@ pub(crate) fn equalize(
 			let fake_cloned = info
 				.iter()
 				.map(|(&k, v)| (k, v.get()))
-				.collect::<BTreeMap<TurfID, MonstermosInfo>>();
+				.collect::<HashMap<TurfID, MonstermosInfo>>();
 			let _ = sender.send(Box::new(move || {
 				let mut cloned = fake_cloned
 					.iter()
 					.map(|(&k, &v)| (k, Cell::new(v)))
-					.collect::<BTreeMap<TurfID, Cell<MonstermosInfo>>>();
+					.collect::<HashMap<TurfID, Cell<MonstermosInfo>>>();
 				process_planet_turfs(
 					&planet_turfs,
 					average_moles,

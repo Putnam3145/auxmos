@@ -211,6 +211,9 @@ fn explosively_depressurize(
 			return Ok(Value::null()); // planet atmos > space
 		}
 	}
+	if progression_order.is_empty() {
+		return Ok(Value::null()); // progression_order can be empty when maps and things load in space, it just is
+	}
 	for (i, _) in progression_order.iter() {
 		let cur_info = info.entry(*i).or_default().get_mut();
 		cur_info.curr_transfer_dir = 6;

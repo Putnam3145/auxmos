@@ -236,7 +236,6 @@ fn explosively_depressurize(
 						unsafe { Value::turf_by_id_unchecked(loc) }
 							.set(byond_string!("pressure_specific_target"), &cur_target_turf)?;
 						adj_orig.set(adj_info);
-						total_moles += adj_m.total_moles() as f64;
 					}
 				}
 			}

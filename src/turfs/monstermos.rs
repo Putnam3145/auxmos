@@ -199,7 +199,7 @@ fn explosively_depressurize(
 				if let Some(adj_m) = turf_gases().get(&loc) {
 					insert_success = turfs.insert((loc, *adj_m))
 				};
-				if insert_success == true {
+				if insert_success {
 					unsafe { Value::turf_by_id_unchecked(i) }.call(
 						"consider_firelocks",
 						&[&unsafe { Value::turf_by_id_unchecked(loc) }],

@@ -81,9 +81,15 @@ fn _plasma_fire(byond_air: &Value, holder: &Value) {
 			})?;
 		cached_results.set(byond_string!("fire"), Value::from(fire_amount))?;
 		if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
-			Proc::find(byond_string!("/proc/fire_expose"))
-				.unwrap()
-				.call(&[holder, byond_air, &Value::from(temperature)])?;
+			if let Some(fire_expose) = Proc::find(byond_string!("/proc/fire_expose")) {
+				fire_expose.call(&[holder, byond_air, &Value::from(temperature)])?;
+			} else {
+				Proc::find(byond_string!("/proc/stack_trace"))
+					.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
+					.call(&[&Value::from_string(
+						"fire_expose not found! Auxmos hooked fires do not work without it!",
+					)?])?;
+			}
 		}
 		Ok(Value::from(1.0))
 	} else {
@@ -141,14 +147,26 @@ fn tritfire(byond_air: &Value, holder: &Value) {
 		Ok((burned_fuel, energy_released, new_temp))
 	})?;
 	if burned_fuel > TRITIUM_MINIMUM_RADIATION_FACTOR {
-		Proc::find(byond_string!("/proc/radiation_burn"))
-			.unwrap()
-			.call(&[holder, &Value::from(energy_released)])?;
+		if let Some(radiation_burn) = Proc::find(byond_string!("/proc/radiation_burn")) {
+			radiation_burn.call(&[holder, &Value::from(energy_released)])?;
+		} else {
+			let _ = Proc::find(byond_string!("/proc/stack_trace"))
+			.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
+			.call(&[&Value::from_string(
+				"radiation_burn not found! Auxmos hooked trit fires won't irradiated without it!"
+			)?]);
+		}
 	}
 	if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
-		Proc::find(byond_string!("/proc/fire_expose"))
-			.unwrap()
-			.call(&[holder, byond_air, &Value::from(temperature)])?;
+		if let Some(fire_expose) = Proc::find(byond_string!("/proc/fire_expose")) {
+			fire_expose.call(&[holder, byond_air, &Value::from(temperature)])?;
+		} else {
+			Proc::find(byond_string!("/proc/stack_trace"))
+				.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
+				.call(&[&Value::from_string(
+					"fire_expose not found! Auxmos hooked fires do not work without it!",
+				)?])?;
+		}
 	}
 	Ok(Value::from(1.0))
 }
@@ -242,13 +260,19 @@ fn fusion(byond_air: Value, holder: Value) {
 			Ok(())
 		})?;
 		if reaction_energy != 0.0 {
-			Proc::find(byond_string!("/proc/fusion_ball"))
-				.unwrap()
-				.call(&[
+			if let Some(fusion_ball) = Proc::find(byond_string!("/proc/fusion_ball")) {
+				fusion_ball.call(&[
 					holder,
 					&Value::from(reaction_energy),
 					&Value::from(instability),
 				])?;
+			} else {
+				Proc::find(byond_string!("/proc/stack_trace"))
+					.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
+					.call(&[&Value::from_string(
+						"fusion_ball not found! Auxmos hooked fusion does not work without it!",
+					)?])?;
+			}
 			Ok(Value::from(1.0))
 		} else {
 			Ok(Value::from(0.0))
@@ -341,9 +365,15 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 				})?;
 			cached_results.set(byond_string!("fire"), Value::from(fire_amount))?;
 			if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
-				Proc::find(byond_string!("/proc/fire_expose"))
-					.unwrap()
-					.call(&[holder, byond_air, &Value::from(temperature)])?;
+				if let Some(fire_expose) = Proc::find(byond_string!("/proc/fire_expose")) {
+					fire_expose.call(&[holder, byond_air, &Value::from(temperature)])?;
+				} else {
+					Proc::find(byond_string!("/proc/stack_trace"))
+						.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
+						.call(&[&Value::from_string(
+							"fire_expose not found! Auxmos hooked fires do not work without it!",
+						)?])?;
+				}
 			}
 			Ok(Value::from(if fire_amount > 0.0 { 1.0 } else { 0.0 }))
 		} else {

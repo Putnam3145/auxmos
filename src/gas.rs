@@ -80,7 +80,7 @@ impl GasArena {
 	{
 		f(GAS_MIXTURES.read().as_ref().unwrap())
 	}
-	fn with_gas_mixture<T, F>(id: usize, f: F) -> Result<T, Runtime>
+	pub fn with_gas_mixture<T, F>(id: usize, f: F) -> Result<T, Runtime>
 	where
 		F: FnOnce(&Mixture) -> Result<T, Runtime>,
 	{
@@ -92,7 +92,7 @@ impl GasArena {
 			.read();
 		f(&mix)
 	}
-	fn with_gas_mixture_mut<T, F>(id: usize, f: F) -> Result<T, Runtime>
+	pub fn with_gas_mixture_mut<T, F>(id: usize, f: F) -> Result<T, Runtime>
 	where
 		F: FnOnce(&mut Mixture) -> Result<T, Runtime>,
 	{
@@ -104,7 +104,7 @@ impl GasArena {
 			.write();
 		f(&mut mix)
 	}
-	fn with_gas_mixtures<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
+	pub fn with_gas_mixtures<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
 		F: FnOnce(&Mixture, &Mixture) -> Result<T, Runtime>,
 	{
@@ -120,7 +120,7 @@ impl GasArena {
 			.read();
 		f(&src_gas, &arg_gas)
 	}
-	fn with_gas_mixtures_mut<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
+	pub fn with_gas_mixtures_mut<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
 		F: FnOnce(&mut Mixture, &mut Mixture) -> Result<T, Runtime>,
 	{

@@ -178,12 +178,16 @@ impl GasType {
 			fire_products: if let Ok(products) = gas.get_list(byond_string!("fire_products")) {
 				Some(
 					(1..=products.len())
-						.map(|i| {
+						.filter_map(|i| {
 							let s = products.get(i).unwrap();
-							(
-								GasRef::Deferred(s.as_string().unwrap()),
-								products.get(s).unwrap().as_number().unwrap(),
-							)
+							s.as_string()
+								.and_then(|s_str| {
+									products
+										.get(s)
+										.and_then(|v| v.as_number())
+										.map(|amount| (GasRef::Deferred(s_str), amount))
+								})
+								.ok()
 						})
 						.collect(),
 				)
@@ -226,7 +230,7 @@ fn _destroy_gas_info_structs() {
 
 #[hook("/proc/_auxtools_register_gas")]
 fn _hook_register_gas(gas: Value) {
-	let gas_id = gas.get_string(byond_string!("id")).unwrap();
+	let gas_id = gas.get_string(byond_string!("id"))?;
 	let gas_cache = GasType::new(gas, TOTAL_NUM_GASES.load(Ordering::Relaxed))?;
 	unsafe { GAS_INFO_BY_STRING.as_ref() }
 		.unwrap()

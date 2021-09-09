@@ -458,13 +458,13 @@ fn _equalize_all_hook() {
 			)
 		})?;
 	let gas_list: BTreeSet<usize> = (1..=value_list.len())
-		.map(|i| {
+		.filter_map(|i| {
 			value_list
 				.get(i)
-				.unwrap()
+				.unwrap_or_else(|_| Value::null())
 				.get_number(byond_string!("_extools_pointer_gasmixture"))
-				.unwrap()
-				.to_bits() as usize
+				.ok()
+				.map(|f| f.to_bits() as usize)
 		})
 		.collect(); // collect because get_number is way slower than the one-time allocation
 	GasArena::with_all_mixtures(move |all_mixtures| {

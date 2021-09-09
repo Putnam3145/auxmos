@@ -98,9 +98,15 @@ impl Reaction {
 	///
 	/// If given anything but a `/datum/gas_reaction`, this will panic.
 	pub fn from_byond_reaction(reaction: &Value) -> Self {
-		let priority = reaction.get_number(byond_string!("priority")).unwrap();
-		let string_id_hash =
-			fxhash::hash64(reaction.get_string(byond_string!("id")).unwrap().as_bytes());
+		let priority = reaction
+			.get_number(byond_string!("priority"))
+			.unwrap_or_default();
+		let string_id_hash = fxhash::hash64(
+			reaction
+				.get_string(byond_string!("id"))
+				.unwrap_or_else(|_| "invalid".to_string())
+				.as_bytes(),
+		);
 		let id = ReactionIdentifier {
 			string_id_hash,
 			priority,
@@ -109,12 +115,14 @@ impl Reaction {
 			if let Ok(min_reqs) = reaction.get_list(byond_string!("min_requirements")) {
 				let mut min_gas_reqs: Vec<(GasIDX, f32)> = Vec::new();
 				for i in 0..total_num_gases() {
-					if let Ok(gas_req) =
-						min_reqs.get(Value::from_string(&*gas_idx_to_id(i).unwrap()).unwrap())
+					if let Ok(req_amount) = min_reqs
+						.get(
+							Value::from_string(&*gas_idx_to_id(i).unwrap())
+								.unwrap_or_else(|_| Value::null()),
+						)
+						.and_then(|v| v.as_number())
 					{
-						if let Ok(req_amount) = gas_req.as_number() {
-							min_gas_reqs.push((i, req_amount));
-						}
+						min_gas_reqs.push((i, req_amount));
 					}
 				}
 				let min_temp_req = min_reqs

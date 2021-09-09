@@ -44,12 +44,13 @@ fn explosively_depressurize(
 					"consider_firelocks",
 					&[&unsafe { Value::turf_by_id_unchecked(loc) }],
 				)?;
-				let new_m = turf_gases().get(&i).unwrap();
-				let bit = 1 << j;
-				if new_m.adjacency & bit == bit {
-					if let Some(adj) = turf_gases().get(&loc) {
-						let (&adj_i, &adj_m) = (adj.key(), adj.value());
-						turfs.push((adj_i, adj_m));
+				if let Some(new_m) = turf_gases().get(&i) {
+					let bit = 1 << j;
+					if new_m.adjacency & bit == bit {
+						if let Some(adj) = turf_gases().get(&loc) {
+							let (&adj_i, &adj_m) = (adj.key(), adj.value());
+							turfs.push((adj_i, adj_m));
+						}
 					}
 				}
 			}
@@ -93,7 +94,7 @@ fn explosively_depressurize(
 			)
 		})?;
 	for (i, m) in progression_order.iter().rev() {
-		let cur_orig = adjacency_info.get(i).unwrap();
+		let cur_orig = adjacency_info.get(i).unwrap_or_default();
 		let mut cur_info = cur_orig.get();
 		if cur_info.0 == 6 {
 			continue;
@@ -103,7 +104,7 @@ fn explosively_depressurize(
 		let loc = adjacent_tile_id(cur_info.0, *i, max_x, max_y);
 		if let Some(adj) = turf_gases().get(&loc) {
 			let (adj_i, adj_m) = (*adj.key(), adj.value());
-			let adj_orig = adjacency_info.get(&adj_i).unwrap();
+			let adj_orig = adjacency_info.get(&adj_i).unwrap_or_default();
 			let mut adj_info = adj_orig.get();
 			let sum = adj_m.total_moles();
 			cur_info.1 += sum;

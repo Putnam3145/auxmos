@@ -370,13 +370,15 @@ fn _hook_adjacent_turfs() {
 			.or_insert_with(|| ThermalInfo {
 				temperature: src
 					.get_number(byond_string!("initial_temperature"))
-					.unwrap(),
+					.unwrap_or(TCMB),
 				thermal_conductivity: src
 					.get_number(byond_string!("thermal_conductivity"))
-					.unwrap(),
-				heat_capacity: src.get_number(byond_string!("heat_capacity")).unwrap(),
+					.unwrap_or(0.0),
+				heat_capacity: src
+					.get_number(byond_string!("heat_capacity"))
+					.unwrap_or(0.0),
 				adjacency,
-				adjacent_to_space: args[0].as_number().unwrap() != 0.0,
+				adjacent_to_space: args[0].as_number().unwrap_or(0.0) != 0.0,
 			});
 	}
 	Ok(Value::null())
@@ -418,8 +420,10 @@ fn _hook_set_temperature() {
 			temperature: argument,
 			thermal_conductivity: src
 				.get_number(byond_string!("thermal_conductivity"))
-				.unwrap(),
-			heat_capacity: src.get_number(byond_string!("heat_capacity")).unwrap(),
+				.unwrap_or(0.0),
+			heat_capacity: src
+				.get_number(byond_string!("heat_capacity"))
+				.unwrap_or(0.0),
 			adjacency: 0,
 			adjacent_to_space: false,
 		});

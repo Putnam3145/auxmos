@@ -567,7 +567,7 @@ fn take_from_givers(
 					if let Some(adj_mix) = turf_gases().get(&loc) {
 						let mut adj_info = adj_orig.get();
 						if adj_info.last_slow_queue_cycle != *queue_cycle_slow {
-							if queue.insert((loc, *adj_mix)) {
+							if queue.insert((loc, *adj_mix.value())) {
 								adj_info.last_slow_queue_cycle = *queue_cycle_slow;
 								adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 								adj_info.curr_transfer_amount = 0.0;

@@ -492,7 +492,7 @@ impl Mixture {
 	/// A hashed representation of the visibility of a gas, so that it only needs to update vis when actually changed.
 	pub fn vis_hash_changed(&self, gas_visibility: &[Option<f32>]) -> bool {
 		use std::hash::Hasher;
-		let mut hasher: fxhash::FxHasher64 = fxhash::FxHasher64::default();
+		let mut hasher: ahash::AHasher = ahash::AHasher::default();
 		for (i, gas) in self.enumerate() {
 			if let Some(amt) = unsafe { gas_visibility.get_unchecked(i) }.filter(|&amt| gas >= amt)
 			{

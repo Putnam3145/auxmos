@@ -26,16 +26,16 @@ struct MonstermosInfo {
 }
 
 impl Default for MonstermosInfo {
-    fn default() -> MonstermosInfo {
-        MonstermosInfo {
-            transfer_dirs: [ 0_f32; 7 ],
+	fn default() -> MonstermosInfo {
+		MonstermosInfo {
+			transfer_dirs: [ 0_f32; 7 ],
 			mole_delta: 0_f32,
 			curr_transfer_amount: 0_f32,
 			curr_transfer_dir: 6,
 			last_slow_queue_cycle: 0,
 			fast_done: false,
-        }
-    }
+		}
+	}
 }
 
 const OPP_DIR_INDEX: [usize; 7] = [1, 0, 3, 2, 5, 4, 6];

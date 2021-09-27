@@ -15,7 +15,7 @@ type TransferInfo = [f32; 7];
 
 type MixWithID = (TurfID, TurfMixture);
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct MonstermosInfo {
 	transfer_dirs: TransferInfo,
 	mole_delta: f32,
@@ -23,6 +23,19 @@ struct MonstermosInfo {
 	curr_transfer_dir: usize,
 	last_slow_queue_cycle: i32,
 	fast_done: bool,
+}
+
+impl Default for MonstermosInfo {
+	fn default() -> MonstermosInfo {
+		MonstermosInfo {
+			transfer_dirs: [ 0_f32; 7 ],
+			mole_delta: 0_f32,
+			curr_transfer_amount: 0_f32,
+			curr_transfer_dir: 6,
+			last_slow_queue_cycle: 0,
+			fast_done: false,
+		}
+	}
 }
 
 const OPP_DIR_INDEX: [usize; 7] = [1, 0, 3, 2, 5, 4, 6];

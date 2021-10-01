@@ -406,7 +406,7 @@ fn flood_fill_equalize_turfs(
 						{
 							if adj_turf.enabled() {
 								adj_orig.take();
-								order_turfs.push_back((loc, *adj_turf.value()));
+								border_turfs.push_back((loc, *adj_turf.value()));
 							}
 						}
 					}

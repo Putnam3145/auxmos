@@ -28,7 +28,7 @@ struct MonstermosInfo {
 impl Default for MonstermosInfo {
 	fn default() -> MonstermosInfo {
 		MonstermosInfo {
-			transfer_dirs: [ 0_f32; 7 ],
+			transfer_dirs: [0_f32; 7],
 			mole_delta: 0_f32,
 			curr_transfer_amount: 0_f32,
 			curr_transfer_dir: 6,
@@ -174,10 +174,9 @@ fn explosively_depressurize(
 	max_x: i32,
 	max_y: i32,
 ) -> DMResult {
-	let mut turfs: IndexSet<MixWithID, RandomState>
-		= IndexSet::with_hasher(RandomState::default());
-	let mut progression_order: IndexSet<MixWithID, RandomState>
-		= IndexSet::with_hasher(RandomState::default());
+	let mut turfs: IndexSet<MixWithID, RandomState> = IndexSet::with_hasher(RandomState::default());
+	let mut progression_order: IndexSet<MixWithID, RandomState> =
+		IndexSet::with_hasher(RandomState::default());
 	turfs.insert((turf_idx, turf));
 	let cur_orig = info.entry(turf_idx).or_default();
 	let mut cur_info: MonstermosInfo = Default::default();
@@ -341,14 +340,14 @@ fn flood_fill_equalize_turfs(
 ) -> Option<(
 	IndexSet<MixWithID, RandomState>,
 	IndexSet<MixWithID, RandomState>,
-	f64
+	f64,
 )> {
-	let mut turfs: IndexSet<MixWithID, RandomState>
-		= IndexSet::with_capacity_and_hasher(equalize_hard_turf_limit, RandomState::default());
-	let mut border_turfs: std::collections::VecDeque<MixWithID>
-		= std::collections::VecDeque::with_capacity(equalize_hard_turf_limit);
-	let mut planet_turfs: IndexSet<MixWithID, RandomState>
-		= IndexSet::with_hasher(RandomState::default());
+	let mut turfs: IndexSet<MixWithID, RandomState> =
+		IndexSet::with_capacity_and_hasher(equalize_hard_turf_limit, RandomState::default());
+	let mut border_turfs: std::collections::VecDeque<MixWithID> =
+		std::collections::VecDeque::with_capacity(equalize_hard_turf_limit);
+	let mut planet_turfs: IndexSet<MixWithID, RandomState> =
+		IndexSet::with_hasher(RandomState::default());
 	#[cfg(feature = "explosive_decompression")]
 	let sender = byond_callback_sender();
 	let mut total_moles = 0.0_f64;
@@ -389,7 +388,8 @@ fn flood_fill_equalize_turfs(
 									let cloned = fake_cloned
 										.iter()
 										.map(|(&k, &v)| (k, Cell::new(v)))
-										.collect::<HashMap<TurfID, Cell<MonstermosInfo>, FxBuildHasher>>();
+										.collect::<HashMap<TurfID, Cell<MonstermosInfo>, FxBuildHasher>>(
+										);
 									explosively_depressurize(
 										i,
 										m,
@@ -693,10 +693,10 @@ fn process_planet_turfs(
 				)?;
 				if let Some(adj) = turf_gases().get(&loc) {
 					if adj_info.last_slow_queue_cycle == queue_cycle_slow
-							|| adj.value().planetary_atmos.is_some()
-						{
-							continue;
-						}
+						|| adj.value().planetary_atmos.is_some()
+					{
+						continue;
+					}
 					adj_info.last_slow_queue_cycle = queue_cycle_slow;
 					adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 					adj_orig.set(adj_info);
@@ -741,12 +741,12 @@ pub(crate) fn equalize(
 	high_pressure_turfs: BTreeSet<TurfID>,
 	do_planet_atmos: bool,
 ) -> usize {
-	let mut info: HashMap<TurfID, Cell<MonstermosInfo>, FxBuildHasher>
-		= HashMap::with_hasher(FxBuildHasher::default());
+	let mut info: HashMap<TurfID, Cell<MonstermosInfo>, FxBuildHasher> =
+		HashMap::with_hasher(FxBuildHasher::default());
 	let mut turfs_processed = 0;
 	let mut queue_cycle_slow = 1;
-	let mut found_turfs: HashSet<TurfID, FxBuildHasher>
-		= HashSet::with_hasher(FxBuildHasher::default());
+	let mut found_turfs: HashSet<TurfID, FxBuildHasher> =
+		HashSet::with_hasher(FxBuildHasher::default());
 	for &i in high_pressure_turfs.iter() {
 		if found_turfs.contains(&i)
 			|| turf_gases().get(&i).map_or(true, |m| {
@@ -788,8 +788,8 @@ pub(crate) fn equalize(
 			}
 		}
 		let average_moles = (total_moles / (turfs.len() - planet_turfs.len()) as f64) as f32;
-		let mut giver_turfs:Vec<MixWithID> = Vec::new();
-		let mut taker_turfs:Vec<MixWithID> = Vec::new();
+		let mut giver_turfs: Vec<MixWithID> = Vec::new();
+		let mut taker_turfs: Vec<MixWithID> = Vec::new();
 		for &(i, m) in &turfs {
 			let cur_info = info.entry(i).or_default().get_mut();
 			cur_info.mole_delta = m.total_moles() - average_moles;
@@ -861,10 +861,11 @@ pub(crate) fn equalize(
 		} else if do_planet_atmos {
 			turfs_processed += turfs.len() + planet_turfs.len();
 			let sender = byond_callback_sender();
-			let fake_cloned = info
-				.iter()
-				.map(|(&k, v)| (k, v.get()))
-				.collect::<HashMap<TurfID, MonstermosInfo, FxBuildHasher>>();
+			let fake_cloned = info.iter().map(|(&k, v)| (k, v.get())).collect::<HashMap<
+				TurfID,
+				MonstermosInfo,
+				FxBuildHasher,
+			>>();
 			let _ = sender.send(Box::new(move || {
 				let mut cloned = fake_cloned
 					.iter()

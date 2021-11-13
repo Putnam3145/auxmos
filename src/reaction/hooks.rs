@@ -290,6 +290,7 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 		FxBuildHasher::default(),
 	);
 	let mut energy_released = 0.0;
+	let mut radiation_released = 0.0;
 	with_gas_info(|gas_info| {
 		if let Some(fire_amount) = with_mix(&byond_air, |air| {
 			let (mut fuels, mut oxidizers) = air.get_fire_info_with_lock(gas_info);
@@ -327,12 +328,28 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 					let power = FIRE_MAXIMUM_BURN_RATE * p;
 					let this_gas_info = &gas_info[i as usize];
 					energy_released += power * this_gas_info.fire_energy_released;
-					if let Some(products) = this_gas_info.fire_products.as_ref() {
-						for (product_idx, product_amt) in products.iter() {
-							burn_results
-								.entry(product_idx.get()?)
-								.and_modify(|r| *r += product_amt * amt)
-								.or_insert_with(|| product_amt * amt);
+					radiation_released += power * this_gas_info.fire_radiation_released;
+					if let Some(product_info) = this_gas_info.fire_products.as_ref() {
+						match product_info {
+							Generic(products) => {
+								for (product_idx, product_amt) in products.iter() {
+									burn_results
+										.entry(product_idx.get()?)
+										.and_modify(|r| *r += product_amt * amt)
+										.or_insert_with(|| product_amt * amt);
+								}
+							}
+							Plasma => {
+								let product = if oxidation_ratio > SUPER_SATURATION_THRESHOLD {
+									GAS_TRITIUM
+								} else {
+									GAS_CO2
+								};
+								burn_results
+									.entry(gas_idx_from_string(product))
+									.and_modify(|r| *r += amt)
+									.or_insert_with(|| amt);
+							}
 						}
 					}
 					burn_results
@@ -373,6 +390,17 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 						.call(&[&Value::from_string(
 							"fire_expose not found! Auxmos hooked fires do not work without it!",
 						)?])?;
+				}
+			}
+			if radiation_released > 0.0 {
+				if let Some(radiation_burn) = Proc::find(byond_string!("/proc/radiation_burn")) {
+					radiation_burn.call(&[holder, &Value::from(radiation_released)])?;
+				} else {
+					let _ = Proc::find(byond_string!("/proc/stack_trace"))
+					.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
+					.call(&[&Value::from_string(
+						"radiation_burn not found! Auxmos hooked fires won't irradiate without it!"
+					)?]);
 				}
 			}
 			Ok(Value::from(if fire_amount > 0.0 { 1.0 } else { 0.0 }))

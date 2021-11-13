@@ -188,6 +188,7 @@ fn fusion(byond_air: Value, holder: Value) {
 	const FUSION_BASE_TEMPSCALE:f32	= 6.0;       			// This number is responsible for orchestrating fusion temperatures
 	const FUSION_MIDDLE_ENERGY_REFERENCE:f32 = 1E+6;		// This number is deceptively dangerous; sort of tied to TOROID_CALCULATED_THRESHOLD
 	const FUSION_BUFFER_DIVISOR:f32 = 1.0;					// Increase this to cull unrobust fusions faster
+	const INFINITY:f32 = 1E+30;								// Well, infinity in byond
 	let plas = gas_idx_from_string(GAS_PLASMA)?;
 	let co2 = gas_idx_from_string(GAS_CO2)?;
 	let trit = gas_idx_from_string(GAS_TRITIUM)?;

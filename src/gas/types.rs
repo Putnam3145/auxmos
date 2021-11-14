@@ -121,9 +121,9 @@ pub struct GasType {
 	/// The moles at which the gas's overlay or other appearance shows up. If None, gas is never visible.
 	/// Byond: `moles_visible`, a number.
 	pub moles_visible: Option<f32>,
-	/// Amount of energy released per mole of material burned in generic fires.
+	/// Standard enthalpy of formation.
 	/// Byond: `fire_energy_released`, a number.
-	pub fire_energy_released: f32,
+	pub enthalpy: f32,
 	/// Amount of radiation released per mole burned.
 	/// Byond: `fire_radiation_released`, a number.
 	pub fire_radiation_released: f32,
@@ -201,8 +201,8 @@ impl GasType {
 						None
 					}
 				}),
-			fire_energy_released: gas
-				.get_number(byond_string!("fire_energy_released"))
+			enthalpy: gas
+				.get_number(byond_string!("enthalpy"))
 				.unwrap_or_default(),
 			fire_radiation_released: gas
 				.get_number(byond_string!("fire_radiation_released"))

@@ -14,11 +14,11 @@ use std::collections::HashMap;
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
 
-static mut REACTION_INFO: Option<Vec<Reaction>> = None;
-
 use auxtools::*;
 
 use parking_lot::{const_rwlock, RwLock};
+
+static REACTION_INFO: RwLock<Option<Vec<Reaction>>> = const_rwlock(None);
 
 /// The temperature at which this gas can oxidize and how much fuel it can oxidize when it can.
 #[derive(Clone, Copy)]
@@ -269,9 +269,7 @@ fn _hook_init() {
 			&mut vec![data.get(data.get(i)?)?],
 		)?;
 	}
-	unsafe {
-		REACTION_INFO = Some(get_reaction_info());
-	};
+	REACTION_INFO.write().insert(get_reaction_info());
 	Ok(Value::from(true))
 }
 
@@ -291,9 +289,7 @@ fn get_reaction_info() -> Vec<Reaction> {
 
 #[hook("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
 fn _update_reactions() {
-	unsafe {
-		REACTION_INFO = Some(get_reaction_info());
-	};
+	REACTION_INFO.write().insert(get_reaction_info());
 	Ok(Value::from(true))
 }
 
@@ -301,7 +297,9 @@ pub fn with_reactions<T, F>(mut f: F) -> T
 where
 	F: FnMut(&[Reaction]) -> T,
 {
-	f(unsafe { REACTION_INFO.as_ref() }
+	f(REACTION_INFO
+		.read()
+		.as_ref()
 		.unwrap_or_else(|| panic!("Reactions not loaded yet! Uh oh!")))
 }
 

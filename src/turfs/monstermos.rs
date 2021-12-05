@@ -760,8 +760,8 @@ pub(crate) fn equalize(
 	let mut queue_cycle_slow = 1;
 	let mut found_turfs: HashSet<TurfID, FxBuildHasher>
 		= HashSet::with_hasher(FxBuildHasher::default());
-	let mut turf_cache: HashMap<TurfID, TurfMixture, FxBuildHasher> = HashMap::with_hasher(FxBuildHasher::default());
 	for &i in high_pressure_turfs.iter() {
+		let mut turf_cache: HashMap<TurfID, TurfMixture, FxBuildHasher> = HashMap::with_hasher(FxBuildHasher::default());
 		if found_turfs.contains(&i)
 			|| turf_gases().get(&i).map_or(true, |m| {
 				!m.enabled()

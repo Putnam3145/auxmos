@@ -215,6 +215,15 @@ fn _process_turf_hook() {
 							planet_enabled,
 						)
 					}
+					#[cfg(feature = "katmos")]
+					{
+						super::katmos::equalize(
+							max_x,
+							max_y,
+							equalize_hard_turf_limit,
+							&high_pressure_turfs,
+						)
+					}
 					#[cfg(not(feature = "equalization"))]
 					{
 						0
@@ -454,38 +463,42 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 					})
 				})
 				.partition(|&(_, _, max_diff)| max_diff <= 5.0);
-			let pressure_deltas_chunked = high_pressure.par_chunks(20).collect::<Vec<_>>();
-			pressure_deltas_chunked
-				.par_iter()
-				.with_min_len(5)
-				.for_each(|temp_value| {
-					let sender = byond_callback_sender();
-					let these_pressure_deltas = temp_value.iter().copied().collect::<Vec<_>>();
-					let _ = sender.try_send(Box::new(move || {
-						for &(turf_id, pressure_diffs, _) in
-							these_pressure_deltas.iter().filter(|&(id, _, _)| *id != 0)
-						{
-							let turf = unsafe { Value::turf_by_id_unchecked(turf_id) };
-							for &(id, diff) in &pressure_diffs {
-								if id != 0 {
-									let enemy_tile = unsafe { Value::turf_by_id_unchecked(id) };
-									if diff > 5.0 {
-										turf.call(
-											"consider_pressure_difference",
-											&[&enemy_tile, &Value::from(diff)],
-										)?;
-									} else if diff < -5.0 {
-										enemy_tile.call(
-											"consider_pressure_difference",
-											&[&turf.clone(), &Value::from(-diff)],
-										)?;
+			//tossing things around is already handled by katmos, so we don't need to do it here.
+			#[cfg(not(feature = "katmos"))]
+			{
+				let pressure_deltas_chunked = high_pressure.par_chunks(20).collect::<Vec<_>>();
+				pressure_deltas_chunked
+					.par_iter()
+					.with_min_len(5)
+					.for_each(|temp_value| {
+						let sender = byond_callback_sender();
+						let these_pressure_deltas = temp_value.iter().copied().collect::<Vec<_>>();
+						let _ = sender.try_send(Box::new(move || {
+							for &(turf_id, pressure_diffs, _) in
+								these_pressure_deltas.iter().filter(|&(id, _, _)| *id != 0)
+							{
+								let turf = unsafe { Value::turf_by_id_unchecked(turf_id) };
+								for &(id, diff) in &pressure_diffs {
+									if id != 0 {
+										let enemy_tile = unsafe { Value::turf_by_id_unchecked(id) };
+										if diff > 5.0 {
+											turf.call(
+												"consider_pressure_difference",
+												&[&enemy_tile, &Value::from(diff)],
+											)?;
+										} else if diff < -5.0 {
+											enemy_tile.call(
+												"consider_pressure_difference",
+												&[&turf.clone(), &Value::from(-diff)],
+											)?;
+										}
 									}
 								}
 							}
-						}
-						Ok(Value::null())
-					}));
-				});
+							Ok(Value::null())
+						}));
+					});
+			}
 			high_pressure_turfs.extend(high_pressure.iter().map(|(i, _, _)| i));
 			low_pressure_turfs.extend(low_pressure.iter().map(|(i, _, _)| i));
 		});

@@ -12,6 +12,7 @@ auxcleanup_gas_deletion = ["auxcleanup"]
 equalization = []
 monstermos = ["equalization"]
 putnamos = ["equalization"]
+katmos = ["equalization"]
 reaction_hooks = []
 plasma_fire_hook = ["reaction_hooks"]
 trit_fire_hook = ["reaction_hooks"]
@@ -28,24 +29,24 @@ crate-type = ["cdylib"]
 auxtools = { git = "https://github.com/willox/auxtools"}
 auxcallback = { git = "https://github.com/Putnam3145/auxcallback" }
 auxcleanup = { git = "https://github.com/Putnam3145/auxcleanup", optional = true}
-itertools = "0.9.0"
-rayon = "1.5.0"
-float-ord = "0.2.0"
-crossbeam = "0.8.0"
-flume = "0.10.5"
-parking_lot = "0.11.1"
+itertools = "0.10.3"
+rayon = "1.5.1"
+float-ord = "0.3.2"
+crossbeam = "0.8.1"
+flume = "0.10.9"
+parking_lot = "0.11.2"
 fxhash = "0.2.1"
 nonmax = "0.5.0"
-indexmap = "1.7.0"
-ahash = "0.7.4"
+indexmap = { version = "1.7.0", features = ["rayon"] }
+ahash = "0.7.6"
 
 [dependencies.dashmap]
 version = "4.0.2"
 features = ["raw-api"]
 
 [dependencies.tinyvec]
-version = "1.1.0"
-features = ["rustc_1_40", "alloc"]
+version = "1.5.1"
+features = ["rustc_1_55", "alloc"]
 
 [profile.release]
 lto = 'thin'

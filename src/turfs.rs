@@ -6,6 +6,9 @@ pub mod monstermos;
 #[cfg(feature = "putnamos")]
 pub mod putnamos;
 
+#[cfg(feature = "katmos")]
+pub mod katmos;
+
 use crate::gas::Mixture;
 
 use auxtools::*;

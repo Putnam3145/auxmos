@@ -655,12 +655,6 @@ fn flood_fill_equalize_turfs(
 								}
 								space_this_time = true;
 						}
-						#[cfg(not(feature = "explosive_decompression"))]
-						{
-							if adj_turf.enabled() {
-								border_turfs.push_back((loc, *adj_turf.value()));
-							}
-						}
 					}
 				}
 			}

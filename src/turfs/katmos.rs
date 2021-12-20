@@ -59,12 +59,10 @@ impl Default for ReducedInfo {
 const OPP_DIR_INDEX: [usize; 7] = [1, 0, 3, 2, 5, 4, 6];
 
 impl MonstermosInfo {
-	fn adjust_eq_movement(&mut self, adjacent: Option<(&mut Self, usize)>, amount: f32) {
-		if adjacent.is_some() {
-			let (adjacent, dir_idx) = adjacent.unwrap();
-			adjacent.transfer_dirs[OPP_DIR_INDEX[dir_idx]] -= amount;
-		} else {
-			self.transfer_dirs[6] += amount;
+	fn adjust_eq_movement(&mut self, adjacent: Option<&mut Self>, dir_index: usize, amount: f32) {
+		self.transfer_dirs[dir_index] += amount;
+		if dir_index != 6 && adjacent.is_some() {
+			adjacent.unwrap().transfer_dirs[OPP_DIR_INDEX[dir_index]] -= amount;
 		}
 	}
 }
@@ -258,7 +256,7 @@ fn monstermos_fast_process(
 		let moles_to_move = cur_info.mole_delta / amt_eligible as f32;
 		for (j, loc) in adjacent_tile_ids_no_orig(eligible_adjacents, *i, max_x, max_y) {
 			if let Some(mut adj_info) = info.get_mut(&loc) {
-				cur_info.adjust_eq_movement(Some((&mut adj_info, j as usize)), moles_to_move);
+				cur_info.adjust_eq_movement(Some(&mut adj_info), j as usize, moles_to_move);
 				cur_info.mole_delta -= moles_to_move;
 				adj_info.mole_delta += moles_to_move;
 			}
@@ -337,7 +335,8 @@ fn give_to_takers(
 					)) {
 						let (dir, amt) = (turf_info.curr_transfer_dir, turf_info.curr_transfer_amount);
 						turf_info.adjust_eq_movement(
-							Some((&mut adj_info, dir)),
+							Some(&mut adj_info),
+							dir,
 							amt,
 						);
 						adj_info.curr_transfer_amount += turf_info.curr_transfer_amount;
@@ -419,7 +418,8 @@ fn take_from_givers(
 					)) {
 						let (dir, amt) = (turf_info.curr_transfer_dir, turf_info.curr_transfer_amount);
 						turf_info.adjust_eq_movement(
-							Some((&mut adj_info, dir)),
+							Some(&mut adj_info),
+							dir,
 							amt,
 						);
 						adj_info.curr_transfer_amount += turf_info.curr_transfer_amount;
@@ -735,8 +735,9 @@ fn process_planet_turfs(
 		}
 		if let Some(mut cur_info) = info.get_mut(i) {
 			let airflow = cur_info.mole_delta - target_delta;
+			let dir = cur_info.curr_transfer_dir;
 			if cur_info.curr_transfer_dir == 6 {
-				cur_info.adjust_eq_movement(None, airflow);
+				cur_info.adjust_eq_movement(None, dir, airflow);
 				cur_info.mole_delta = target_delta;
 			} else if let Some(mut adj_info) = info.get_mut(&adjacent_tile_id(
 				cur_info.curr_transfer_dir as u8,
@@ -744,8 +745,7 @@ fn process_planet_turfs(
 				max_x,
 				max_y,
 			)) {
-				let dir = cur_info.curr_transfer_dir;
-				cur_info.adjust_eq_movement(Some((&mut adj_info, dir)), airflow);
+				cur_info.adjust_eq_movement(Some(&mut adj_info), dir, airflow);
 				adj_info.mole_delta += airflow;
 				cur_info.mole_delta = target_delta;
 			}

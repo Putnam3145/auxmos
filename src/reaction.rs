@@ -98,7 +98,7 @@ impl Reaction {
 	///
 	/// If given anything but a `/datum/gas_reaction`, this will panic.
 	pub fn from_byond_reaction(reaction: &Value) -> Self {
-		let priority = reaction
+		let priority = -reaction
 			.get_number(byond_string!("priority"))
 			.unwrap_or_default();
 		let string_id_hash = fxhash::hash64(

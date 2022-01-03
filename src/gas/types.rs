@@ -14,11 +14,11 @@ use std::collections::HashMap;
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
 
-static mut REACTION_INFO: Option<Vec<Reaction>> = None;
-
 use auxtools::*;
 
 use parking_lot::{const_rwlock, RwLock};
+
+static REACTION_INFO: RwLock<Option<Vec<Reaction>>> = const_rwlock(None);
 
 /// The temperature at which this gas can oxidize and how much fuel it can oxidize when it can.
 #[derive(Clone, Copy)]
@@ -88,6 +88,12 @@ impl GasRef {
 	}
 }
 
+#[derive(Clone)]
+pub enum FireProductInfo {
+	Generic(Vec<(GasRef, f32)>),
+	Plasma, // yeah, just hardcoding the funny trit production
+}
+
 /// An individual gas type. Contains a whole lot of info attained from Byond when the gas is first registered.
 /// If you don't have any of these, just fork auxmos and remove them, many of these are not necessary--for example,
 /// if you don't have fusion, you can just remove fusion_power.
@@ -115,15 +121,18 @@ pub struct GasType {
 	/// The moles at which the gas's overlay or other appearance shows up. If None, gas is never visible.
 	/// Byond: `moles_visible`, a number.
 	pub moles_visible: Option<f32>,
-	/// Amount of energy released per mole of material burned in generic fires.
+	/// Standard enthalpy of formation.
 	/// Byond: `fire_energy_released`, a number.
-	pub fire_energy_released: f32,
+	pub enthalpy: f32,
+	/// Amount of radiation released per mole burned.
+	/// Byond: `fire_radiation_released`, a number.
+	pub fire_radiation_released: f32,
 	/// Either fuel info, oxidation info or neither. See the documentation on the respective types.
 	/// Byond: `oxidation_temperature` and `oxidation_rate` XOR `fire_temperature` and `fire_burn_rate`
 	pub fire_info: FireInfo,
 	/// A vector of gas-amount pairs. GasRef is just which gas, the f32 is moles made/mole burned.
 	/// Byond: `fire_products`, a list of gas IDs associated with amounts.
-	pub fire_products: Option<Vec<(GasRef, f32)>>,
+	pub fire_products: Option<FireProductInfo>,
 }
 
 impl GasType {
@@ -133,14 +142,7 @@ impl GasType {
 			idx,
 			id: gas.get_string(byond_string!("id"))?.into_boxed_str(),
 			name: gas.get_string(byond_string!("name"))?.into_boxed_str(),
-			flags: gas.get_number(byond_string!("flags")).map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})? as u32,
+			flags: gas.get_number(byond_string!("flags")).unwrap_or_default() as u32,
 			specific_heat: gas
 				.get_number(byond_string!("specific_heat"))
 				.map_err(|_| {
@@ -151,14 +153,9 @@ impl GasType {
 						std::column!()
 					)
 				})?,
-			fusion_power: gas.get_number(byond_string!("fusion_power")).map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?,
+			fusion_power: gas
+				.get_number(byond_string!("fusion_power"))
+				.unwrap_or_default(),
 			moles_visible: gas.get_number(byond_string!("moles_visible")).ok(),
 			fire_info: {
 				if let Ok(temperature) = gas.get_number(byond_string!("oxidation_temperature")) {
@@ -175,26 +172,41 @@ impl GasType {
 					FireInfo::None
 				}
 			},
-			fire_products: if let Ok(products) = gas.get_list(byond_string!("fire_products")) {
-				Some(
-					(1..=products.len())
-						.filter_map(|i| {
-							let s = products.get(i).unwrap();
-							s.as_string()
-								.and_then(|s_str| {
-									products
-										.get(s)
-										.and_then(|v| v.as_number())
-										.map(|amount| (GasRef::Deferred(s_str), amount))
+			fire_products: gas
+				.get(byond_string!("fire_products"))
+				.ok()
+				.and_then(|product_info| {
+					if let Ok(products) = product_info.as_list() {
+						Some(FireProductInfo::Generic(
+							(1..=products.len())
+								.filter_map(|i| {
+									let s = products.get(i).unwrap();
+									s.as_string()
+										.and_then(|s_str| {
+											products
+												.get(s)
+												.and_then(|v| v.as_number())
+												.map(|amount| (GasRef::Deferred(s_str), amount))
+										})
+										.ok()
 								})
-								.ok()
-						})
-						.collect(),
-				)
-			} else {
-				None
-			},
-			fire_energy_released: gas.get_number(byond_string!("fire_energy_released"))?,
+								.collect(),
+						))
+					} else if product_info
+						.as_string()
+						.map_or(false, |s| s == "plasma_fire")
+					{
+						Some(FireProductInfo::Plasma)
+					} else {
+						None
+					}
+				}),
+			enthalpy: gas
+				.get_number(byond_string!("enthalpy"))
+				.unwrap_or_default(),
+			fire_radiation_released: gas
+				.get_number(byond_string!("fire_radiation_released"))
+				.unwrap_or_default(),
 		})
 	}
 }
@@ -257,9 +269,7 @@ fn _hook_init() {
 			&mut vec![data.get(data.get(i)?)?],
 		)?;
 	}
-	unsafe {
-		REACTION_INFO = Some(get_reaction_info());
-	};
+	REACTION_INFO.write().insert(get_reaction_info());
 	Ok(Value::from(true))
 }
 
@@ -279,9 +289,7 @@ fn get_reaction_info() -> Vec<Reaction> {
 
 #[hook("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
 fn _update_reactions() {
-	unsafe {
-		REACTION_INFO = Some(get_reaction_info());
-	};
+	REACTION_INFO.write().insert(get_reaction_info());
 	Ok(Value::from(true))
 }
 
@@ -289,7 +297,9 @@ pub fn with_reactions<T, F>(mut f: F) -> T
 where
 	F: FnMut(&[Reaction]) -> T,
 {
-	f(unsafe { REACTION_INFO.as_ref() }
+	f(REACTION_INFO
+		.read()
+		.as_ref()
 		.unwrap_or_else(|| panic!("Reactions not loaded yet! Uh oh!")))
 }
 
@@ -352,9 +362,11 @@ pub fn update_gas_refs() {
 		.unwrap_or_else(|| panic!("Gases not loaded yet! Uh oh!"))
 		.iter_mut()
 		.for_each(|gas| {
-			if let Some(products) = gas.fire_products.as_mut() {
-				for product in products.iter_mut() {
-					product.0.update().unwrap();
+			if let Some(product_info) = gas.fire_products.as_mut() {
+				if let FireProductInfo::Generic(products) = product_info {
+					for product in products.iter_mut() {
+						product.0.update().unwrap();
+					}
 				}
 			}
 		});

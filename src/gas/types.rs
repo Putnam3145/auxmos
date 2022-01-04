@@ -269,7 +269,7 @@ fn _hook_init() {
 			&mut vec![data.get(data.get(i)?)?],
 		)?;
 	}
-	REACTION_INFO.write().insert(get_reaction_info());
+	let _ = REACTION_INFO.write().insert(get_reaction_info());
 	Ok(Value::from(true))
 }
 
@@ -289,7 +289,7 @@ fn get_reaction_info() -> Vec<Reaction> {
 
 #[hook("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
 fn _update_reactions() {
-	REACTION_INFO.write().insert(get_reaction_info());
+	let _ = REACTION_INFO.write().insert(get_reaction_info());
 	Ok(Value::from(true))
 }
 

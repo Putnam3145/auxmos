@@ -672,6 +672,7 @@ fn process_planet_turfs(
 	average_moles: f32,
 	max_x: i32,
 	max_y: i32,
+	equalize_hard_turf_limit: usize,
 	info: &DashMap<TurfID, MonstermosInfo, FxBuildHasher>,
 ) {
 	let sender = byond_callback_sender();
@@ -707,15 +708,17 @@ fn process_planet_turfs(
 		let m = *maybe_m.unwrap();
 		for (j, loc) in adjacent_tile_ids_no_orig(m.adjacency, i, max_x, max_y) {
 			if let Some(mut adj_info) = info.get_mut(&loc) {
-				let _ = sender.try_send(Box::new(move || {
-					let that_turf = unsafe { Value::turf_by_id_unchecked(loc) };
-					let this_turf = unsafe { Value::turf_by_id_unchecked(i) };
-					this_turf.call(
-						"consider_firelocks",
-						&[&that_turf],
-					)?;
-					Ok(Value::null())
-				}));
+				if queue_idx < equalize_hard_turf_limit {
+						let _ = sender.try_send(Box::new(move || {
+						let that_turf = unsafe { Value::turf_by_id_unchecked(loc) };
+						let this_turf = unsafe { Value::turf_by_id_unchecked(i) };
+						this_turf.call(
+							"consider_firelocks",
+							&[&that_turf],
+						)?;
+						Ok(Value::null())
+					}));
+				}
 				if let Some(adj) =
 					turfs.get(&loc).map_or(None, |terf| { terf.enabled().then(|| terf) })
 				{
@@ -864,6 +867,7 @@ pub(crate) fn equalize(
 						average_moles,
 						max_x,
 						max_y,
+						equalize_hard_turf_limit,
 						&info,
 					);
 				} else {

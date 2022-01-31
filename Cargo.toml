@@ -41,7 +41,7 @@ indexmap = { version = "1.7.0", features = ["rayon"] }
 ahash = "0.7.6"
 
 [dependencies.dashmap]
-version = "4.0.2"
+version = "5.0.0"
 features = ["raw-api"]
 
 [dependencies.tinyvec]

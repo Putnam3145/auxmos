@@ -9,7 +9,7 @@ build = "build.rs"
 
 [features]
 default = ["auxcleanup_gas_deletion", "logging"]
-logging = ["simple-logging", "log", "log-panics"]
+logging = ["simple-logging", "log", "backtrace"]
 auxcleanup_gas_deletion = ["auxcleanup"]
 equalization = []
 monstermos = ["equalization"]
@@ -43,7 +43,7 @@ indexmap = { version = "1.7.0", features = ["rayon"] }
 ahash = "0.7.6"
 simple-logging = { version = "2.0.2", optional = true }
 log = { version = "0.4.14", optional = true }
-log-panics = { version = "2.0.0", features = ["with-backtrace"], optional = true }
+backtrace = { version = "0.3.63", optional = true }
 
 [build-dependencies]
 vergen = { version = "6", default-features = false, features = ["git"] }

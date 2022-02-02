@@ -15,24 +15,11 @@ use reaction::react_by_id;
 use gas::constants::*;
 
 #[cfg(feature = "logging")]
-use log::LevelFilter;
-
-#[cfg(feature = "logging")]
+#[macro_use]
 extern crate log;
 
 #[cfg(feature = "logging")]
-#[init(full)]
-pub fn log_init() -> Result<(), String> {
-	simple_logging::log_to_file("auxmos.log", LevelFilter::Debug).unwrap();
-
-	log_panics::init();
-
-	log::info!("Log started!");
-	log::info!("Commit hash: {}", env!("VERGEN_GIT_SHA"));
-	log::info!("Branch: {}", env!("VERGEN_GIT_BRANCH"));
-
-	Ok(())
-}
+pub mod panics;
 
 #[hook("/proc/process_atmos_callbacks")]
 fn _atmos_callback_handle() {

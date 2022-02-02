@@ -203,7 +203,7 @@ fn fusion(byond_air: Value, holder: Value) {
 		scale_factor,
 		temperature_scale,
 		gas_power,
-	) = with_mix(byond_air, |air| {
+	) = with_mix(&byond_air, |air| {
 		Ok((
 			air.thermal_energy(),
 			air.get_moles(plas),
@@ -277,7 +277,7 @@ fn fusion(byond_air: Value, holder: Value) {
 	let standard_waste_gas_output =
 		scale_factor * (FUSION_TRITIUM_CONVERSION_COEFFICIENT * FUSION_TRITIUM_MOLES_USED);
 
-	let standard_energy = with_mix_mut(byond_air, |air| {
+	let standard_energy = with_mix_mut(&byond_air, |air| {
 		air.set_moles(plas, plasma);
 		air.set_moles(co2, carbon);
 
@@ -312,7 +312,7 @@ fn fusion(byond_air: Value, holder: Value) {
 		Proc::find(byond_string!("/proc/fusion_ball"))
 			.unwrap()
 			.call(&[
-				holder,
+				&holder,
 				&Value::from(reaction_energy),
 				&Value::from(standard_energy),
 			])?;
@@ -431,7 +431,7 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 			cached_results.set(byond_string!("fire"), Value::from(fire_amount))?;
 			if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
 				if let Some(fire_expose) = Proc::find(byond_string!("/proc/fire_expose")) {
-					fire_expose.call(&[holder, byond_air, &Value::from(temperature)])?;
+					fire_expose.call(&[&holder, &byond_air, &Value::from(temperature)])?;
 				} else {
 					Proc::find(byond_string!("/proc/stack_trace"))
 						.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
@@ -442,7 +442,7 @@ fn _hook_generic_fire(byond_air: Value, holder: Value) {
 			}
 			if radiation_released > 0.0 {
 				if let Some(radiation_burn) = Proc::find(byond_string!("/proc/radiation_burn")) {
-					radiation_burn.call(&[holder, &Value::from(radiation_released)])?;
+					radiation_burn.call(&[&holder, &Value::from(radiation_released)])?;
 				} else {
 					let _ = Proc::find(byond_string!("/proc/stack_trace"))
 					.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?

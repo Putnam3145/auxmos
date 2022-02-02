@@ -3,11 +3,13 @@ name = "auxmos"
 version = "0.2.0"
 authors = ["Putnam <putnam3145@gmail.com>"]
 edition = "2018"
+build = "build.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["auxcleanup_gas_deletion"]
+default = ["auxcleanup_gas_deletion", "logging"]
+logging = ["simple-logging", "log", "log-panics"]
 auxcleanup_gas_deletion = ["auxcleanup"]
 equalization = []
 monstermos = ["equalization"]
@@ -39,6 +41,13 @@ fxhash = "0.2.1"
 nonmax = "0.5.0"
 indexmap = { version = "1.7.0", features = ["rayon"] }
 ahash = "0.7.6"
+simple-logging = { version = "2.0.2", optional = true }
+log = { version = "0.4.14", optional = true }
+log-panics = { version = "2.0.0", features = ["with-backtrace"], optional = true }
+
+[build-dependencies]
+vergen = { version = "6", default-features = false, features = ["git"] }
+anyhow = "1.0.52"
 
 [dependencies.dashmap]
 version = "5.0.0"

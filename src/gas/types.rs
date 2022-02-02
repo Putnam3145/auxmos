@@ -243,7 +243,7 @@ fn _destroy_gas_info_structs() {
 #[hook("/proc/_auxtools_register_gas")]
 fn _hook_register_gas(gas: Value) {
 	let gas_id = gas.get_string(byond_string!("id"))?;
-	let gas_cache = GasType::new(gas, TOTAL_NUM_GASES.load(Ordering::Relaxed))?;
+	let gas_cache = GasType::new(&gas, TOTAL_NUM_GASES.load(Ordering::Relaxed))?;
 	unsafe { GAS_INFO_BY_STRING.as_ref() }
 		.unwrap()
 		.insert(gas_id.into_boxed_str(), gas_cache.clone());
@@ -269,7 +269,7 @@ fn _hook_init() {
 			&mut vec![data.get(data.get(i)?)?],
 		)?;
 	}
-	REACTION_INFO.write().insert(get_reaction_info());
+	let _ = REACTION_INFO.write().insert(get_reaction_info());
 	Ok(Value::from(true))
 }
 
@@ -289,7 +289,7 @@ fn get_reaction_info() -> Vec<Reaction> {
 
 #[hook("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
 fn _update_reactions() {
-	REACTION_INFO.write().insert(get_reaction_info());
+	let _ = REACTION_INFO.write().insert(get_reaction_info());
 	Ok(Value::from(true))
 }
 

@@ -14,6 +14,26 @@ use reaction::react_by_id;
 
 use gas::constants::*;
 
+#[cfg(feature = "logging")]
+use log::LevelFilter;
+
+#[cfg(feature = "logging")]
+extern crate log;
+
+#[cfg(feature = "logging")]
+#[init(full)]
+pub fn log_init() -> Result<(), String> {
+	simple_logging::log_to_file("auxmos.log", LevelFilter::Debug).unwrap();
+
+	log_panics::init();
+
+	log::info!("Log started!");
+	log::info!("Commit hash: {}", env!("VERGEN_GIT_SHA"));
+	log::info!("Branch: {}", env!("VERGEN_GIT_BRANCH"));
+
+	Ok(())
+}
+
 #[hook("/proc/process_atmos_callbacks")]
 fn _atmos_callback_handle() {
 	auxcallback::callback_processing_hook(args)
@@ -255,7 +275,7 @@ fn _set_moles_hook() {
 fn _adjust_moles_hook(id_val: Value, num_val: Value) {
 	let vf = num_val.as_number().unwrap_or_default();
 	with_mix_mut(src, |mix| {
-		mix.adjust_moles(gas_idx_from_value(id_val)?, vf);
+		mix.adjust_moles(gas_idx_from_value(&id_val)?, vf);
 		Ok(Value::null())
 	})
 }
@@ -284,7 +304,7 @@ fn _scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
 	let gas_scrub_vec = (1..=gases_to_scrub.len())
 		.filter_map(|idx| gas_idx_from_value(&gases_to_scrub.get(idx).unwrap()).ok())
 		.collect::<Vec<_>>();
-	with_mixes_mut(src, into, |src_gas, dest_gas| {
+	with_mixes_mut(src, &into, |src_gas, dest_gas| {
 		src_gas.transfer_gases_to(ratio, &gas_scrub_vec, dest_gas);
 		Ok(Value::from(true))
 	})
@@ -337,7 +357,7 @@ fn _react_hook(holder: Value) {
 	let mut ret: i32 = 0;
 	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
 	for reaction in reactions {
-		ret |= react_by_id(reaction, src, holder)?
+		ret |= react_by_id(reaction, src, &holder)?
 			.as_number()
 			.unwrap_or_default() as i32;
 		if ret & STOP_REACTIONS == STOP_REACTIONS {
@@ -369,7 +389,7 @@ fn _adjust_heat_hook() {
 
 #[hook("/datum/gas_mixture/proc/transfer_to")]
 fn _transfer_hook(other: Value, moles: Value) {
-	with_mixes_mut(src, other, |our_mix, other_mix| {
+	with_mixes_mut(src, &other, |our_mix, other_mix| {
 		other_mix.merge(&our_mix.remove(moles.as_number().map_err(|_| {
 			runtime!(
 				"Attempt to interpret non-number value as number {} {}:{}",
@@ -384,7 +404,7 @@ fn _transfer_hook(other: Value, moles: Value) {
 
 #[hook("/datum/gas_mixture/proc/transfer_ratio_to")]
 fn _transfer_ratio_hook(other: Value, ratio: Value) {
-	with_mixes_mut(src, other, |our_mix, other_mix| {
+	with_mixes_mut(src, &other, |our_mix, other_mix| {
 		other_mix.merge(&our_mix.remove_ratio(ratio.as_number().map_err(|_| {
 			runtime!(
 				"Attempt to interpret non-number value as number {} {}:{}",

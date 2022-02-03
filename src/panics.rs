@@ -1,15 +1,9 @@
-use auxtools::*;
-
-use log::LevelFilter;
-
-extern crate log;
-
-extern crate backtrace;
-
 use std::fmt;
 use std::panic;
 use std::thread;
 
+use auxtools::*;
+use log::LevelFilter;
 use backtrace::Backtrace;
 
 struct Shim(Backtrace);

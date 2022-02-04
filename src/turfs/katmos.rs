@@ -514,7 +514,7 @@ fn explosively_depressurize(
 		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
 			if let Some(adj_m) = turf_gases()
 				.get(&loc)
-				.map_or(None, |terf| terf.enabled().then(|| terf))
+				.map_or(None, |terf| terf.awake().then(|| terf))
 			{
 				let adj_orig = info.entry(loc).or_default();
 				let mut adj_info = adj_orig.get();

@@ -512,7 +512,10 @@ fn explosively_depressurize(
 			continue;
 		}
 		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
-			if let Some(adj_m) = { turf_gases().get(&loc) } {
+			if let Some(adj_m) = turf_gases()
+				.get(&loc)
+				.map_or(None, |terf| terf.enabled().then(|| terf))
+			{
 				let adj_orig = info.entry(loc).or_default();
 				let mut adj_info = adj_orig.get();
 				if !adj_m.is_immutable() {
@@ -639,7 +642,7 @@ fn flood_fill_equalize_turfs(
 						if adj_turf.enabled() {
 							border_turfs.push_back((loc, *adj_turf.value()));
 						}
-						if adj_turf.value().is_immutable() {
+						if adj_turf.value().is_immutable() && adj_turf.awake() {
 							// Uh oh! looks like someone opened an airlock to space! TIME TO SUCK ALL THE AIR OUT!!!
 							// NOT ONE OF YOU IS GONNA SURVIVE THIS
 							// (I just made explosions less laggy, you're welcome)

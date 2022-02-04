@@ -62,6 +62,9 @@ impl TurfMixture {
 		self.simulation_level > 0
 			&& self.simulation_level & SIMULATION_LEVEL_DISABLED != SIMULATION_LEVEL_DISABLED
 	}
+	pub fn awake(&self) -> bool {
+		self.simulation_level & SIMULATION_LEVEL_DISABLED != SIMULATION_LEVEL_DISABLED
+	}
 	pub fn adjacent_mixes<'a>(
 		&'a self,
 		all_mixtures: &'a [parking_lot::RwLock<Mixture>],

@@ -25,6 +25,8 @@ use rayon;
 
 use rayon::prelude::*;
 
+use crate::callbacks::{aux_callbacks_sender, ADJACENCIES};
+
 const NORTH: u8 = 1;
 const SOUTH: u8 = 2;
 const EAST: u8 = 4;
@@ -318,20 +320,84 @@ fn _hook_sleep() {
 	} else {
 		0.0
 	};
+	let sender = aux_callbacks_sender(ADJACENCIES);
+	let src_id = unsafe { src.raw.data.id };
 	if arg == 0.0 {
-		turf_gases()
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
-				turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
-			});
+		let _ = sender.send(Box::new(move || {
+			turf_gases()
+				.entry(src_id)
+				.and_modify(|turf| {
+					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+				});
+			Ok(Value::null())
+		}));
+
 	} else {
-		turf_gases()
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
-				turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
-			});
+		let _ = sender.send(Box::new(move || {
+			turf_gases()
+				.entry(src_id)
+				.and_modify(|turf| {
+					turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
+				});
+			Ok(Value::null())
+		}));
 	}
 	Ok(Value::from(true))
+}
+#[hook("/turf/proc/__auxtools_update_turf_infos")]
+fn _hook_infos(arg0: Value) {
+	let immediate = arg0.as_number().map_err(|_| {
+		runtime!(
+			"Attempt to interpret non-number value as number {} {}:{}",
+			std::file!(),
+			std::line!(),
+			std::column!()
+		)
+	})?;
+	let id = unsafe { src.raw.data.id };
+	let sender = aux_callbacks_sender(ADJACENCIES);
+	let boxed_fn: Box<dyn Fn() -> DMResult + Send + Sync> = Box::new(move || {
+		let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
+		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
+			let mut adjacent_mixes: [Option<nonmax::NonMaxUsize>; 6] = [None; 6];
+			let mut adjacency = 0;
+			for i in 1..=adjacent_list.len() {
+				let adj_val = adjacent_list.get(i)?;
+				let adjacent_num = adjacent_list.get(&adj_val)?.as_number()? as u8;
+				adjacency |= adjacent_num;
+				adjacent_mixes[adj_flag_to_idx(adjacent_num)] = turf_gases()
+					.get(&unsafe { adj_val.raw.data.id })
+					.and_then(|t| nonmax::NonMaxUsize::new(t.mix));
+			}
+			turf_gases().entry(id).and_modify(|turf| {
+					turf.adjacency = adjacency;
+					turf.adjacents = adjacent_mixes;
+			});
+		} else {
+			turf_gases().entry(id).and_modify(|turf| {
+				turf.adjacency = 0;
+				turf.adjacents = [None; 6];
+			});
+		}
+		if let Ok(blocks_air) = src_turf.get_number(byond_string!("blocks_air")) {
+			if blocks_air == 0.0 {
+				turf_gases().entry(id).and_modify(|turf| {
+					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+				});
+			} else {
+				turf_gases().entry(id).and_modify(|turf| {
+					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+				});
+			}
+		}
+		Ok(Value::null())
+	});
+	if immediate == 0.0 {
+		let _ = sender.send(boxed_fn);
+	} else {
+		boxed_fn()?;
+	}
+	Ok(Value::null())
 }
 
 #[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]

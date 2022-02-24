@@ -3,9 +3,9 @@ use std::panic;
 use std::thread;
 
 use auxtools::*;
-use log::LevelFilter;
 use backtrace::Backtrace;
 use chrono::*;
+use log::LevelFilter;
 
 struct Shim(Backtrace);
 
@@ -18,8 +18,11 @@ impl fmt::Debug for Shim {
 #[init(full)]
 pub fn log_init() -> Result<(), String> {
 	panic::set_hook(Box::new(|info| {
-		let now = Local::now().to_rfc3339();
-		simple_logging::log_to_file(format!("auxmos-logs/{}-auxmos.log", now), LevelFilter::Debug).unwrap();
+		simple_logging::log_to_file(
+			format!("{}-auxmos.log", Local::now().format("%F-%H-%M-%S")),
+			LevelFilter::Debug,
+		)
+		.unwrap();
 		log::info!("Commit hash: {}", env!("VERGEN_GIT_SHA"));
 		log::info!("Branch: {}", env!("VERGEN_GIT_BRANCH"));
 

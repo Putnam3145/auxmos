@@ -9,7 +9,7 @@ build = "build.rs"
 
 [features]
 default = ["auxcleanup_gas_deletion", "logging"]
-logging = ["simple-logging", "log", "backtrace"]
+logging = ["simple-logging", "log", "backtrace", "chrono"]
 auxcleanup_gas_deletion = ["auxcleanup"]
 equalization = []
 monstermos = ["equalization"]
@@ -41,9 +41,12 @@ fxhash = "0.2.1"
 nonmax = "0.5.0"
 indexmap = { version = "1.7.0", features = ["rayon"] }
 ahash = "0.7.6"
+
+#Logging features
 simple-logging = { version = "2.0.2", optional = true }
 log = { version = "0.4.14", optional = true }
 backtrace = { version = "0.3.63", optional = true }
+chrono = {  version = "0.4.19", optional = true, features = ["alloc", "clock"] }
 
 [build-dependencies]
 vergen = { version = "6", default-features = false, features = ["git"] }

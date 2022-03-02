@@ -345,7 +345,7 @@ fn _hook_sleep() {
 	Ok(Value::from(true))
 }
 #[hook("/turf/proc/__auxtools_update_turf_infos")]
-fn _hook_infos(arg0: Value) {
+fn _hook_infos(arg0: Value, arg1: Value) {
 	let immediate = arg0.as_number().map_err(|_| {
 		runtime!(
 			"Attempt to interpret non-number value as number {} {}:{}",
@@ -354,6 +354,7 @@ fn _hook_infos(arg0: Value) {
 			std::column!()
 		)
 	})?;
+	let adjacent_to_spess = arg1.as_number().unwrap_or(0.0) != 0.0;
 	let id = unsafe { src.raw.data.id };
 	let sender = aux_callbacks_sender(ADJACENCIES);
 	let boxed_fn: Box<dyn Fn() -> DMResult + Send + Sync> = Box::new(move || {
@@ -389,6 +390,29 @@ fn _hook_infos(arg0: Value) {
 					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
 				});
 			}
+		}
+		if let Ok(atmos_blocked_directions) =
+			src_turf.get_number(byond_string!("conductivity_blocked_directions"))
+		{
+			let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);
+			turf_temperatures()
+				.entry(id)
+				.and_modify(|entry| {
+					entry.adjacency = adjacency;
+				})
+				.or_insert_with(|| ThermalInfo {
+					temperature: src_turf
+						.get_number(byond_string!("initial_temperature"))
+						.unwrap_or(TCMB),
+					thermal_conductivity: src_turf
+						.get_number(byond_string!("thermal_conductivity"))
+						.unwrap_or(0.0),
+					heat_capacity: src_turf
+						.get_number(byond_string!("heat_capacity"))
+						.unwrap_or(0.0),
+					adjacency,
+					adjacent_to_space: adjacent_to_spess,
+				});
 		}
 		Ok(Value::null())
 	});

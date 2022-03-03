@@ -15,7 +15,7 @@ use indexmap::{IndexMap, IndexSet};
 use ahash::RandomState;
 use fxhash::FxBuildHasher;
 
-use crate::callbacks::{process_aux_callbacks, ADJACENCIES};
+use crate::callbacks::process_aux_callbacks;
 
 use auxcallback::byond_callback_sender;
 
@@ -494,7 +494,7 @@ fn explosively_depressurize(
 		}
 	}
 
-	process_aux_callbacks(ADJACENCIES);
+	process_aux_callbacks(crate::callbacks::ADJACENCIES);
 
 	if space_turfs.is_empty() {
 		return Ok(Value::null());

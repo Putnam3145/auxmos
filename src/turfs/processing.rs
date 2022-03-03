@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 
 use parking_lot::RwLock;
 
-use crate::callbacks::{process_aux_callbacks, ADJACENCIES};
+use crate::callbacks::process_aux_callbacks;
 
 const PROCESS_NOT_STARTED: u8 = 0;
 
@@ -57,7 +57,7 @@ fn _finish_process_turfs() {
 		Ordering::Relaxed,
 	) == Err(PROCESS_PROCESSING);
 	if !processing_turfs_unfinished {
-		process_aux_callbacks(ADJACENCIES);
+		process_aux_callbacks(crate::callbacks::ADJACENCIES);
 	}
 	if processing_callbacks_unfinished || processing_turfs_unfinished {
 		Ok(Value::from(true))

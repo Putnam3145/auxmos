@@ -25,7 +25,7 @@ use rayon;
 
 use rayon::prelude::*;
 
-use crate::callbacks::{aux_callbacks_sender, ADJACENCIES};
+use crate::callbacks::aux_callbacks_sender;
 
 const NORTH: u8 = 1;
 const SOUTH: u8 = 2;
@@ -320,7 +320,7 @@ fn _hook_sleep() {
 	} else {
 		0.0
 	};
-	let sender = aux_callbacks_sender(ADJACENCIES);
+	let sender = aux_callbacks_sender(crate::callbacks::ADJACENCIES);
 	let src_id = unsafe { src.raw.data.id };
 	if arg == 0.0 {
 		let _ = sender.send(Box::new(move || {
@@ -344,7 +344,7 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 	let update_now = arg1.as_number().unwrap_or(0.0) != 0.0;
 	let adjacent_to_spess = arg0.as_number().unwrap_or(0.0) != 0.0;
 	let id = unsafe { src.raw.data.id };
-	let sender = aux_callbacks_sender(ADJACENCIES);
+	let sender = aux_callbacks_sender(crate::callbacks::ADJACENCIES);
 	let boxed_fn: Box<dyn Fn() -> DMResult + Send + Sync> = Box::new(move || {
 		let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
 		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {

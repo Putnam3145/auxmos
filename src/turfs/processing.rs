@@ -22,7 +22,7 @@ const PROCESS_PROCESSING: u8 = 1;
 
 const PROCESS_DONE: u8 = 2;
 
-pub(crate) static PROCESSING_TURF_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
+static PROCESSING_TURF_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
 
 static WAITING_FOR_THREAD: AtomicBool = AtomicBool::new(false);
 

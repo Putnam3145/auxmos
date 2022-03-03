@@ -324,37 +324,25 @@ fn _hook_sleep() {
 	let src_id = unsafe { src.raw.data.id };
 	if arg == 0.0 {
 		let _ = sender.send(Box::new(move || {
-			turf_gases()
-				.entry(src_id)
-				.and_modify(|turf| {
-					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
-				});
+			turf_gases().entry(src_id).and_modify(|turf| {
+				turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+			});
 			Ok(Value::null())
 		}));
-
 	} else {
 		let _ = sender.send(Box::new(move || {
-			turf_gases()
-				.entry(src_id)
-				.and_modify(|turf| {
-					turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
-				});
+			turf_gases().entry(src_id).and_modify(|turf| {
+				turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
+			});
 			Ok(Value::null())
 		}));
 	}
 	Ok(Value::from(true))
 }
-#[hook("/turf/proc/__auxtools_update_turf_infos")]
+#[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn _hook_infos(arg0: Value, arg1: Value) {
-	let immediate = arg0.as_number().map_err(|_| {
-		runtime!(
-			"Attempt to interpret non-number value as number {} {}:{}",
-			std::file!(),
-			std::line!(),
-			std::column!()
-		)
-	})?;
-	let adjacent_to_spess = arg1.as_number().unwrap_or(0.0) != 0.0;
+	let update_now = arg1.as_number().unwrap_or(0.0) != 0.0;
+	let adjacent_to_spess = arg0.as_number().unwrap_or(0.0) != 0.0;
 	let id = unsafe { src.raw.data.id };
 	let sender = aux_callbacks_sender(ADJACENCIES);
 	let boxed_fn: Box<dyn Fn() -> DMResult + Send + Sync> = Box::new(move || {
@@ -371,8 +359,8 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 					.and_then(|t| nonmax::NonMaxUsize::new(t.mix));
 			}
 			turf_gases().entry(id).and_modify(|turf| {
-					turf.adjacency = adjacency;
-					turf.adjacents = adjacent_mixes;
+				turf.adjacency = adjacency;
+				turf.adjacents = adjacent_mixes;
 			});
 		} else {
 			turf_gases().entry(id).and_modify(|turf| {
@@ -416,63 +404,10 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 		}
 		Ok(Value::null())
 	});
-	if immediate == 0.0 {
-		let _ = sender.send(boxed_fn);
-	} else {
+	if update_now {
 		boxed_fn()?;
-	}
-	Ok(Value::null())
-}
-
-#[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
-fn _hook_adjacent_turfs() {
-	if let Ok(adjacent_list) = src.get_list(byond_string!("atmos_adjacent_turfs")) {
-		let mut adjacent_mixes: [Option<nonmax::NonMaxUsize>; 6] = [None; 6];
-		let mut adjacency = 0;
-		for i in 1..=adjacent_list.len() {
-			let adj_val = adjacent_list.get(i)?;
-			let adjacent_num = adjacent_list.get(&adj_val)?.as_number()? as u8;
-			adjacency |= adjacent_num;
-			adjacent_mixes[adj_flag_to_idx(adjacent_num)] = turf_gases()
-				.get(&unsafe { adj_val.raw.data.id })
-				.and_then(|t| nonmax::NonMaxUsize::new(t.mix));
-		}
-		turf_gases()
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
-				turf.adjacency = adjacency;
-				turf.adjacents = adjacent_mixes;
-			});
 	} else {
-		turf_gases()
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|turf| {
-				turf.adjacency = 0;
-				turf.adjacents = [None; 6];
-			});
-	}
-	if let Ok(atmos_blocked_directions) =
-		src.get_number(byond_string!("conductivity_blocked_directions"))
-	{
-		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);
-		turf_temperatures()
-			.entry(unsafe { src.raw.data.id })
-			.and_modify(|entry| {
-				entry.adjacency = adjacency;
-			})
-			.or_insert_with(|| ThermalInfo {
-				temperature: src
-					.get_number(byond_string!("initial_temperature"))
-					.unwrap_or(TCMB),
-				thermal_conductivity: src
-					.get_number(byond_string!("thermal_conductivity"))
-					.unwrap_or(0.0),
-				heat_capacity: src
-					.get_number(byond_string!("heat_capacity"))
-					.unwrap_or(0.0),
-				adjacency,
-				adjacent_to_space: args[0].as_number().unwrap_or(0.0) != 0.0,
-			});
+		let _ = sender.send(boxed_fn);
 	}
 	Ok(Value::null())
 }

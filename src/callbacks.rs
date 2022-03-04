@@ -32,9 +32,6 @@ pub fn aux_callbacks_sender(item: usize) -> flume::Sender<DeferredFunc> {
 	unsafe { CALLBACK_CHANNELS.as_ref().unwrap()[item].0.clone() }
 }
 
-pub fn process_turf_adjacencies() {
-	process_aux_callbacks(ADJACENCIES);
-}
 pub fn process_aux_callbacks(item: usize) {
 	let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
 	with_aux_callback_receiver(

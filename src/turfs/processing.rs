@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 
 use parking_lot::RwLock;
 
-use crate::callbacks::process_aux_callbacks;
+use crate::callbacks::{process_aux_callbacks, process_aux_callbacks_threaded};
 
 const PROCESS_NOT_STARTED: u8 = 0;
 
@@ -58,6 +58,7 @@ fn _finish_process_turfs() {
 	) == Err(PROCESS_PROCESSING);
 	if !processing_turfs_unfinished {
 		process_aux_callbacks(crate::callbacks::ADJACENCIES);
+		//process_aux_callbacks(crate::callbacks::DEFERRED_AIRS);
 	}
 	if processing_callbacks_unfinished || processing_turfs_unfinished {
 		Ok(Value::from(true))
@@ -277,6 +278,29 @@ fn _process_turf_hook() {
 						})?;
 					ssair.set(
 						byond_string!("cost_post_process"),
+						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+					)?;
+					Ok(Value::null())
+				}));
+			}
+			{
+				let start_time = Instant::now();
+				process_aux_callbacks_threaded(crate::callbacks::DEFERRED_AIRS);
+				let bench = start_time.elapsed().as_millis();
+				let _ = sender.try_send(Box::new(move || {
+					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
+					let prev_cost = ssair
+						.get_number(byond_string!("cost_deferred_airs"))
+						.map_err(|_| {
+							runtime!(
+								"Attempt to interpret non-number value as number {} {}:{}",
+								std::file!(),
+								std::line!(),
+								std::column!()
+							)
+						})?;
+					ssair.set(
+						byond_string!("cost_deferred_airs"),
 						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
 					)?;
 					Ok(Value::null())

@@ -1,0 +1,67 @@
+name: Build Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target_name: i686-unknown-linux-gnu
+            artifact_name: libauxmos.so
+          - os: windows-latest
+            target_name: i686-pc-windows-msvc
+            artifact_name: auxmos.dll
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+
+      - name: Setup Toolchains (Windows)
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: i686-pc-windows-msvc
+        if: matrix.os == 'windows-latest'
+
+      - name: Install g++ multilib
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install build-essential g++-multilib libc6-i386 libstdc++6:i386
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Setup Toolchains (Ubuntu)
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: i686-unknown-linux-gnu
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Build auxmos (Windows)
+        uses: actions-rs/cargo@v1
+        with:
+          toolchain: stable
+          command: build
+          args: --target i686-pc-windows-msvc --release --features all_reaction_hooks,katmos
+        if: matrix.os == 'windows-latest'
+
+      - name: Build auxmos (Ubuntu)
+        uses: actions-rs/cargo@v1
+        with:
+          toolchain: stable
+          command: build
+          args: --target i686-unknown-linux-gnu --release --features all_reaction_hooks,katmos
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Upload binary to release
+        uses: svenstaro/upload-release-action@v1-release
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}
+          asset_name: ${{ matrix.artifact_name }}
+          tag: ${{ github.ref }}

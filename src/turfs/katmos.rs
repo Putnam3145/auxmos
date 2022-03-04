@@ -15,6 +15,8 @@ use indexmap::{IndexMap, IndexSet};
 use ahash::RandomState;
 use fxhash::FxBuildHasher;
 
+use crate::callbacks::process_aux_callbacks;
+
 use auxcallback::byond_callback_sender;
 
 use dashmap::*;
@@ -491,6 +493,9 @@ fn explosively_depressurize(
 			return Ok(Value::null()); // planet atmos > space
 		}
 	}
+
+	process_aux_callbacks(crate::callbacks::ADJACENCIES);
+
 	if space_turfs.is_empty() {
 		return Ok(Value::null());
 	}

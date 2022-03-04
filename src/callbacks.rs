@@ -48,3 +48,22 @@ pub fn process_aux_callbacks(item: usize) {
 		item,
 	)
 }
+
+pub fn process_aux_callbacks_threaded(item: usize) {
+	let sender = auxcallback::byond_callback_sender();
+	with_aux_callback_receiver(
+		|receiver| {
+			for callback in receiver.try_iter() {
+				if let Err(e) = callback() {
+					let _ = sender.try_send(Box::new(move || {
+						let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
+						let _ =
+							stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
+						Ok(Value::null())
+					}));
+				}
+			}
+		},
+		item,
+	)
+}

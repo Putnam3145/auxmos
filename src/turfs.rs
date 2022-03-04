@@ -324,21 +324,16 @@ fn _hook_sleep() {
 	let src_id = unsafe { src.raw.data.id };
 	if arg == 0.0 {
 		let _ = sender.send(Box::new(move || {
-			turf_gases()
-				.entry(src_id)
-				.and_modify(|turf| {
-					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
-				});
+			turf_gases().entry(src_id).and_modify(|turf| {
+				turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+			});
 			Ok(Value::null())
 		}));
-
 	} else {
 		let _ = sender.send(Box::new(move || {
-			turf_gases()
-				.entry(src_id)
-				.and_modify(|turf| {
-					turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
-				});
+			turf_gases().entry(src_id).and_modify(|turf| {
+				turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
+			});
 			Ok(Value::null())
 		}));
 	}
@@ -371,8 +366,8 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 					.and_then(|t| nonmax::NonMaxUsize::new(t.mix));
 			}
 			turf_gases().entry(id).and_modify(|turf| {
-					turf.adjacency = adjacency;
-					turf.adjacents = adjacent_mixes;
+				turf.adjacency = adjacency;
+				turf.adjacents = adjacent_mixes;
 			});
 		} else {
 			turf_gases().entry(id).and_modify(|turf| {

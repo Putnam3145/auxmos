@@ -6,8 +6,6 @@ pub mod reaction;
 
 pub mod callbacks;
 
-use callbacks::aux_callbacks_sender_threaded;
-
 use auxtools::*;
 
 use auxcleanup::*;
@@ -373,86 +371,32 @@ fn _adjust_heat_hook() {
 
 #[hook("/datum/gas_mixture/proc/transfer_to")]
 fn _transfer_hook(other: Value, moles: Value) {
-	let sender = aux_callbacks_sender_threaded(callbacks::DEFERRED_AIRS);
-	let src_id = src
-		.get_number(byond_string!("_extools_pointer_gasmixture"))
-		.map_err(|_| {
+	with_mixes_mut(src, &other, |our_mix, other_mix| {
+		other_mix.merge(&our_mix.remove(moles.as_number().map_err(|_| {
 			runtime!(
 				"Attempt to interpret non-number value as number {} {}:{}",
 				std::file!(),
 				std::line!(),
 				std::column!()
 			)
-		})?
-		.to_bits() as usize;
-	let arg_id = other
-		.get_number(byond_string!("_extools_pointer_gasmixture"))
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?
-		.to_bits() as usize;
-	let amount = moles.as_number().map_err(|_| {
-		runtime!(
-			"Attempt to interpret non-number value as number {} {}:{}",
-			std::file!(),
-			std::line!(),
-			std::column!()
-		)
-	})?;
-	let _ = sender.send(Box::new(move || {
-		with_mixes_mut_ptr(src_id, arg_id, |our_mix, other_mix| {
-			other_mix.merge(&our_mix.remove(amount));
-			Ok(())
-		})
-	}));
-	Ok(Value::null())
+		})?));
+		Ok(Value::null())
+	})
 }
 
 #[hook("/datum/gas_mixture/proc/transfer_ratio_to")]
 fn _transfer_ratio_hook(other: Value, ratio: Value) {
-	let sender = aux_callbacks_sender_threaded(callbacks::DEFERRED_AIRS);
-	let src_id = src
-		.get_number(byond_string!("_extools_pointer_gasmixture"))
-		.map_err(|_| {
+	with_mixes_mut(src, &other, |our_mix, other_mix| {
+		other_mix.merge(&our_mix.remove_ratio(ratio.as_number().map_err(|_| {
 			runtime!(
 				"Attempt to interpret non-number value as number {} {}:{}",
 				std::file!(),
 				std::line!(),
 				std::column!()
 			)
-		})?
-		.to_bits() as usize;
-	let arg_id = other
-		.get_number(byond_string!("_extools_pointer_gasmixture"))
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?
-		.to_bits() as usize;
-	let ratio_num = ratio.as_number().map_err(|_| {
-		runtime!(
-			"Attempt to interpret non-number value as number {} {}:{}",
-			std::file!(),
-			std::line!(),
-			std::column!()
-		)
-	})?;
-	let _ = sender.send(Box::new(move || {
-		with_mixes_mut_ptr(src_id, arg_id, |our_mix, other_mix| {
-			other_mix.merge(&our_mix.remove_ratio(ratio_num));
-			Ok(())
-		})
-	}));
-	Ok(Value::null())
+		})?));
+		Ok(Value::null())
+	})
 }
 
 #[hook("/datum/gas_mixture/proc/equalize_with")]

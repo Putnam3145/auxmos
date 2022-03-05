@@ -339,7 +339,6 @@ fn _hook_sleep() {
 	}
 	Ok(Value::from(true))
 }
-
 #[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn _hook_infos(arg0: Value, arg1: Value) {
 	let update_now = arg1.as_number().unwrap_or(0.0) != 0.0;

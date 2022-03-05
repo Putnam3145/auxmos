@@ -149,35 +149,6 @@ impl GasArena {
 			)
 		}
 	}
-	pub fn with_gas_mixtures_mut_threaded<T, F>(src: usize, arg: usize, f: F) -> Result<T, String>
-	where
-		F: FnOnce(&mut Mixture, &mut Mixture) -> Result<T, String>,
-	{
-		let src = src;
-		let arg = arg;
-		let lock = GAS_MIXTURES.read();
-		let gas_mixtures = lock.as_ref().unwrap();
-		if src == arg {
-			let mut entry = gas_mixtures
-				.get(src)
-				.ok_or_else(|| format!("No gas mixture with ID {} exists!", src))?
-				.write();
-			let mix = &mut entry;
-			let mut copied = mix.clone();
-			f(mix, &mut copied)
-		} else {
-			f(
-				&mut gas_mixtures
-					.get(src)
-					.ok_or_else(|| format!("No gas mixture with ID {} exists!", src))?
-					.write(),
-				&mut gas_mixtures
-					.get(arg)
-					.ok_or_else(|| format!("No gas mixture with ID {} exists!", arg))?
-					.write(),
-			)
-		}
-	}
 	fn with_gas_mixtures_custom<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
 		F: FnOnce(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T, Runtime>,
@@ -388,14 +359,6 @@ where
 			.to_bits() as usize,
 		f,
 	)
-}
-
-/// As `with_mix_mut`, but with two mixes, and takes in a ptr.
-pub fn with_mixes_mut_ptr<T, F>(src_mix: usize, arg_mix: usize, f: F) -> Result<T, String>
-where
-	F: FnMut(&mut Mixture, &mut Mixture) -> Result<T, String>,
-{
-	GasArena::with_gas_mixtures_mut_threaded(src_mix, arg_mix, f)
 }
 
 /// Allows different lock levels for each gas. Instead of relevant refs to the gases, returns the `RWLock` object.

@@ -640,7 +640,7 @@ fn flood_fill_equalize_turfs(
 			total_moles += cur_turf.total_moles() as f64;
 			for (_, loc) in adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y) {
 				if found_turfs.insert(loc) {
-					if let Some(adj_turf) = turf_gases().get(&loc) {
+					if let Some(adj_turf) = turf_gases().try_get(&loc).try_unwrap() {
 						if adj_turf.enabled() {
 							border_turfs.push_back((loc, *adj_turf.value()));
 						}
@@ -772,7 +772,7 @@ pub(crate) fn equalize(
 		.iter()
 		.filter_map(|i| {
 			if found_turfs.contains(&i)
-				|| turf_gases().get(&i).map_or(true, |m| {
+				|| turf_gases().try_get(&i).try_unwrap().map_or(true, |m| {
 					!m.enabled()
 						|| m.adjacency <= 0 || GasArena::with_all_mixtures(|all_mixtures| {
 						let our_moles = all_mixtures[m.mix].read().total_moles();
@@ -785,11 +785,13 @@ pub(crate) fn equalize(
 				}) {
 				return None;
 			}
-			let maybe_m = turf_gases().get(&i);
-			if maybe_m.is_none() {
-				return None;
-			}
-			let m = *maybe_m.unwrap();
+			let m = {
+				let maybe_m = turf_gases().try_get(&i).try_unwrap();
+				if maybe_m.is_none() {
+					return None;
+				}
+				*maybe_m.unwrap()
+			};
 			flood_fill_equalize_turfs(
 				*i,
 				m,

@@ -396,9 +396,8 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 		GasArena::with_all_mixtures(|all_mixtures| {
 			let turfs_to_save = turf_gases()
 				/*
-					This uses the DashMap raw API to access the shards directly.
-					This allows for it to be parallelized much more efficiently
-					with rayon; the speedup gained from this is actually linear
+					This uses DashMap's rayon feature to parallelize the process.
+					The speedup gained from this is actually linear
 					with the amount of cores the CPU has, which, to be frank,
 					is way better than I was expecting, even though this operation
 					is technically embarassingly parallel. It'll probably reach
@@ -406,14 +405,12 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 					but it's already blazingly fast on my i7, so it should be fine.
 				*/
 				.par_iter()
-				.filter(|entry| {
-					let m = *entry.value();
-					should_process(m, all_mixtures)
-				})
-				.filter_map(|entry| {
+				.map(|entry| {
 					let (&i, &m) = entry.pair();
-					process_cell(i, m, max_x, max_y, all_mixtures)
+					(i, m)
 				})
+				.filter(|&(_, m)| should_process(m, all_mixtures))
+				.filter_map(|(i, m)| process_cell(i, m, max_x, max_y, all_mixtures))
 				.collect::<Vec<_>>();
 			/*
 				For the optimization-heads reading this: this is not an unnecessary collect().

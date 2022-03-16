@@ -630,71 +630,77 @@ fn post_process() {
 		}
 	};
 	let vis = crate::gas::visibility_copies();
-	turf_gases().par_iter().for_each(|entry| {
-		let (&i, &m) = entry.pair();
-		let sender = byond_callback_sender();
-		let mut reacters = VecDeque::with_capacity(10);
-		let mut visual_updaters = VecDeque::with_capacity(25);
-		GasArena::with_all_mixtures(|all_mixtures| {
-			if should_check_planet_turfs {
-				let planetary_atmos = planetary_atmos();
-				m.enabled()
-					.then(|| remove_trace_planet_gases(m, planetary_atmos, all_mixtures));
-			}
-			m.enabled()
-				.then(|| post_process_cell(i, m, &vis, all_mixtures))
-				.flatten()
-				.and_then(|(i, should_update_visuals, reactable)| {
-					if should_update_visuals {
-						visual_updaters.push_back(i);
-						if visual_updaters.len() >= 25 {
-							let copy = visual_updaters.drain(..).collect::<Vec<_>>();
-							let _ = sender.try_send(Box::new(move || {
-								for &i in &copy {
-									let turf = unsafe { Value::turf_by_id_unchecked(i) };
-									turf.call("update_visuals", &[])?;
-								}
-								Ok(Value::null())
-							}));
-						}
-					}
-					if reactable {
-						reacters.push_back(i);
-						if reacters.len() >= 10 {
-							let copy = reacters.drain(..).collect::<Vec<_>>();
-							let _ = sender.try_send(Box::new(move || {
-								for &i in &copy {
-									let turf = unsafe { Value::turf_by_id_unchecked(i) };
-									if cfg!(target_os = "linux") {
-										turf.get(byond_string!("air"))?
-											.call("vv_react", &[&turf])?;
-									} else {
-										turf.get(byond_string!("air"))?.call("react", &[&turf])?;
-									}
-								}
-								Ok(Value::null())
-							}));
-						}
-					}
-					Some(())
-				});
-		});
-		let _ = sender.try_send(Box::new(move || {
-			for &i in &reacters {
-				let turf = unsafe { Value::turf_by_id_unchecked(i) };
-				if cfg!(target_os = "linux") {
-					turf.get(byond_string!("air"))?.call("vv_react", &[&turf])?;
-				} else {
-					turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+	turf_gases()
+		.par_iter()
+		.map(|entry| {
+			let (&i, &m) = entry.pair();
+			(i, m)
+		})
+		.for_each(|(i, m)| {
+			let sender = byond_callback_sender();
+			let mut reacters = VecDeque::with_capacity(10);
+			let mut visual_updaters = VecDeque::with_capacity(25);
+			GasArena::with_all_mixtures(|all_mixtures| {
+				if should_check_planet_turfs {
+					let planetary_atmos = planetary_atmos();
+					m.enabled()
+						.then(|| remove_trace_planet_gases(m, planetary_atmos, all_mixtures));
 				}
-			}
-			for &i in &visual_updaters {
-				let turf = unsafe { Value::turf_by_id_unchecked(i) };
-				turf.call("update_visuals", &[])?;
-			}
-			Ok(Value::null())
-		}));
-	});
+				m.enabled()
+					.then(|| post_process_cell(i, m, &vis, all_mixtures))
+					.flatten()
+					.and_then(|(i, should_update_visuals, reactable)| {
+						if should_update_visuals {
+							visual_updaters.push_back(i);
+							if visual_updaters.len() >= 25 {
+								let copy = visual_updaters.drain(..).collect::<Vec<_>>();
+								let _ = sender.try_send(Box::new(move || {
+									for &i in &copy {
+										let turf = unsafe { Value::turf_by_id_unchecked(i) };
+										turf.call("update_visuals", &[])?;
+									}
+									Ok(Value::null())
+								}));
+							}
+						}
+						if reactable {
+							reacters.push_back(i);
+							if reacters.len() >= 10 {
+								let copy = reacters.drain(..).collect::<Vec<_>>();
+								let _ = sender.try_send(Box::new(move || {
+									for &i in &copy {
+										let turf = unsafe { Value::turf_by_id_unchecked(i) };
+										if cfg!(target_os = "linux") {
+											turf.get(byond_string!("air"))?
+												.call("vv_react", &[&turf])?;
+										} else {
+											turf.get(byond_string!("air"))?
+												.call("react", &[&turf])?;
+										}
+									}
+									Ok(Value::null())
+								}));
+							}
+						}
+						Some(())
+					});
+			});
+			let _ = sender.try_send(Box::new(move || {
+				for &i in &reacters {
+					let turf = unsafe { Value::turf_by_id_unchecked(i) };
+					if cfg!(target_os = "linux") {
+						turf.get(byond_string!("air"))?.call("vv_react", &[&turf])?;
+					} else {
+						turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+					}
+				}
+				for &i in &visual_updaters {
+					let turf = unsafe { Value::turf_by_id_unchecked(i) };
+					turf.call("update_visuals", &[])?;
+				}
+				Ok(Value::null())
+			}));
+		});
 }
 
 static HEAT_PROCESS_TIME: AtomicU64 = AtomicU64::new(1_000_000);
@@ -769,8 +775,11 @@ fn _process_heat_hook() {
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * time_delta;
 			let temps_to_update = turf_temperatures()
 				.par_iter()
-				.filter_map(|entry| {
+				.map(|entry| {
 					let (&i, &t) = entry.pair();
+					(i, t)
+				})
+				.filter_map(|(i, t)| {
 					let adj = t.adjacency;
 					/*
 						If it has no thermal conductivity or low thermal capacity,

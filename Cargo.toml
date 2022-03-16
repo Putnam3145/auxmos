@@ -37,12 +37,9 @@ flume = "0.10.11"
 parking_lot = "0.12.0"
 fxhash = "0.2.1"
 nonmax = "0.5.0"
-indexmap = { version = "1.8.0", features = ["rayon"] }
 ahash = "0.7.6"
-
-[dependencies.dashmap]
-version = "5.1.0"
-features = ["raw-api"]
+indexmap = { version = "1.8.0", features = ["rayon"] }
+dashmap = { version = "5.2.0", features = ["rayon"] }
 
 [dependencies.tinyvec]
 version = "1.5.1"

@@ -630,7 +630,7 @@ fn flood_fill_equalize_turfs(
 	let mut total_moles = 0.0_f64;
 	border_turfs.push_back((i, m));
 	found_turfs.insert(i);
-	let mut space_this_time = false;
+	let mut ignore_zone = false;
 	loop {
 		if let Some((cur_idx, cur_turf)) = border_turfs.pop_front() {
 			if cur_turf.planetary_atmos.is_some() {
@@ -640,7 +640,12 @@ fn flood_fill_equalize_turfs(
 			total_moles += cur_turf.total_moles() as f64;
 			for (_, loc) in adjacent_tile_ids(cur_turf.adjacency, cur_idx, max_x, max_y) {
 				if found_turfs.insert(loc) {
-					if let Some(adj_turf) = turf_gases().try_get(&loc).try_unwrap() {
+					let result = turf_gases().try_get(&loc);
+					if result.is_locked() {
+						ignore_zone = true;
+						continue
+					}
+					if let Some(adj_turf) = result.try_unwrap() {
 						if adj_turf.enabled() {
 							border_turfs.push_back((loc, *adj_turf.value()));
 						}
@@ -648,7 +653,7 @@ fn flood_fill_equalize_turfs(
 							// Uh oh! looks like someone opened an airlock to space! TIME TO SUCK ALL THE AIR OUT!!!
 							// NOT ONE OF YOU IS GONNA SURVIVE THIS
 							// (I just made explosions less laggy, you're welcome)
-							if !space_this_time {
+							if !ignore_zone {
 								let _ = sender.send(Box::new(move || {
 									explosively_depressurize(
 										i,
@@ -658,7 +663,7 @@ fn flood_fill_equalize_turfs(
 									)
 								}));
 							}
-							space_this_time = true;
+							ignore_zone = true;
 						}
 					}
 				}
@@ -668,7 +673,7 @@ fn flood_fill_equalize_turfs(
 			break;
 		}
 	}
-	(!space_this_time).then(|| (turfs, planet_turfs, total_moles))
+	(!ignore_zone).then(|| (turfs, planet_turfs, total_moles))
 }
 
 fn process_planet_turfs(

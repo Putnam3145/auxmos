@@ -638,13 +638,14 @@ fn post_process() {
 		})
 		.filter_map(|(i, m)| {
 			GasArena::with_all_mixtures(|all_mixtures| {
-				if should_check_planet_turfs {
-					let planetary_atmos = planetary_atmos();
-					m.enabled()
-						.then(|| remove_trace_planet_gases(m, planetary_atmos, all_mixtures));
-				}
 				m.enabled()
-					.then(|| post_process_cell(i, m, &vis, all_mixtures))
+					.then(|| {
+						if should_check_planet_turfs {
+							let planetary_atmos = planetary_atmos();
+							remove_trace_planet_gases(m, planetary_atmos, all_mixtures);
+						}
+						post_process_cell(i, m, &vis, all_mixtures)
+					})
 					.flatten()
 			})
 		})

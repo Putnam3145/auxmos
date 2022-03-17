@@ -637,17 +637,17 @@ fn post_process() {
 			(i, m)
 		})
 		.filter_map(|(i, m)| {
-			GasArena::with_all_mixtures(|all_mixtures| {
-				m.enabled()
-					.then(|| {
+			m.enabled()
+				.then(|| {
+					GasArena::with_all_mixtures(|all_mixtures| {
 						if should_check_planet_turfs {
 							let planetary_atmos = planetary_atmos();
 							remove_trace_planet_gases(m, planetary_atmos, all_mixtures);
 						}
 						post_process_cell(i, m, &vis, all_mixtures)
 					})
-					.flatten()
-			})
+				})
+				.flatten()
 		})
 		.collect::<Vec<_>>();
 	processables.into_par_iter().chunks(25).for_each(|chunk| {

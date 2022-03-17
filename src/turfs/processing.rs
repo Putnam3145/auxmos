@@ -663,7 +663,6 @@ fn post_process() {
 					}
 				}
 				if should_update_vis {
-					let turf = unsafe { Value::turf_by_id_unchecked(i) };
 					turf.call("update_visuals", &[])?;
 				}
 			}

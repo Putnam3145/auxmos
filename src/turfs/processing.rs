@@ -396,27 +396,21 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 		GasArena::with_all_mixtures(|all_mixtures| {
 			let turfs_to_save = turf_gases()
 				/*
-					This uses the DashMap raw API to access the shards directly.
-					This allows for it to be parallelized much more efficiently
-					with rayon; the speedup gained from this is actually linear
+					This uses DashMap's rayon feature to parallelize the process.
+					The speedup gained from this is actually linear
 					with the amount of cores the CPU has, which, to be frank,
 					is way better than I was expecting, even though this operation
 					is technically embarassingly parallel. It'll probably reach
 					some maximum due to the global turf mixture lock access,
 					but it's already blazingly fast on my i7, so it should be fine.
 				*/
-				.shards()
 				.par_iter()
-				.map(|shard| {
-					shard
-						.read()
-						.iter()
-						.map(|(i, m_v)| (i, *m_v.get()))
-						.filter(|&(_, m)| should_process(m, all_mixtures))
-						.filter_map(|(&i, m)| process_cell(i, m, max_x, max_y, all_mixtures))
-						.collect::<Vec<_>>()
+				.map(|entry| {
+					let (&i, &m) = entry.pair();
+					(i, m)
 				})
-				.flatten()
+				.filter(|&(_, m)| should_process(m, all_mixtures))
+				.filter_map(|(i, m)| process_cell(i, m, max_x, max_y, all_mixtures))
 				.collect::<Vec<_>>();
 			/*
 				For the optimization-heads reading this: this is not an unnecessary collect().
@@ -636,76 +630,41 @@ fn post_process() {
 		}
 	};
 	let vis = crate::gas::visibility_copies();
-	turf_gases().shards().par_iter().for_each(|shard| {
-		let sender = byond_callback_sender();
-		let mut reacters = VecDeque::with_capacity(10);
-		let mut visual_updaters = VecDeque::with_capacity(25);
-		GasArena::with_all_mixtures(|all_mixtures| {
-			if should_check_planet_turfs {
-				let planetary_atmos = planetary_atmos();
-				shard
-					.read()
-					.iter()
-					.filter(|(_, m_v)| m_v.get().enabled())
-					.for_each(|(_, m_v)| {
-						remove_trace_planet_gases(*m_v.get(), planetary_atmos, all_mixtures);
-					});
-			}
-			shard
-				.read()
-				.iter()
-				.filter_map(|(&i, m_v)| {
-					let m = m_v.get();
-					m.enabled()
-						.then(|| post_process_cell(i, *m, &vis, all_mixtures))
-						.flatten()
+	let processables = turf_gases()
+		.par_iter()
+		.map(|entry| {
+			let (&i, &m) = entry.pair();
+			(i, m)
+		})
+		.filter_map(|(i, m)| {
+			m.enabled()
+				.then(|| {
+					GasArena::with_all_mixtures(|all_mixtures| {
+						if should_check_planet_turfs {
+							let planetary_atmos = planetary_atmos();
+							remove_trace_planet_gases(m, planetary_atmos, all_mixtures);
+						}
+						post_process_cell(i, m, &vis, all_mixtures)
+					})
 				})
-				.for_each(|(i, should_update_visuals, reactable)| {
-					if should_update_visuals {
-						visual_updaters.push_back(i);
-						if visual_updaters.len() >= 25 {
-							let copy = visual_updaters.drain(..).collect::<Vec<_>>();
-							let _ = sender.try_send(Box::new(move || {
-								for &i in &copy {
-									let turf = unsafe { Value::turf_by_id_unchecked(i) };
-									turf.call("update_visuals", &[])?;
-								}
-								Ok(Value::null())
-							}));
-						}
-					}
-					if reactable {
-						reacters.push_back(i);
-						if reacters.len() >= 10 {
-							let copy = reacters.drain(..).collect::<Vec<_>>();
-							let _ = sender.try_send(Box::new(move || {
-								for &i in &copy {
-									let turf = unsafe { Value::turf_by_id_unchecked(i) };
-									if cfg!(target_os = "linux") {
-										turf.get(byond_string!("air"))?
-											.call("vv_react", &[&turf])?;
-									} else {
-										turf.get(byond_string!("air"))?.call("react", &[&turf])?;
-									}
-								}
-								Ok(Value::null())
-							}));
-						}
-					}
-				});
-		});
+				.flatten()
+		})
+		.collect::<Vec<_>>();
+	processables.into_par_iter().chunks(25).for_each(|chunk| {
+		let sender = byond_callback_sender();
 		let _ = sender.try_send(Box::new(move || {
-			for &i in &reacters {
+			for (i, should_update_vis, should_react) in chunk.clone() {
 				let turf = unsafe { Value::turf_by_id_unchecked(i) };
-				if cfg!(target_os = "linux") {
-					turf.get(byond_string!("air"))?.call("vv_react", &[&turf])?;
-				} else {
-					turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+				if should_react {
+					if cfg!(target_os = "linux") {
+						turf.get(byond_string!("air"))?.call("vv_react", &[&turf])?;
+					} else {
+						turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+					}
 				}
-			}
-			for &i in &visual_updaters {
-				let turf = unsafe { Value::turf_by_id_unchecked(i) };
-				turf.call("update_visuals", &[])?;
+				if should_update_vis {
+					turf.call("update_visuals", &[])?;
+				}
 			}
 			Ok(Value::null())
 		}));
@@ -783,77 +742,69 @@ fn _process_heat_hook() {
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * time_delta;
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * time_delta;
 			let temps_to_update = turf_temperatures()
-				/*
-					Same weird shard trick as above.
-				*/
-				.shards()
 				.par_iter()
-				.map(|shard| {
-					shard
-						.read()
-						.iter()
-						.filter_map(|(&i, t_v)| {
-							let t = *t_v.get();
-							let adj = t.adjacency;
-							/*
-								If it has no thermal conductivity or low thermal capacity,
-								then it's not gonna interact, or at least shouldn't.
-							*/
-							if t.thermal_conductivity > 0.0 && t.heat_capacity > 300.0 && adj > 0 {
-								let mut heat_delta = 0.0;
-								let is_temp_delta_with_air = turf_gases()
-									.get(&i)
-									.filter(|m| m.simulation_level & SIMULATION_LEVEL_ANY > 0)
-									.and_then(|m| {
-										GasArena::with_all_mixtures(|all_mixtures| {
-											all_mixtures.get(m.mix).and_then(RwLock::try_read).map(
-												|gas| (t.temperature - gas.get_temperature() > 1.0),
-											)
-										})
-									})
-									.unwrap_or(false);
-								for (_, loc) in adjacent_tile_ids(adj, i, max_x, max_y) {
-									if let Some(other) = turf_temperatures().get(&loc) {
-										heat_delta +=
-											t.thermal_conductivity.min(other.thermal_conductivity)
-												* (other.temperature - t.temperature) * (t
-												.heat_capacity
-												* other.heat_capacity
-												/ (t.heat_capacity + other.heat_capacity));
-										/*
-											The horrible line above is essentially
-											sharing between solids--making it the minimum of both
-											conductivities makes this consistent, funnily enough.
-										*/
-									}
-								}
-								if t.adjacent_to_space {
-									/*
-										Straight up the standard blackbody radiation
-										equation. All these are f64s because
-										f32::MAX^4 < f64::MAX^(1/4), and t.temperature
-										is ordinarily an f32, meaning that
-										this will never go into infinities.
-									*/
-									let blackbody_radiation: f64 = (emissivity_constant
-										* ((t.temperature as f64).powi(4)))
-										- radiation_from_space_tick;
-									heat_delta -= blackbody_radiation as f32;
-								}
-								let temp_delta = heat_delta / t.heat_capacity;
-								if is_temp_delta_with_air || temp_delta.abs() > 0.1 {
-									Some((i, t.temperature + temp_delta))
-								} else {
-									None
-								}
-							} else {
-								None
-							}
-						})
-						.collect::<Vec<_>>()
+				.map(|entry| {
+					let (&i, &t) = entry.pair();
+					(i, t)
 				})
-				.flatten()
-				.collect::<Vec<_>>(); // for consistency, unfortunately
+				.filter_map(|(i, t)| {
+					let adj = t.adjacency;
+					/*
+						If it has no thermal conductivity or low thermal capacity,
+						then it's not gonna interact, or at least shouldn't.
+					*/
+					if t.thermal_conductivity > 0.0 && t.heat_capacity > 300.0 && adj > 0 {
+						let mut heat_delta = 0.0;
+						let is_temp_delta_with_air = turf_gases()
+							.get(&i)
+							.filter(|m| m.simulation_level & SIMULATION_LEVEL_ANY > 0)
+							.and_then(|m| {
+								GasArena::with_all_mixtures(|all_mixtures| {
+									all_mixtures
+										.get(m.mix)
+										.and_then(RwLock::try_read)
+										.map(|gas| (t.temperature - gas.get_temperature() > 1.0))
+								})
+							})
+							.unwrap_or(false);
+						for (_, loc) in adjacent_tile_ids(adj, i, max_x, max_y) {
+							if let Some(other) = turf_temperatures().get(&loc) {
+								heat_delta +=
+									t.thermal_conductivity.min(other.thermal_conductivity)
+										* (other.temperature - t.temperature) * (t.heat_capacity
+										* other.heat_capacity
+										/ (t.heat_capacity + other.heat_capacity));
+								/*
+									The horrible line above is essentially
+									sharing between solids--making it the minimum of both
+									conductivities makes this consistent, funnily enough.
+								*/
+							}
+						}
+						if t.adjacent_to_space {
+							/*
+								Straight up the standard blackbody radiation
+								equation. All these are f64s because
+								f32::MAX^4 < f64::MAX^(1/4), and t.temperature
+								is ordinarily an f32, meaning that
+								this will never go into infinities.
+							*/
+							let blackbody_radiation: f64 = (emissivity_constant
+								* ((t.temperature as f64).powi(4)))
+								- radiation_from_space_tick;
+							heat_delta -= blackbody_radiation as f32;
+						}
+						let temp_delta = heat_delta / t.heat_capacity;
+						if is_temp_delta_with_air || temp_delta.abs() > 0.1 {
+							Some((i, t.temperature + temp_delta))
+						} else {
+							None
+						}
+					} else {
+						None
+					}
+				})
+				.collect::<Vec<_>>();
 			temps_to_update
 				.par_iter()
 				.with_min_len(100)

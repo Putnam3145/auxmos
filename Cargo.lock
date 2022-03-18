@@ -76,6 +76,7 @@ dependencies = [
  "fxhash",
  "indexmap",
  "itertools",
+ "lazy_static",
  "nonmax",
  "parking_lot",
  "rayon",

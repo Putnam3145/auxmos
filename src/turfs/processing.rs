@@ -10,32 +10,77 @@ use std::time::{Duration, Instant};
 
 use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use parking_lot::RwLock;
+use parking_lot::{const_mutex, Condvar, Mutex, Once, RwLock};
 
 use crate::callbacks::process_aux_callbacks;
 
-const PROCESS_NOT_STARTED: u8 = 0;
+lazy_static! {
+	static ref SIGNALING_CHANNEL: (flume::Sender<SSairInfo>, flume::Receiver<SSairInfo>) =
+		flume::bounded(1);
+}
 
-const PROCESS_PROCESSING: u8 = 1;
+//SSair control conditions
+static CVAR: (Mutex<CvarStatus>, Condvar) = (const_mutex(CvarStatus::Continue), Condvar::new());
 
-const PROCESS_DONE: u8 = 2;
+static INIT: Once = Once::new();
 
-static PROCESSING_TURF_STEP: AtomicU8 = AtomicU8::new(PROCESS_NOT_STARTED);
+//to get thread statuses lock-free
+static IS_PROCESSING: AtomicBool = AtomicBool::new(false);
 
-static WAITING_FOR_THREAD: AtomicBool = AtomicBool::new(false);
+#[derive(Copy, Clone)]
+#[allow(unused)]
+struct SSairInfo {
+	fdm_max_steps: i32,
+	equalize_turf_limit: usize,
+	equalize_hard_turf_limit: usize,
+	equalize_enabled: bool,
+	group_pressure_goal: f32,
+	max_x: i32,
+	max_y: i32,
+	planet_enabled: bool,
+}
+
+enum CvarStatus {
+	Continue,
+	Paused,
+	Terminate,
+}
+
+fn set_cvar(new_status: CvarStatus) {
+	let (lock, cvar) = &CVAR;
+	let mut status = lock.lock();
+	*status = new_status;
+	cvar.notify_one();
+}
+
+fn with_processing_callback_receiver<T>(f: impl Fn(&flume::Receiver<SSairInfo>) -> T) -> T {
+	f(&SIGNALING_CHANNEL.1)
+}
+
+fn processing_callbacks_sender() -> flume::Sender<SSairInfo> {
+	SIGNALING_CHANNEL.0.clone()
+}
+
+#[init(full)]
+fn _init_process_control() -> Result<(), String> {
+	set_cvar(CvarStatus::Continue);
+	Ok(())
+}
+
+#[shutdown]
+fn _shutdown_process_control() {
+	set_cvar(CvarStatus::Terminate)
+}
 
 #[hook("/datum/controller/subsystem/air/proc/thread_running")]
 fn _thread_running_hook() {
-	Ok(Value::from(
-		PROCESSING_TURF_STEP.load(Ordering::Relaxed) == PROCESS_PROCESSING,
-	))
+	Ok(Value::from(IS_PROCESSING.load(Ordering::Relaxed)))
 }
 
 #[hook("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
 fn _finish_process_turfs() {
-	WAITING_FOR_THREAD.store(true, Ordering::SeqCst);
 	let arg_limit = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf finishing: 0"))?
@@ -49,30 +94,42 @@ fn _finish_process_turfs() {
 			)
 		})?;
 	let processing_callbacks_unfinished = process_callbacks_for_millis(arg_limit as u64);
-	// If PROCESSING_TURF_STEP is done, we're done, and we should set it to NOT_STARTED while we're at it.
-	let processing_turfs_unfinished = PROCESSING_TURF_STEP.compare_exchange(
-		PROCESS_DONE,
-		PROCESS_NOT_STARTED,
-		Ordering::SeqCst,
-		Ordering::Relaxed,
-	) == Err(PROCESS_PROCESSING);
-	if !processing_turfs_unfinished {
-		process_aux_callbacks(crate::callbacks::ADJACENCIES);
-	}
-	if processing_callbacks_unfinished || processing_turfs_unfinished {
+	process_aux_callbacks(crate::callbacks::ADJACENCIES);
+	if processing_callbacks_unfinished {
 		Ok(Value::from(true))
 	} else {
-		WAITING_FOR_THREAD.store(false, Ordering::SeqCst);
 		Ok(Value::from(false))
 	}
 }
 
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
-fn _process_turf_hook() {
-	let resumed = (args
-		.get(0)
-		.ok_or_else(|| runtime!("Wrong number of arguments to turf processing: 0"))?
-		.as_number()
+fn _process_turf_notify() {
+	let sender = processing_callbacks_sender();
+	let fdm_max_steps = src
+		.get_number(byond_string!("share_max_steps"))
+		.unwrap_or(1.0) as i32;
+	let equalize_turf_limit = src
+		.get_number(byond_string!("equalize_turf_limit"))
+		.unwrap_or(100.0) as usize;
+	let equalize_hard_turf_limit = src
+		.get_number(byond_string!("equalize_hard_turf_limit"))
+		.unwrap_or(2000.0) as usize;
+	let equalize_enabled = cfg!(feature = "equalization")
+		&& src
+			.get_number(byond_string!("equalize_enabled"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})? != 0.0;
+	let group_pressure_goal = src
+		.get_number(byond_string!("excited_group_pressure_goal"))
+		.unwrap_or(0.5);
+	let max_x = auxtools::Value::world()
+		.get_number(byond_string!("maxx"))
 		.map_err(|_| {
 			runtime!(
 				"Attempt to interpret non-number value as number {} {}:{}",
@@ -80,63 +137,69 @@ fn _process_turf_hook() {
 				std::line!(),
 				std::column!()
 			)
-		})? - 1.0)
-		.abs() < f32::EPSILON;
-	#[allow(unused_variables)]
-	if !resumed && PROCESSING_TURF_STEP.load(Ordering::SeqCst) == PROCESS_NOT_STARTED {
-		// Don't want to start it while there's already a thread running, so we only start it if it hasn't been started.
-		let fdm_max_steps = src
-			.get_number(byond_string!("share_max_steps"))
-			.unwrap_or(1.0) as i32;
-		let equalize_turf_limit = src
-			.get_number(byond_string!("equalize_turf_limit"))
-			.unwrap_or(100.0) as usize;
-		let equalize_hard_turf_limit = src
-			.get_number(byond_string!("equalize_hard_turf_limit"))
-			.unwrap_or(2000.0) as usize;
-		let equalize_enabled = cfg!(feature = "equalization")
-			&& src
-				.get_number(byond_string!("equalize_enabled"))
-				.map_err(|_| {
-					runtime!(
-						"Attempt to interpret non-number value as number {} {}:{}",
-						std::file!(),
-						std::line!(),
-						std::column!()
-					)
-				})? != 0.0;
-		let group_pressure_goal = src
-			.get_number(byond_string!("excited_group_pressure_goal"))
-			.unwrap_or(0.5);
-		let max_x = auxtools::Value::world()
-			.get_number(byond_string!("maxx"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})? as i32;
-		let max_y = auxtools::Value::world()
-			.get_number(byond_string!("maxy"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})? as i32;
-		let planet_enabled: bool =
-			src.get_number(byond_string!("planet_equalize_enabled"))
-				.unwrap_or(1.0) != 0.0;
-		rayon::spawn(move || {
-			PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
+		})? as i32;
+	let max_y = auxtools::Value::world()
+		.get_number(byond_string!("maxy"))
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})? as i32;
+	let planet_enabled: bool = src
+		.get_number(byond_string!("planet_equalize_enabled"))
+		.unwrap_or(1.0)
+		!= 0.0;
+		let _ = sender.try_send(SSairInfo {
+			fdm_max_steps: fdm_max_steps,
+			equalize_turf_limit: equalize_turf_limit,
+			equalize_hard_turf_limit: equalize_hard_turf_limit,
+			equalize_enabled: equalize_enabled,
+			group_pressure_goal: group_pressure_goal,
+			max_x: max_x,
+			max_y: max_y,
+			planet_enabled: planet_enabled,
+		});
+	Ok(Value::null())
+}
+#[hook("/datum/controller/subsystem/air/proc/check_process_threads")]
+fn _check_process_threads() {
+	let mut should_process = true;
+	{
+		let (lock, cvar) = &CVAR;
+		let status = lock.lock();
+		if matches!(*status, CvarStatus::Paused) {
+			cvar.notify_one();
+			should_process = false;
+		}
+	}
+	Ok(Value::from(should_process))
+}
+
+#[init(full)]
+fn _process_turf_start() -> Result<(), String> {
+	INIT.call_once(|| {
+		rayon::spawn(move || 'main: loop {
+			//this will block until process_turfs is called
+			let info = with_processing_callback_receiver(|receiver| receiver.recv().unwrap());
+			//this will block until ssair is paused
+			let (lock, cvar) = &CVAR;
+			{
+				let mut status = lock.lock();
+				*status = CvarStatus::Paused;
+				cvar.wait(&mut status);
+				if matches!(*status, CvarStatus::Terminate) {
+					continue 'main;
+				}
+			}
+			IS_PROCESSING.store(true, Ordering::SeqCst);
 			let sender = byond_callback_sender();
 			let (low_pressure_turfs, high_pressure_turfs) = {
 				let start_time = Instant::now();
-				let (low_pressure_turfs, high_pressure_turfs) = fdm(max_x, max_y, fdm_max_steps);
+				let (low_pressure_turfs, high_pressure_turfs) =
+					fdm(info.max_x, info.max_y, info.fdm_max_steps);
 				let bench = start_time.elapsed().as_millis();
 				let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
 				let _ = sender.try_send(Box::new(move || {
@@ -166,9 +229,9 @@ fn _process_turf_hook() {
 			{
 				let start_time = Instant::now();
 				let processed_turfs = excited_group_processing(
-					max_x,
-					max_y,
-					group_pressure_goal,
+					info.max_x,
+					info.max_y,
+					info.group_pressure_goal,
 					&low_pressure_turfs,
 				);
 				let bench = start_time.elapsed().as_millis();
@@ -196,7 +259,7 @@ fn _process_turf_hook() {
 					Ok(Value::null())
 				}));
 			}
-			if equalize_enabled {
+			if info.equalize_enabled {
 				let start_time = Instant::now();
 				let processed_turfs = {
 					#[cfg(feature = "putnamos")]
@@ -223,9 +286,9 @@ fn _process_turf_hook() {
 					#[cfg(feature = "katmos")]
 					{
 						super::katmos::equalize(
-							max_x,
-							max_y,
-							equalize_hard_turf_limit,
+							info.max_x,
+							info.max_y,
+							info.equalize_hard_turf_limit,
 							&high_pressure_turfs,
 						)
 					}
@@ -282,10 +345,18 @@ fn _process_turf_hook() {
 					Ok(Value::null())
 				}));
 			}
-			PROCESSING_TURF_STEP.store(PROCESS_DONE, Ordering::SeqCst);
+			IS_PROCESSING.store(false, Ordering::SeqCst);
+			{
+				let mut status = lock.lock();
+				if !matches!(*status, CvarStatus::Terminate) {
+					*status = CvarStatus::Continue;
+				} else {
+					continue 'main;
+				}
+			}
 		});
-	}
-	Ok(Value::from(false))
+	});
+	Ok(())
 }
 
 // Compares with neighbors, returning early if any of them are valid.
@@ -385,12 +456,11 @@ fn fdm(max_x: i32, max_y: i32, fdm_max_steps: i32) -> (BTreeSet<TurfID>, BTreeSe
 		This is a much simpler FDM system, basically like LINDA but without its most important feature,
 		sleeping turfs, which is why I've renamed it to fdm.
 	*/
-	PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
 	let mut low_pressure_turfs: BTreeSet<TurfID> = BTreeSet::new();
 	let mut high_pressure_turfs: BTreeSet<TurfID> = BTreeSet::new();
 	let mut cur_count = 1;
 	loop {
-		if cur_count > fdm_max_steps || WAITING_FOR_THREAD.load(Ordering::SeqCst) {
+		if cur_count > fdm_max_steps {
 			break;
 		}
 		GasArena::with_all_mixtures(|all_mixtures| {
@@ -650,7 +720,7 @@ fn post_process() {
 				.flatten()
 		})
 		.collect::<Vec<_>>();
-	processables.into_par_iter().chunks(25).for_each(|chunk| {
+	processables.into_par_iter().chunks(30).for_each(|chunk| {
 		let sender = byond_callback_sender();
 		let _ = sender.try_send(Box::new(move || {
 			for (i, should_update_vis, should_react) in chunk.clone() {
@@ -879,7 +949,6 @@ fn _process_heat_hook() {
 
 #[shutdown]
 fn reset_auxmos_processing() {
-	PROCESSING_TURF_STEP.store(PROCESS_NOT_STARTED, Ordering::SeqCst);
 	PROCESSING_HEAT.store(false, Ordering::SeqCst);
 	HEAT_PROCESS_TIME.store(1_000_000, Ordering::SeqCst);
 }

@@ -152,16 +152,16 @@ fn _process_turf_notify() {
 		.get_number(byond_string!("planet_equalize_enabled"))
 		.unwrap_or(1.0)
 		!= 0.0;
-		let _ = sender.try_send(SSairInfo {
-			fdm_max_steps: fdm_max_steps,
-			equalize_turf_limit: equalize_turf_limit,
-			equalize_hard_turf_limit: equalize_hard_turf_limit,
-			equalize_enabled: equalize_enabled,
-			group_pressure_goal: group_pressure_goal,
-			max_x: max_x,
-			max_y: max_y,
-			planet_enabled: planet_enabled,
-		});
+	let _ = sender.try_send(SSairInfo {
+		fdm_max_steps: fdm_max_steps,
+		equalize_turf_limit: equalize_turf_limit,
+		equalize_hard_turf_limit: equalize_hard_turf_limit,
+		equalize_enabled: equalize_enabled,
+		group_pressure_goal: group_pressure_goal,
+		max_x: max_x,
+		max_y: max_y,
+		planet_enabled: planet_enabled,
+	});
 	Ok(Value::null())
 }
 #[hook("/datum/controller/subsystem/air/proc/check_process_threads")]

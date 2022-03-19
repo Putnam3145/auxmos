@@ -47,7 +47,7 @@ jobs:
         if: matrix.os == 'windows-latest'
 
       - name: Build auxmos (Ubuntu)
-        run: cargo rustc --target=i686-pc-windows-msvc --release --features all_reaction_hooks,katmos -- -C target-cpu=skylake
+        run: cargo rustc --target=i686-unknown-linux-gnu --release --features all_reaction_hooks,katmos -- -C target-cpu=skylake
         if: matrix.os == 'ubuntu-latest'
 
       - name: Upload binary to release

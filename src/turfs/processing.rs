@@ -650,7 +650,7 @@ fn post_process() {
 				.flatten()
 		})
 		.collect::<Vec<_>>();
-	processables.into_par_iter().chunks(25).for_each(|chunk| {
+	processables.into_par_iter().chunks(30).for_each(|chunk| {
 		let sender = byond_callback_sender();
 		let _ = sender.try_send(Box::new(move || {
 			for (i, should_update_vis, should_react) in chunk.clone() {

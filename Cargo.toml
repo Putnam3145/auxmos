@@ -40,6 +40,7 @@ nonmax = "0.5.0"
 ahash = "0.7.6"
 indexmap = { version = "1.8.0", features = ["rayon"] }
 dashmap = { version = "5.2.0", features = ["rayon"] }
+lazy_static = "1.4.0"
 
 [dependencies.tinyvec]
 version = "1.5.1"

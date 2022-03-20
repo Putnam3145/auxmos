@@ -16,6 +16,9 @@ use reaction::react_by_id;
 
 use gas::constants::*;
 
+#[macro_use]
+extern crate lazy_static;
+
 #[hook("/proc/process_atmos_callbacks")]
 fn _atmos_callback_handle() {
 	auxcallback::callback_processing_hook(args)

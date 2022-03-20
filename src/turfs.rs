@@ -320,22 +320,15 @@ fn _hook_sleep() {
 	} else {
 		0.0
 	};
-	let sender = aux_callbacks_sender(crate::callbacks::ADJACENCIES);
 	let src_id = unsafe { src.raw.data.id };
 	if arg == 0.0 {
-		let _ = sender.send(Box::new(move || {
-			turf_gases().entry(src_id).and_modify(|turf| {
-				turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
-			});
-			Ok(Value::null())
-		}));
+		turf_gases().entry(src_id).and_modify(|turf| {
+			turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+		});
 	} else {
-		let _ = sender.send(Box::new(move || {
-			turf_gases().entry(src_id).and_modify(|turf| {
-				turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
-			});
-			Ok(Value::null())
-		}));
+		turf_gases().entry(src_id).and_modify(|turf| {
+			turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
+		});
 	}
 	Ok(Value::from(true))
 }

@@ -518,7 +518,7 @@ fn excited_group_processing(
 		if found_turfs.contains(&initial_turf) {
 			continue;
 		}
-		if let Some(initial_mix_ref) = turf_gases().get(&initial_turf) {
+		if let Some(initial_mix_ref) = turf_gases().try_get(&initial_turf).try_unwrap() {
 			let mut border_turfs: VecDeque<(TurfID, TurfMixture)> = VecDeque::with_capacity(40);
 			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
 			let mut min_pressure = initial_mix_ref.return_pressure();
@@ -551,7 +551,7 @@ fn excited_group_processing(
 									continue;
 								}
 								found_turfs.insert(loc);
-								if let Some(border_mix) = turf_gases().get(&loc) {
+								if let Some(border_mix) = turf_gases().try_get(&loc).try_unwrap() {
 									if border_mix.simulation_level & SIMULATION_LEVEL_DISABLED
 										!= SIMULATION_LEVEL_DISABLED
 									{

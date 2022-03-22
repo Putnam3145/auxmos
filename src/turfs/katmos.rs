@@ -643,7 +643,7 @@ fn flood_fill_equalize_turfs(
 					let result = turf_gases().try_get(&loc);
 					if result.is_locked() {
 						ignore_zone = true;
-						continue
+						continue;
 					}
 					if let Some(adj_turf) = result.try_unwrap() {
 						if adj_turf.enabled() {

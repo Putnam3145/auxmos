@@ -17,7 +17,7 @@ use crate::constants::*;
 
 use crate::GasArena;
 
-use dashmap::DashMap;
+use dashmap::{try_result::TryResult, DashMap};
 
 use fxhash::FxBuildHasher;
 
@@ -236,7 +236,14 @@ fn _hook_register_turf() {
 			}
 		}
 		let id = unsafe { src.raw.data.id };
-		turf_gases().insert(id, to_insert);
+		if let Some(e) = turf_gases().try_entry(id) {
+			e.or_insert(to_insert);
+		} else {
+			let _ = aux_callbacks_sender(crate::callbacks::ADJACENCIES).send(Box::new(move || {
+				unsafe { Value::turf_by_id_unchecked(id) }
+					.call("update_air_ref", &[&Value::from(simulation_level)])
+			}));
+		}
 		Ok(Value::null())
 	}
 }
@@ -337,9 +344,9 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 	let update_now = arg1.as_number().unwrap_or(0.0) != 0.0;
 	let adjacent_to_spess = arg0.as_number().unwrap_or(0.0) != 0.0;
 	let id = unsafe { src.raw.data.id };
-	let sender = aux_callbacks_sender(crate::callbacks::ADJACENCIES);
 	let boxed_fn: Box<dyn Fn() -> DMResult + Send + Sync> = Box::new(move || {
 		let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
+		let mut poisoned = false;
 		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
 			let mut adjacent_mixes: [Option<nonmax::NonMaxUsize>; 6] = [None; 6];
 			let mut adjacency = 0;
@@ -347,38 +354,99 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 				let adj_val = adjacent_list.get(i)?;
 				let adjacent_num = adjacent_list.get(&adj_val)?.as_number()? as u8;
 				adjacency |= adjacent_num;
-				adjacent_mixes[adj_flag_to_idx(adjacent_num)] = turf_gases()
-					.get(&unsafe { adj_val.raw.data.id })
-					.and_then(|t| nonmax::NonMaxUsize::new(t.mix));
+				match turf_gases().try_get(&unsafe { adj_val.raw.data.id }) {
+					TryResult::Present(t) => {
+						adjacent_mixes[adj_flag_to_idx(adjacent_num)] =
+							nonmax::NonMaxUsize::new(t.mix)
+					}
+					TryResult::Locked => {
+						poisoned = true;
+					}
+					TryResult::Absent => {}
+				}
+				if poisoned {
+					let _ = aux_callbacks_sender(crate::callbacks::ADJACENCIES)
+						.send(Box::new(move || {
+							unsafe { Value::turf_by_id_unchecked(id) }.call(
+								"__update_auxtools_turf_adjacency_info",
+								&[&Value::from(update_now), &Value::from(adjacent_to_spess)],
+							)
+						}))
+						.unwrap();
+					return Ok(Value::null());
+				}
 			}
-			turf_gases().entry(id).and_modify(|turf| {
-				turf.adjacency = adjacency;
-				turf.adjacents = adjacent_mixes;
-			});
+			match turf_gases().try_get_mut(&id) {
+				TryResult::Present(mut turf) => {
+					turf.adjacency = adjacency;
+					turf.adjacents = adjacent_mixes;
+				}
+				TryResult::Locked => {
+					poisoned = true;
+				}
+				TryResult::Absent => {}
+			}
 		} else {
-			turf_gases().entry(id).and_modify(|turf| {
-				turf.adjacency = 0;
-				turf.adjacents = [None; 6];
-			});
+			match turf_gases().try_get_mut(&id) {
+				TryResult::Present(mut turf) => {
+					turf.adjacency = 0;
+					turf.adjacents = [None; 6];
+				}
+				TryResult::Locked => {
+					poisoned = true;
+				}
+				TryResult::Absent => {}
+			};
+		}
+		if poisoned {
+			let _ = aux_callbacks_sender(crate::callbacks::ADJACENCIES)
+				.send(Box::new(move || {
+					unsafe { Value::turf_by_id_unchecked(id) }.call(
+						"__update_auxtools_turf_adjacency_info",
+						&[&Value::from(update_now), &Value::from(adjacent_to_spess)],
+					)
+				}))
+				.unwrap();
+			return Ok(Value::null());
 		}
 		if let Ok(blocks_air) = src_turf.get_number(byond_string!("blocks_air")) {
 			if blocks_air == 0.0 {
-				turf_gases().entry(id).and_modify(|turf| {
-					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
-				});
-			} else {
-				turf_gases().entry(id).and_modify(|turf| {
-					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
-				});
+				match turf_gases().try_get_mut(&id) {
+					TryResult::Present(mut turf) => {
+						turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+					}
+					TryResult::Locked => {
+						poisoned = true;
+					}
+					TryResult::Absent => {}
+				};
 			}
+		} else {
+			match turf_gases().try_get_mut(&id) {
+				TryResult::Present(mut turf) => {
+					turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
+				}
+				TryResult::Locked => poisoned = true,
+				TryResult::Absent => {}
+			};
+		}
+		if poisoned {
+			let _ = aux_callbacks_sender(crate::callbacks::ADJACENCIES)
+				.send(Box::new(move || {
+					unsafe { Value::turf_by_id_unchecked(id) }.call(
+						"__update_auxtools_turf_adjacency_info",
+						&[&Value::from(update_now), &Value::from(adjacent_to_spess)],
+					)
+				}))
+				.unwrap();
+			return Ok(Value::null());
 		}
 		if let Ok(atmos_blocked_directions) =
 			src_turf.get_number(byond_string!("conductivity_blocked_directions"))
 		{
 			let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);
-			turf_temperatures()
-				.entry(id)
-				.and_modify(|entry| {
+			if let Some(e) = turf_temperatures().try_entry(id) {
+				e.and_modify(|entry| {
 					entry.adjacency = adjacency;
 				})
 				.or_insert_with(|| ThermalInfo {
@@ -394,20 +462,24 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 					adjacency,
 					adjacent_to_space: adjacent_to_spess,
 				});
+			}
 		}
 		Ok(Value::null())
 	});
 	if update_now {
 		boxed_fn()?;
 	} else {
-		let _ = sender.send(boxed_fn);
+		let _ = aux_callbacks_sender(crate::callbacks::ADJACENCIES).send(boxed_fn);
 	}
 	Ok(Value::null())
 }
 
 #[hook("/turf/proc/return_temperature")]
 fn _hook_turf_temperature() {
-	if let Some(temp_info) = turf_temperatures().get(&unsafe { src.raw.data.id }) {
+	if let Some(temp_info) = turf_temperatures()
+		.try_get(&unsafe { src.raw.data.id })
+		.try_unwrap()
+	{
 		if temp_info.temperature.is_normal() {
 			Ok(Value::from(temp_info.temperature))
 		} else {

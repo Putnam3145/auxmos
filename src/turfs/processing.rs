@@ -518,62 +518,67 @@ fn excited_group_processing(
 		if found_turfs.contains(&initial_turf) {
 			continue;
 		}
-		if let Some(initial_mix_ref) = turf_gases().try_get(&initial_turf).try_unwrap() {
-			let mut border_turfs: VecDeque<(TurfID, TurfMixture)> = VecDeque::with_capacity(40);
-			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
-			let mut min_pressure = initial_mix_ref.return_pressure();
-			let mut max_pressure = min_pressure;
-			let mut fully_mixed = Mixture::new();
-			border_turfs.push_back((initial_turf, *initial_mix_ref.value()));
-			found_turfs.insert(initial_turf);
-			GasArena::with_all_mixtures(|all_mixtures| {
-				loop {
-					if turfs.len() >= 2500 {
-						break;
-					}
-					if let Some((i, turf)) = border_turfs.pop_front() {
-						let adj_tiles = adjacent_tile_ids(turf.adjacency, i, max_x, max_y);
-						if let Some(lock) = all_mixtures.get(turf.mix) {
-							let mix = lock.read();
-							let pressure = mix.return_pressure();
-							let this_max = max_pressure.max(pressure);
-							let this_min = min_pressure.min(pressure);
-							if (this_max - this_min).abs() >= pressure_goal {
+		let initial_mix_ref = {
+			let maybe_initial_mix_ref = turf_gases().try_get(&initial_turf).try_unwrap();
+			if maybe_initial_mix_ref.is_none() {
+				continue;
+			}
+			*maybe_initial_mix_ref.unwrap()
+		};
+		let mut border_turfs: VecDeque<(TurfID, TurfMixture)> = VecDeque::with_capacity(40);
+		let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
+		let mut min_pressure = initial_mix_ref.return_pressure();
+		let mut max_pressure = min_pressure;
+		let mut fully_mixed = Mixture::new();
+		border_turfs.push_back((initial_turf, initial_mix_ref));
+		found_turfs.insert(initial_turf);
+		GasArena::with_all_mixtures(|all_mixtures| {
+			loop {
+				if turfs.len() >= 2500 {
+					break;
+				}
+				if let Some((i, turf)) = border_turfs.pop_front() {
+					let adj_tiles = adjacent_tile_ids(turf.adjacency, i, max_x, max_y);
+					if let Some(lock) = all_mixtures.get(turf.mix) {
+						let mix = lock.read();
+						let pressure = mix.return_pressure();
+						let this_max = max_pressure.max(pressure);
+						let this_min = min_pressure.min(pressure);
+						if (this_max - this_min).abs() >= pressure_goal {
+							continue;
+						}
+						min_pressure = this_min;
+						max_pressure = this_max;
+						turfs.push(turf);
+						fully_mixed.merge(&mix);
+						fully_mixed.volume += mix.volume;
+						for (_, loc) in adj_tiles {
+							if found_turfs.contains(&loc) {
 								continue;
 							}
-							min_pressure = this_min;
-							max_pressure = this_max;
-							turfs.push(turf);
-							fully_mixed.merge(&mix);
-							fully_mixed.volume += mix.volume;
-							for (_, loc) in adj_tiles {
-								if found_turfs.contains(&loc) {
-									continue;
-								}
-								found_turfs.insert(loc);
-								if let Some(border_mix) = turf_gases().try_get(&loc).try_unwrap() {
-									if border_mix.simulation_level & SIMULATION_LEVEL_DISABLED
-										!= SIMULATION_LEVEL_DISABLED
-									{
-										border_turfs.push_back((loc, *border_mix));
-									}
+							found_turfs.insert(loc);
+							if let Some(border_mix) = turf_gases().try_get(&loc).try_unwrap() {
+								if border_mix.simulation_level & SIMULATION_LEVEL_DISABLED
+									!= SIMULATION_LEVEL_DISABLED
+								{
+									border_turfs.push_back((loc, *border_mix));
 								}
 							}
 						}
-					} else {
-						break;
 					}
+				} else {
+					break;
 				}
-				fully_mixed.multiply(1.0 / turfs.len() as f32);
-				if !fully_mixed.is_corrupt() {
-					turfs.par_iter().with_min_len(125).for_each(|turf| {
-						if let Some(mix_lock) = all_mixtures.get(turf.mix) {
-							mix_lock.write().copy_from_mutable(&fully_mixed);
-						}
-					});
-				}
-			});
-		}
+			}
+			fully_mixed.multiply(1.0 / turfs.len() as f32);
+			if !fully_mixed.is_corrupt() {
+				turfs.par_iter().with_min_len(125).for_each(|turf| {
+					if let Some(mix_lock) = all_mixtures.get(turf.mix) {
+						mix_lock.write().copy_from_mutable(&fully_mixed);
+					}
+				});
+			}
+		});
 	}
 	found_turfs.len()
 }

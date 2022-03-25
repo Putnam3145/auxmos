@@ -761,7 +761,8 @@ fn _process_heat_hook() {
 					if t.thermal_conductivity > 0.0 && t.heat_capacity > 300.0 && adj > 0 {
 						let mut heat_delta = 0.0;
 						let is_temp_delta_with_air = turf_gases()
-							.get(&i)
+							.try_get(&i)
+							.try_unwrap()
 							.filter(|m| m.simulation_level & SIMULATION_LEVEL_ANY > 0)
 							.and_then(|m| {
 								GasArena::with_all_mixtures(|all_mixtures| {

@@ -774,7 +774,7 @@ fn _process_heat_hook() {
 							})
 							.unwrap_or(false);
 						for (_, loc) in adjacent_tile_ids(adj, i, max_x, max_y) {
-							if let Some(other) = turf_temperatures().get(&loc) {
+							if let Some(other) = turf_temperatures().try_get(&loc).try_unwrap() {
 								heat_delta +=
 									t.thermal_conductivity.min(other.thermal_conductivity)
 										* (other.temperature - t.temperature) * (t.heat_capacity
@@ -815,7 +815,7 @@ fn _process_heat_hook() {
 				.par_iter()
 				.with_min_len(100)
 				.for_each(|&(i, new_temp)| {
-					let maybe_t = turf_temperatures().get_mut(&i);
+					let maybe_t = turf_temperatures().try_get_mut(&i).try_unwrap();
 					if maybe_t.is_none() {
 						return;
 					}

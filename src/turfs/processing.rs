@@ -308,7 +308,7 @@ fn should_process(m: TurfMixture, all_mixtures: &[RwLock<Mixture>]) -> bool {
 					}
 				}
 				m.planetary_atmos
-					.and_then(|id| planetary_atmos().get(&id))
+					.and_then(|id| planetary_atmos().try_get(&id).try_unwrap())
 					.map_or(false, |planet_atmos_entry| {
 						let planet_atmos = planet_atmos_entry.value();
 						gas.temperature_compare(planet_atmos)
@@ -353,7 +353,10 @@ fn process_cell(
 			None => return None, // this would lead to inconsistencies--no bueno
 		}
 	}
-	if let Some(planet_atmos_entry) = m.planetary_atmos.and_then(|id| planetary_atmos().get(&id)) {
+	if let Some(planet_atmos_entry) = m
+		.planetary_atmos
+		.and_then(|id| planetary_atmos().try_get(&id).try_unwrap())
+	{
 		end_gas.merge(planet_atmos_entry.value());
 		adj_amount += 1;
 	}
@@ -591,7 +594,10 @@ fn remove_trace_planet_gases(
 	planetary_atmos: &'static DashMap<u32, Mixture, FxBuildHasher>,
 	all_mixtures: &[RwLock<Mixture>],
 ) {
-	if let Some(planet_atmos_entry) = m.planetary_atmos.and_then(|id| planetary_atmos.get(&id)) {
+	if let Some(planet_atmos_entry) = m
+		.planetary_atmos
+		.and_then(|id| planetary_atmos.try_get(&id).try_unwrap())
+	{
 		let planet_atmos = planet_atmos_entry.value();
 		if all_mixtures
 			.get(m.mix)

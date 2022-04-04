@@ -44,11 +44,19 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
 
       - name: Build auxmos (Windows)
-        run: cargo rustc --target=i686-pc-windows-msvc --release --features all_reaction_hooks,katmos -- -C target-cpu=znver2
+        uses: actions-rs/cargo@v1
+        with:
+          toolchain: stable
+          command: build
+          args: --target i686-pc-windows-msvc --release --features "all_reaction_hooks katmos"
         if: matrix.os == 'windows-latest'
 
       - name: Build auxmos (Ubuntu)
-        run: cargo rustc --target=i686-unknown-linux-gnu --release --features all_reaction_hooks,katmos -- -C target-cpu=znver2
+        uses: actions-rs/cargo@v1
+        with:
+          toolchain: stable
+          command: build
+          args: --target i686-unknown-linux-gnu --release --features "generic_fire_hook katmos"
         if: matrix.os == 'ubuntu-latest'
 
       - name: Upload binary to release

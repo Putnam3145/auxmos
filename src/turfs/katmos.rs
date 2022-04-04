@@ -152,7 +152,10 @@ fn finalize_eq(
 			Ok(())
 		});
 	} else if planet_transfer_amount < 0.0 {
-		if let Some(air_entry) = turf.planetary_atmos.and_then(|i| planetary_atmos().get(&i)) {
+		if let Some(air_entry) = turf
+			.planetary_atmos
+			.and_then(|i| planetary_atmos().try_get(&i).try_unwrap())
+		{
 			let planet_air = air_entry.value();
 			let planet_sum = planet_air.total_moles();
 			if planet_sum > 0.0 {
@@ -643,7 +646,7 @@ fn flood_fill_equalize_turfs(
 					let result = turf_gases().try_get(&loc);
 					if result.is_locked() {
 						ignore_zone = true;
-						continue
+						continue;
 					}
 					if let Some(adj_turf) = result.try_unwrap() {
 						if adj_turf.enabled() {
@@ -691,7 +694,9 @@ fn process_planet_turfs(
 	if sample_planet_atmos.is_none() {
 		return;
 	}
-	let maybe_planet_sum = planetary_atmos().get(&sample_planet_atmos.unwrap());
+	let maybe_planet_sum = planetary_atmos()
+		.try_get(&sample_planet_atmos.unwrap())
+		.try_unwrap();
 	if maybe_planet_sum.is_none() {
 		return;
 	}

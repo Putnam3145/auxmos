@@ -308,7 +308,7 @@ fn should_process(m: TurfMixture, all_mixtures: &[RwLock<Mixture>]) -> bool {
 					}
 				}
 				m.planetary_atmos
-					.and_then(|id| planetary_atmos().get(&id))
+					.and_then(|id| planetary_atmos().try_get(&id).try_unwrap())
 					.map_or(false, |planet_atmos_entry| {
 						let planet_atmos = planet_atmos_entry.value();
 						gas.temperature_compare(planet_atmos)
@@ -353,7 +353,10 @@ fn process_cell(
 			None => return None, // this would lead to inconsistencies--no bueno
 		}
 	}
-	if let Some(planet_atmos_entry) = m.planetary_atmos.and_then(|id| planetary_atmos().get(&id)) {
+	if let Some(planet_atmos_entry) = m
+		.planetary_atmos
+		.and_then(|id| planetary_atmos().try_get(&id).try_unwrap())
+	{
 		end_gas.merge(planet_atmos_entry.value());
 		adj_amount += 1;
 	}
@@ -518,62 +521,67 @@ fn excited_group_processing(
 		if found_turfs.contains(&initial_turf) {
 			continue;
 		}
-		if let Some(initial_mix_ref) = turf_gases().get(&initial_turf) {
-			let mut border_turfs: VecDeque<(TurfID, TurfMixture)> = VecDeque::with_capacity(40);
-			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
-			let mut min_pressure = initial_mix_ref.return_pressure();
-			let mut max_pressure = min_pressure;
-			let mut fully_mixed = Mixture::new();
-			border_turfs.push_back((initial_turf, *initial_mix_ref.value()));
-			found_turfs.insert(initial_turf);
-			GasArena::with_all_mixtures(|all_mixtures| {
-				loop {
-					if turfs.len() >= 2500 {
-						break;
-					}
-					if let Some((i, turf)) = border_turfs.pop_front() {
-						let adj_tiles = adjacent_tile_ids(turf.adjacency, i, max_x, max_y);
-						if let Some(lock) = all_mixtures.get(turf.mix) {
-							let mix = lock.read();
-							let pressure = mix.return_pressure();
-							let this_max = max_pressure.max(pressure);
-							let this_min = min_pressure.min(pressure);
-							if (this_max - this_min).abs() >= pressure_goal {
+		let initial_mix_ref = {
+			let maybe_initial_mix_ref = turf_gases().try_get(&initial_turf).try_unwrap();
+			if maybe_initial_mix_ref.is_none() {
+				continue;
+			}
+			*maybe_initial_mix_ref.unwrap()
+		};
+		let mut border_turfs: VecDeque<(TurfID, TurfMixture)> = VecDeque::with_capacity(40);
+		let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
+		let mut min_pressure = initial_mix_ref.return_pressure();
+		let mut max_pressure = min_pressure;
+		let mut fully_mixed = Mixture::new();
+		border_turfs.push_back((initial_turf, initial_mix_ref));
+		found_turfs.insert(initial_turf);
+		GasArena::with_all_mixtures(|all_mixtures| {
+			loop {
+				if turfs.len() >= 2500 {
+					break;
+				}
+				if let Some((i, turf)) = border_turfs.pop_front() {
+					let adj_tiles = adjacent_tile_ids(turf.adjacency, i, max_x, max_y);
+					if let Some(lock) = all_mixtures.get(turf.mix) {
+						let mix = lock.read();
+						let pressure = mix.return_pressure();
+						let this_max = max_pressure.max(pressure);
+						let this_min = min_pressure.min(pressure);
+						if (this_max - this_min).abs() >= pressure_goal {
+							continue;
+						}
+						min_pressure = this_min;
+						max_pressure = this_max;
+						turfs.push(turf);
+						fully_mixed.merge(&mix);
+						fully_mixed.volume += mix.volume;
+						for (_, loc) in adj_tiles {
+							if found_turfs.contains(&loc) {
 								continue;
 							}
-							min_pressure = this_min;
-							max_pressure = this_max;
-							turfs.push(turf);
-							fully_mixed.merge(&mix);
-							fully_mixed.volume += mix.volume;
-							for (_, loc) in adj_tiles {
-								if found_turfs.contains(&loc) {
-									continue;
-								}
-								found_turfs.insert(loc);
-								if let Some(border_mix) = turf_gases().get(&loc) {
-									if border_mix.simulation_level & SIMULATION_LEVEL_DISABLED
-										!= SIMULATION_LEVEL_DISABLED
-									{
-										border_turfs.push_back((loc, *border_mix));
-									}
+							found_turfs.insert(loc);
+							if let Some(border_mix) = turf_gases().try_get(&loc).try_unwrap() {
+								if border_mix.simulation_level & SIMULATION_LEVEL_DISABLED
+									!= SIMULATION_LEVEL_DISABLED
+								{
+									border_turfs.push_back((loc, *border_mix));
 								}
 							}
 						}
-					} else {
-						break;
 					}
+				} else {
+					break;
 				}
-				fully_mixed.multiply(1.0 / turfs.len() as f32);
-				if !fully_mixed.is_corrupt() {
-					turfs.par_iter().with_min_len(125).for_each(|turf| {
-						if let Some(mix_lock) = all_mixtures.get(turf.mix) {
-							mix_lock.write().copy_from_mutable(&fully_mixed);
-						}
-					});
-				}
-			});
-		}
+			}
+			fully_mixed.multiply(1.0 / turfs.len() as f32);
+			if !fully_mixed.is_corrupt() {
+				turfs.par_iter().with_min_len(125).for_each(|turf| {
+					if let Some(mix_lock) = all_mixtures.get(turf.mix) {
+						mix_lock.write().copy_from_mutable(&fully_mixed);
+					}
+				});
+			}
+		});
 	}
 	found_turfs.len()
 }
@@ -586,7 +594,10 @@ fn remove_trace_planet_gases(
 	planetary_atmos: &'static DashMap<u32, Mixture, FxBuildHasher>,
 	all_mixtures: &[RwLock<Mixture>],
 ) {
-	if let Some(planet_atmos_entry) = m.planetary_atmos.and_then(|id| planetary_atmos.get(&id)) {
+	if let Some(planet_atmos_entry) = m
+		.planetary_atmos
+		.and_then(|id| planetary_atmos.try_get(&id).try_unwrap())
+	{
 		let planet_atmos = planet_atmos_entry.value();
 		if all_mixtures
 			.get(m.mix)
@@ -756,7 +767,8 @@ fn _process_heat_hook() {
 					if t.thermal_conductivity > 0.0 && t.heat_capacity > 300.0 && adj > 0 {
 						let mut heat_delta = 0.0;
 						let is_temp_delta_with_air = turf_gases()
-							.get(&i)
+							.try_get(&i)
+							.try_unwrap()
 							.filter(|m| m.simulation_level & SIMULATION_LEVEL_ANY > 0)
 							.and_then(|m| {
 								GasArena::with_all_mixtures(|all_mixtures| {
@@ -768,7 +780,7 @@ fn _process_heat_hook() {
 							})
 							.unwrap_or(false);
 						for (_, loc) in adjacent_tile_ids(adj, i, max_x, max_y) {
-							if let Some(other) = turf_temperatures().get(&loc) {
+							if let Some(other) = turf_temperatures().try_get(&loc).try_unwrap() {
 								heat_delta +=
 									t.thermal_conductivity.min(other.thermal_conductivity)
 										* (other.temperature - t.temperature) * (t.heat_capacity
@@ -809,7 +821,7 @@ fn _process_heat_hook() {
 				.par_iter()
 				.with_min_len(100)
 				.for_each(|&(i, new_temp)| {
-					let maybe_t = turf_temperatures().get_mut(&i);
+					let maybe_t = turf_temperatures().try_get_mut(&i).try_unwrap();
 					if maybe_t.is_none() {
 						return;
 					}

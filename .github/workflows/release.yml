@@ -17,6 +17,7 @@ jobs:
           - os: windows-latest
             target_name: i686-pc-windows-msvc
             artifact_name: auxmos.dll
+            debug_pdb_name: auxmos.pdb
     steps:
       - name: Checkout
         uses: actions/checkout@v1
@@ -65,3 +66,12 @@ jobs:
           file: target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}
           asset_name: ${{ matrix.artifact_name }}
           tag: ${{ github.ref }}
+
+      - name: Upload debug informations to release
+        uses: svenstaro/upload-release-action@v1-release
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/${{ matrix.target_name }}/release/${{ matrix.debug_pdb_name }}
+          asset_name: ${{ matrix.debug_pdb_name }}
+          tag: ${{ github.ref }}
+        if: matrix.os == 'windows-latest'

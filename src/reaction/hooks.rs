@@ -7,11 +7,15 @@ use crate::gas::{
 
 const SUPER_SATURATION_THRESHOLD: f32 = 96.0;
 
-pub fn hook_id(id: &str) -> Option<ReactFunc> {
+pub fn func_from_id(id: &str) -> Option<ReactFunc> {
 	match id {
+		#[cfg(feature = "plasma_fire_hook")]
 		"plasmafire" => Some(plasma_fire),
+		#[cfg(feature = "trit_fire_hook")]
 		"tritfire" => Some(tritium_fire),
+		#[cfg(feature = "fusion_hook")]
 		"fusion" => Some(fusion),
+		#[cfg(feature = "generic_fire_hook")]
 		"genericfire" => Some(generic_fire),
 		_ => None
 	}

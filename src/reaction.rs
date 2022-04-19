@@ -114,7 +114,7 @@ impl Reaction {
 			reaction
 				.get_string(byond_string!("id"))
 				.unwrap_or_else(|_| "invalid".to_string());
-		let func = hooks::hook_id(string_id.as_str());
+		let func = hooks::func_from_id(string_id.as_str());
 		let string_id_hash = fxhash::hash64(
 				string_id
 				.as_bytes(),

@@ -7,9 +7,20 @@ use crate::gas::{
 
 const SUPER_SATURATION_THRESHOLD: f32 = 96.0;
 
+pub fn hook_id(id: &str) -> Option<ReactFunc> {
+	match id {
+		"plasmafire" => Some(plasma_fire),
+		"tritfire" => Some(tritium_fire),
+		"fusion" => Some(fusion),
+		"genericfire" => Some(generic_fire),
+		_ => None
+	}
+}
+
+type ReactFunc = fn(&Value, &Value) -> DMResult<Value>;
+
 #[cfg(feature = "plasma_fire_hook")]
-#[hook("/datum/gas_reaction/plasmafire/react")]
-fn _plasma_fire(byond_air: &Value, holder: &Value) {
+fn plasma_fire(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 	const PLASMA_UPPER_TEMPERATURE: f32 = 1390.0 + T0C;
 	const OXYGEN_BURN_RATE_BASE: f32 = 1.4;
 	const PLASMA_OXYGEN_FULLBURN: f32 = 10.0;
@@ -99,8 +110,7 @@ fn _plasma_fire(byond_air: &Value, holder: &Value) {
 }
 
 #[cfg(feature = "trit_fire_hook")]
-#[hook("/datum/gas_reaction/tritfire/react")]
-fn tritfire(byond_air: &Value, holder: &Value) {
+fn tritium_fire(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 	const TRITIUM_BURN_OXY_FACTOR: f32 = 100.0;
 	const TRITIUM_BURN_TRIT_FACTOR: f32 = 10.0;
 	const TRITIUM_MINIMUM_RADIATION_FACTOR: f32 = 0.1;
@@ -173,8 +183,7 @@ fn tritfire(byond_air: &Value, holder: &Value) {
 }
 
 #[cfg(feature = "fusion_hook")]
-#[hook("/datum/gas_reaction/fusion/react")]
-fn fusion(byond_air: Value, holder: Value) {
+fn fusion(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 	const TOROID_CALCULATED_THRESHOLD: f32 = 5.96; // changing it by 0.1 generally doubles or halves fusion temps
 	const INSTABILITY_GAS_POWER_FACTOR: f32 = 3.0;
 	const PLASMA_BINDING_ENERGY: f32 = 20_000_000.0;
@@ -325,8 +334,7 @@ fn fusion(byond_air: Value, holder: Value) {
 }
 
 #[cfg(feature = "generic_fire_hook")]
-#[hook("/datum/gas_reaction/genericfire/react")]
-fn _hook_generic_fire(byond_air: Value, holder: Value) {
+fn generic_fire(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 	use fxhash::FxBuildHasher;
 	use std::collections::HashMap;
 	let mut burn_results: HashMap<GasIDX, f32, FxBuildHasher> = HashMap::with_capacity_and_hasher(

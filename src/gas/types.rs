@@ -192,10 +192,7 @@ impl GasType {
 								})
 								.collect(),
 						))
-					} else if product_info
-						.as_string()
-						.map_or(false, |s| s == "plasma_fire")
-					{
+					} else if let Ok(_) = product_info.as_string() {
 						Some(FireProductInfo::Plasma)
 					} else {
 						None

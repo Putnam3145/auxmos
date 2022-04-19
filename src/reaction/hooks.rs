@@ -17,7 +17,7 @@ pub fn func_from_id(id: &str) -> Option<ReactFunc> {
 		"fusion" => Some(fusion),
 		#[cfg(feature = "generic_fire_hook")]
 		"genericfire" => Some(generic_fire),
-		_ => None
+		_ => None,
 	}
 }
 

@@ -90,11 +90,10 @@ pub fn react_by_id(id: ReactionIdentifier, src: &Value, holder: &Value) -> DMRes
 	REACTION_VALUES.with(|r| {
 		r.borrow().get(&id).map_or_else(
 			|| Err(runtime!("Reaction with invalid id")),
-			|reaction|
-			match reaction {
+			|reaction| match reaction {
 				ReactionSide::ByondSide(val) => val.call("react", &[src, holder]),
 				ReactionSide::RustSide(func) => func(src, holder),
-			}
+			},
 		)
 	})
 }
@@ -110,15 +109,11 @@ impl Reaction {
 		let priority = -reaction
 			.get_number(byond_string!("priority"))
 			.unwrap_or_default();
-		let string_id =
-			reaction
-				.get_string(byond_string!("id"))
-				.unwrap_or_else(|_| "invalid".to_string());
+		let string_id = reaction
+			.get_string(byond_string!("id"))
+			.unwrap_or_else(|_| "invalid".to_string());
 		let func = hooks::func_from_id(string_id.as_str());
-		let string_id_hash = fxhash::hash64(
-				string_id
-				.as_bytes(),
-		);
+		let string_id_hash = fxhash::hash64(string_id.as_bytes());
 		let id = ReactionIdentifier {
 			string_id_hash,
 			priority,
@@ -173,9 +168,15 @@ impl Reaction {
 			}
 		};
 		if func.is_some() {
-			REACTION_VALUES.with(|r| r.borrow_mut().insert(our_reaction.id, ReactionSide::RustSide(func.unwrap())));
+			REACTION_VALUES.with(|r| {
+				r.borrow_mut()
+					.insert(our_reaction.id, ReactionSide::RustSide(func.unwrap()))
+			});
 		} else {
-			REACTION_VALUES.with(|r| r.borrow_mut().insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone())));
+			REACTION_VALUES.with(|r| {
+				r.borrow_mut()
+					.insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone()))
+			});
 		}
 		our_reaction
 	}

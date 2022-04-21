@@ -57,7 +57,7 @@ fn _finish_process_turfs() {
 		Ordering::Relaxed,
 	) == Err(PROCESS_PROCESSING);
 	if !processing_turfs_unfinished {
-		process_aux_callbacks(crate::callbacks::ADJACENCIES);
+		process_aux_callbacks(crate::callbacks::TURFS);
 	}
 	if processing_callbacks_unfinished || processing_turfs_unfinished {
 		Ok(Value::from(true))
@@ -131,6 +131,7 @@ fn _process_turf_hook() {
 		let planet_enabled: bool =
 			src.get_number(byond_string!("planet_equalize_enabled"))
 				.unwrap_or(1.0) != 0.0;
+		process_aux_callbacks(crate::callbacks::TURFS);
 		rayon::spawn(move || {
 			PROCESSING_TURF_STEP.store(PROCESS_PROCESSING, Ordering::SeqCst);
 			let sender = byond_callback_sender();
@@ -747,6 +748,7 @@ fn _process_heat_hook() {
 					std::column!()
 				)
 			})? as i32;
+		process_aux_callbacks(crate::callbacks::TEMPERATURE);
 		rayon::spawn(move || {
 			let start_time = Instant::now();
 			let sender = byond_callback_sender();
@@ -764,57 +766,55 @@ fn _process_heat_hook() {
 						If it has no thermal conductivity or low thermal capacity,
 						then it's not gonna interact, or at least shouldn't.
 					*/
-					if t.thermal_conductivity > 0.0 && t.heat_capacity > 300.0 && adj > 0 {
-						let mut heat_delta = 0.0;
-						let is_temp_delta_with_air = turf_gases()
-							.try_get(&i)
-							.try_unwrap()
-							.filter(|m| m.simulation_level & SIMULATION_LEVEL_ANY > 0)
-							.and_then(|m| {
-								GasArena::with_all_mixtures(|all_mixtures| {
-									all_mixtures
-										.get(m.mix)
-										.and_then(RwLock::try_read)
-										.map(|gas| (t.temperature - gas.get_temperature() > 1.0))
+					(t.thermal_conductivity > 0.0 && t.heat_capacity > 0.0 && adj > 0)
+						.then(|| {
+							let mut heat_delta = 0.0;
+							let is_temp_delta_with_air = turf_gases()
+								.try_get(&i)
+								.try_unwrap()
+								.filter(|m| m.simulation_level & SIMULATION_LEVEL_ANY > 0)
+								.and_then(|m| {
+									GasArena::with_all_mixtures(|all_mixtures| {
+										all_mixtures.get(m.mix).and_then(RwLock::try_read).map(
+											|gas| (t.temperature - gas.get_temperature() > 1.0),
+										)
+									})
 								})
-							})
-							.unwrap_or(false);
-						for (_, loc) in adjacent_tile_ids(adj, i, max_x, max_y) {
-							if let Some(other) = turf_temperatures().try_get(&loc).try_unwrap() {
-								heat_delta +=
-									t.thermal_conductivity.min(other.thermal_conductivity)
-										* (other.temperature - t.temperature) * (t.heat_capacity
-										* other.heat_capacity
-										/ (t.heat_capacity + other.heat_capacity));
-								/*
-									The horrible line above is essentially
-									sharing between solids--making it the minimum of both
-									conductivities makes this consistent, funnily enough.
-								*/
+								.unwrap_or(false);
+							for (_, loc) in adjacent_tile_ids(adj, i, max_x, max_y) {
+								heat_delta += turf_temperatures().try_get(&loc).try_unwrap().map_or(
+									0.0,
+									|other| {
+										/*
+											The horrible line below is essentially
+											sharing between solids--making it the minimum of both
+											conductivities makes this consistent, funnily enough.
+										*/
+										t.thermal_conductivity.min(other.thermal_conductivity)
+											* (other.temperature - t.temperature) * (t.heat_capacity
+											* other.heat_capacity
+											/ (t.heat_capacity + other.heat_capacity))
+									},
+								)
 							}
-						}
-						if t.adjacent_to_space {
-							/*
-								Straight up the standard blackbody radiation
-								equation. All these are f64s because
-								f32::MAX^4 < f64::MAX^(1/4), and t.temperature
-								is ordinarily an f32, meaning that
-								this will never go into infinities.
-							*/
-							let blackbody_radiation: f64 = (emissivity_constant
-								* ((t.temperature as f64).powi(4)))
-								- radiation_from_space_tick;
-							heat_delta -= blackbody_radiation as f32;
-						}
-						let temp_delta = heat_delta / t.heat_capacity;
-						if is_temp_delta_with_air || temp_delta.abs() > 0.1 {
-							Some((i, t.temperature + temp_delta))
-						} else {
-							None
-						}
-					} else {
-						None
-					}
+							if t.adjacent_to_space {
+								/*
+									Straight up the standard blackbody radiation
+									equation. All these are f64s because
+									f32::MAX^4 < f64::MAX, and t.temperature
+									is ordinarily an f32, meaning that
+									this will never go into infinities.
+								*/
+								let blackbody_radiation: f64 = (emissivity_constant
+									* ((t.temperature as f64).powi(4)))
+									- radiation_from_space_tick;
+								heat_delta -= blackbody_radiation as f32;
+							}
+							let temp_delta = heat_delta / t.heat_capacity;
+							(is_temp_delta_with_air || temp_delta.abs() > 0.01)
+								.then(|| (i, t.temperature + temp_delta))
+						})
+						.flatten()
 				})
 				.collect::<Vec<_>>();
 			temps_to_update
@@ -828,11 +828,7 @@ fn _process_heat_hook() {
 					let t: &mut ThermalInfo = &mut maybe_t.unwrap();
 					t.temperature = turf_gases()
 						.get(&i)
-						.filter(|m| {
-							m.simulation_level != SIMULATION_LEVEL_NONE
-								&& m.simulation_level & SIMULATION_LEVEL_DISABLED
-									!= SIMULATION_LEVEL_DISABLED
-						})
+						.filter(|m| m.enabled())
 						.and_then(|m| {
 							GasArena::with_all_mixtures(|all_mixtures| {
 								all_mixtures.get(m.mix).map(|entry| {

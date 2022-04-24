@@ -561,20 +561,13 @@ fn _oxidation_power_hook(temp: Value) {
 #[hook("/datum/gas_mixture/proc/share_ratio")]
 fn _share_ratio_hook(
 	other_gas: Value,
-	connecting_val: Value,
+	ratio_val: Value,
 	share_size_val: Value,
 	one_way_val: Value,
 ) {
 	let one_way = one_way_val.as_bool().unwrap_or(false);
 	let share_size = share_size_val.as_number().ok().map_or(1.0, |n| n as f32);
-	let ratio = match connecting_val.as_number().ok().map_or(6, |n| n as i32) {
-		1 => 0.3,
-		2 => 0.4,
-		3 => 0.48,
-		4 => 0.54,
-		5 => 0.6,
-		_ => 0.66,
-	};
+	let ratio = ratio_val.as_number().ok().map_or(0.6);
 	let mut inbetween = Mixture::new();
 	if one_way {
 		with_mixes_custom(src, other_gas, |src_lock, other_lock| {

@@ -109,7 +109,6 @@ pub struct GasType {
 	/// The gas's name. Not used in auxmos as of yet.
 	/// Byond: `name`, a string.
 	pub name: Box<str>,
-	/// Not used in auxmos, there for completeness. Only flag on Citadel is GAS_DANGEROUS.
 	/// Byond: `flags`, a number (bitflags).
 	pub flags: u32,
 	/// The specific heat of the gas. Duplicated in the GAS_SPECIFIC_HEATS vector for speed.

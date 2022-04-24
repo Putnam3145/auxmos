@@ -1,5 +1,6 @@
 pub mod gas;
 
+#[cfg(feature = "turf_processing")]
 pub mod turfs;
 
 pub mod reaction;
@@ -262,6 +263,130 @@ fn _adjust_moles_hook(id_val: Value, num_val: Value) {
 	})
 }
 
+#[hook("/datum/gas_mixture/proc/adjust_moles_temp")]
+fn _adjust_moles_temp_hook(id_val: Value, num_val: Value, temp_val: Value) {
+	let vf = num_val.as_number().unwrap_or_default();
+	let temp = temp_val.as_number().unwrap_or(2.7);
+	let mut new_mix = Mixture::new();
+	new_mix.set_moles(gas_idx_from_value(&id_val)?, vf);
+	new_mix.set_temperature(temp);
+	with_mix_mut(src, |mix| {
+		mix.merge(&new_mix);
+		Ok(Value::null())
+	})
+}
+
+#[hook("/datum/gas_mixture/proc/adjust_multi")]
+fn _adjust_multi_hook() {
+	if args.len() % 2 != 0 {
+		Err(runtime!(
+			"Incorrect arg len for adjust_multi (not divisible by 2)."
+		))
+	} else {
+		let adjustments = args
+			.chunks(2)
+			.filter_map(|chunk| {
+				(chunk.len() == 2)
+					.then(|| {
+						gas_idx_from_value(&chunk[0])
+							.ok()
+							.map(|idx| (idx, chunk[1].as_number().unwrap_or_default()))
+					})
+					.flatten()
+			})
+			.collect::<Vec<_>>();
+		with_mix_mut(src, |mix| {
+			mix.adjust_multi(&adjustments);
+			Ok(Value::null())
+		})
+	}
+}
+
+#[hook("/datum/gas_mixture/proc/add")]
+fn _add_hook(num_val: Value) {
+	let vf = num_val.as_number().unwrap_or_default();
+	with_mix_mut(src, |mix| {
+		mix.for_each_gas_mut(|_, gas| {
+			*gas += vf;
+			Ok(())
+		})?;
+		Ok(Value::null())
+	})
+}
+
+#[hook("/datum/gas_mixture/proc/subtract")]
+fn _subtract_hook(num_val: Value) {
+	let vf = num_val.as_number().unwrap_or_default();
+	with_mix_mut(src, |mix| {
+		mix.for_each_gas_mut(|_, gas| {
+			*gas -= vf;
+			Ok(())
+		})?;
+		Ok(Value::null())
+	})
+}
+
+#[hook("/datum/gas_mixture/proc/multiply")]
+fn _multiply_hook(num_val: Value) {
+	let vf = num_val.as_number().unwrap_or(1.0);
+	with_mix_mut(src, |mix| {
+		mix.multiply(vf);
+		Ok(Value::null())
+	})
+}
+
+#[hook("/datum/gas_mixture/proc/divide")]
+fn _divide_hook(num_val: Value) {
+	let vf = num_val.as_number().unwrap_or(1.0).recip();
+	with_mix_mut(src, |mix| {
+		mix.multiply(vf);
+		Ok(Value::null())
+	})
+}
+
+#[hook("/datum/gas_mixture/proc/__remove_by_flag")]
+fn _remove_by_flag_hook(into: Value, flag_val: Value, amount_val: Value) {
+	let flag = flag_val.as_number().map_or(0, |n| n as u32);
+	let amount = amount_val.as_number().unwrap_or(0.0);
+	let pertinent_gases = with_gas_info(|gas_info| {
+		gas_info
+			.iter()
+			.filter(|g| g.flags & flag != 0)
+			.map(|g| g.idx)
+			.collect::<Vec<_>>()
+	});
+	if pertinent_gases.len() == 0 {
+		return Ok(Value::from(false));
+	}
+	with_mixes_mut(src, into, |src_gas, dest_gas| {
+		let tot = src_gas.total_moles();
+		src_gas.transfer_gases_to(amount / tot, &pertinent_gases, dest_gas);
+		Ok(Value::from(true))
+	})
+}
+
+#[hook("/datum/gas_mixture/proc/get_by_flag")]
+fn get_by_flag_hook(flag_val: Value) {
+	let flag = flag_val.as_number().map_or(0, |n| n as u32);
+	let pertinent_gases = with_gas_info(|gas_info| {
+		gas_info
+			.iter()
+			.filter(|g| g.flags & flag != 0)
+			.map(|g| g.idx)
+			.collect::<Vec<_>>()
+	});
+	if pertinent_gases.len() == 0 {
+		return Ok(Value::from(0.0));
+	}
+	with_mix(src, |mix| {
+		Ok(Value::from(
+			pertinent_gases
+				.iter()
+				.fold(0.0, |acc, idx| acc + mix.get_moles(*idx)),
+		))
+	})
+}
+
 #[hook("/datum/gas_mixture/proc/scrub_into")]
 fn _scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
 	let ratio = ratio_v.as_number().map_err(|_| {
@@ -320,18 +445,6 @@ fn _compare_hook() {
 			))
 		})
 	}
-}
-
-#[hook("/datum/gas_mixture/proc/multiply")]
-fn _multiply_hook() {
-	with_mix_mut(src, |mix| {
-		mix.multiply(if args.is_empty() {
-			1.0
-		} else {
-			args[0].as_number().unwrap_or(1.0)
-		});
-		Ok(Value::null())
-	})
 }
 
 #[hook("/datum/gas_mixture/proc/react")]
@@ -442,6 +555,54 @@ fn _oxidation_power_hook(temp: Value) {
 			},
 		)))
 	})
+}
+
+#[cfg(feature = "zas_hooks")]
+#[hook("/datum/gas_mixture/proc/share_ratio")]
+fn _share_ratio_hook(
+	other_gas: Value,
+	connecting_val: Value,
+	share_size_val: Value,
+	one_way_val: Value,
+) {
+	let one_way = one_way_val.as_bool().unwrap_or(false);
+	let share_size = share_size_val.as_number().ok().map_or(1.0, |n| n as f32);
+	let ratio = match connecting_val.as_number().ok().map_or(6, |n| n as i32) {
+		1 => 0.3,
+		2 => 0.4,
+		3 => 0.48,
+		4 => 0.54,
+		5 => 0.6,
+		_ => 0.66,
+	};
+	let mut inbetween = Mixture::new();
+	if one_way {
+		with_mixes_custom(src, other_gas, |src_lock, other_lock| {
+			let src_mix = src_lock.write();
+			let other_mix = other_lock.read();
+			inbetween.copy_from_mutable(other_mix);
+			inbetween.multiply(ratio);
+			inbetween.merge(&src_mix.remove_ratio(ratio));
+			inbetween.multiply(0.5);
+			src_mix.merge(inbetween);
+			Ok(Value::from(
+				src_mix.temperature_compare(other_mix)
+					|| src_mix.compare_with(other_mix, MINIMUM_MOLES_DELTA_TO_MOVE),
+			))
+		})
+	} else {
+		with_mixes_mut(src, other_gas, |src_mix, other_mix| {
+			src_mix.remove_ratio_into(ratio, &mut inbetween);
+			inbetween.merge(&other_mix.remove_ratio(ratio));
+			inbetween.multiply(0.5);
+			src_mix.merge(inbetween);
+			other_mix.merge(inbetween);
+			Ok(Value::from(
+				src_mix.temperature_compare(other_mix)
+					|| src_mix.compare_with(other_mix, MINIMUM_MOLES_DELTA_TO_MOVE),
+			))
+		})
+	}
 }
 
 #[hook("/proc/equalize_all_gases_in_list")]

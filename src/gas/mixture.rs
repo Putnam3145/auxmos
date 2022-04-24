@@ -123,6 +123,15 @@ impl Mixture {
 		}
 		Ok(())
 	}
+	pub fn for_each_gas_mut(
+		&mut self,
+		mut f: impl FnMut(GasIDX, &mut f32) -> Result<(), auxtools::Runtime>,
+	) -> Result<(), auxtools::Runtime> {
+		for (i, g) in self.moles.iter_mut().enumerate() {
+			f(i, g)?;
+		}
+		Ok(())
+	}
 	/// Returns (by value) the amount of moles of a given index the mix has. M
 	pub fn get_moles(&self, idx: GasIDX) -> f32 {
 		self.moles.get(idx).copied().unwrap_or(0.0)
@@ -158,10 +167,40 @@ impl Mixture {
 			self.maybe_expand((idx + 1) as usize);
 			let r = unsafe { self.moles.get_unchecked_mut(idx) };
 			*r += amt;
-			if amt < 0.0 {
+			if amt <= 0.0 {
 				self.garbage_collect();
 			}
 			self.cached_heat_capacity.set(None);
+		}
+	}
+	pub fn adjust_multi(&mut self, adjustments: &[(usize, f32)]) {
+		if !self.immutable {
+			let num_gases = total_num_gases();
+			self.maybe_expand(
+				adjustments
+					.iter()
+					.filter_map(|&(i, _)| (i < num_gases).then(|| i))
+					.max()
+					.unwrap_or(0) + 1,
+			);
+			let mut dirty = false;
+			let mut should_collect = false;
+			for (idx, amt) in adjustments {
+				if *idx < num_gases && amt.is_normal() {
+					let r = unsafe { self.moles.get_unchecked_mut(*idx) };
+					*r += *amt;
+					if *amt <= 0.0 {
+						should_collect = true;
+					}
+					dirty = true;
+				}
+			}
+			if dirty {
+				self.cached_heat_capacity.set(None);
+			}
+			if should_collect {
+				self.garbage_collect();
+			}
 		}
 	}
 	#[inline(never)] // mostly this makes it so that heat_capacity itself is inlined

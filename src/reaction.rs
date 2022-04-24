@@ -115,7 +115,7 @@ impl Reaction {
 		let func = {
 			#[cfg(feature = "reaction_hooks")]
 			{
-				hooks::func_from_id(string_id.as_str());
+				hooks::func_from_id(string_id.as_str())
 			}
 			#[cfg(not(feature = "reaction_hooks"))]
 			{

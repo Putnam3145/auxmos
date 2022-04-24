@@ -195,8 +195,13 @@ fn _hook_register_turf() {
 			std::column!()
 		)
 	})?;
+	let sender = aux_callbacks_sender(crate::callbacks::TURFS);
 	if simulation_level < 0.0 {
-		turf_gases().remove(&unsafe { src.raw.data.id });
+		let id = unsafe { src.raw.data.id };
+		let _ = sender.send(Box::new(move || {
+			turf_gases().remove(&id);
+			Ok(Value::null())
+		}));
 		Ok(Value::null())
 	} else {
 		let mut to_insert: TurfMixture = TurfMixture::default();
@@ -236,13 +241,18 @@ fn _hook_register_turf() {
 			}
 		}
 		let id = unsafe { src.raw.data.id };
-		turf_gases().insert(id, to_insert);
+		let _ = sender.send(Box::new(move || {
+			turf_gases().insert(id, to_insert);
+			Ok(Value::null())
+		}));
 		Ok(Value::null())
 	}
 }
 
 #[hook("/turf/proc/__auxtools_update_turf_temp_info")]
 fn _hook_turf_update_temp() {
+	let sender = aux_callbacks_sender(crate::callbacks::TEMPERATURE);
+	let id = unsafe { src.raw.data.id };
 	if src
 		.get_number(byond_string!("thermal_conductivity"))
 		.unwrap_or_default()
@@ -251,16 +261,14 @@ fn _hook_turf_update_temp() {
 		.unwrap_or_default()
 		> 0.0
 	{
-		let mut entry = turf_temperatures()
-			.entry(unsafe { src.raw.data.id })
-			.or_insert_with(|| ThermalInfo {
-				temperature: 293.15,
-				thermal_conductivity: 0.0,
-				heat_capacity: 0.0,
-				adjacency: NORTH | SOUTH | WEST | EAST,
-				adjacent_to_space: false,
-			});
-		entry.thermal_conductivity = src
+		let mut to_insert = ThermalInfo {
+			temperature: 293.15,
+			thermal_conductivity: 0.0,
+			heat_capacity: 0.0,
+			adjacency: NORTH | SOUTH | WEST | EAST,
+			adjacent_to_space: false,
+		};
+		to_insert.thermal_conductivity = src
 			.get_number(byond_string!("thermal_conductivity"))
 			.map_err(|_| {
 				runtime!(
@@ -270,7 +278,7 @@ fn _hook_turf_update_temp() {
 					std::column!()
 				)
 			})?;
-		entry.heat_capacity = src
+		to_insert.heat_capacity = src
 			.get_number(byond_string!("heat_capacity"))
 			.map_err(|_| {
 				runtime!(
@@ -280,8 +288,8 @@ fn _hook_turf_update_temp() {
 					std::column!()
 				)
 			})?;
-		entry.adjacency = NORTH | SOUTH | WEST | EAST;
-		entry.adjacent_to_space = args[0].as_number().map_err(|_| {
+		to_insert.adjacency = NORTH | SOUTH | WEST | EAST;
+		to_insert.adjacent_to_space = args[0].as_number().map_err(|_| {
 			runtime!(
 				"Attempt to interpret non-number value as number {} {}:{}",
 				std::file!(),
@@ -289,7 +297,7 @@ fn _hook_turf_update_temp() {
 				std::column!()
 			)
 		})? != 0.0;
-		entry.temperature = src
+		to_insert.temperature = src
 			.get_number(byond_string!("initial_temperature"))
 			.map_err(|_| {
 				runtime!(
@@ -299,8 +307,15 @@ fn _hook_turf_update_temp() {
 					std::column!()
 				)
 			})?;
+		let _ = sender.send(Box::new(move || {
+			turf_temperatures().insert(id, to_insert);
+			Ok(Value::null())
+		}));
 	} else {
-		turf_temperatures().remove(&unsafe { src.raw.data.id });
+		let _ = sender.send(Box::new(move || {
+			turf_temperatures().remove(&id);
+			Ok(Value::null())
+		}));
 	}
 	Ok(Value::null())
 }
@@ -337,7 +352,7 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 	let update_now = arg1.as_number().unwrap_or(0.0) != 0.0;
 	let adjacent_to_spess = arg0.as_number().unwrap_or(0.0) != 0.0;
 	let id = unsafe { src.raw.data.id };
-	let sender = aux_callbacks_sender(crate::callbacks::ADJACENCIES);
+	let sender = aux_callbacks_sender(crate::callbacks::TURFS);
 	let boxed_fn: Box<dyn Fn() -> DMResult + Send + Sync> = Box::new(move || {
 		let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
 		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
@@ -416,39 +431,6 @@ fn _hook_turf_temperature() {
 	} else {
 		src.get(byond_string!("initial_temperature"))
 	}
-}
-
-#[hook("/turf/proc/set_temperature")]
-fn _hook_set_temperature() {
-	let argument = args
-		.get(0)
-		.ok_or_else(|| runtime!("Invalid argument count to turf temperature set: 0"))?
-		.as_number()
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?;
-	turf_temperatures()
-		.entry(unsafe { src.raw.data.id })
-		.and_modify(|turf| {
-			turf.temperature = argument;
-		})
-		.or_insert_with(|| ThermalInfo {
-			temperature: argument,
-			thermal_conductivity: src
-				.get_number(byond_string!("thermal_conductivity"))
-				.unwrap_or(0.0),
-			heat_capacity: src
-				.get_number(byond_string!("heat_capacity"))
-				.unwrap_or(0.0),
-			adjacency: 0,
-			adjacent_to_space: false,
-		});
-	Ok(Value::null())
 }
 
 /*Miserable performance, I mean seriously terrible, 1000x worse than in byond, why?

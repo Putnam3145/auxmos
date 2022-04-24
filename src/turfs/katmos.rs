@@ -497,7 +497,7 @@ fn explosively_depressurize(
 		}
 	}
 
-	process_aux_callbacks(crate::callbacks::ADJACENCIES);
+	process_aux_callbacks(crate::callbacks::TURFS);
 
 	if space_turfs.is_empty() {
 		return Ok(Value::null());

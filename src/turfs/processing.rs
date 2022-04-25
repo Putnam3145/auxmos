@@ -70,7 +70,7 @@ fn heat_processing_callbacks_sender() -> flume::Sender<SSheatInfo> {
 
 #[hook("/datum/controller/subsystem/air/proc/thread_running")]
 fn _thread_running_hook() {
-	Ok(Value::from(TASKS_RUNNING.load(Ordering::Acquire) != 0))
+	Ok(Value::from(TASKS_RUNNING.load(Ordering::Relaxed) != 0))
 }
 
 #[hook("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
@@ -168,7 +168,7 @@ fn _process_turf_start() -> Result<(), String> {
 		rayon::spawn(|| loop {
 			//this will block until process_turfs is called
 			let info = with_processing_callback_receiver(|receiver| receiver.recv().unwrap());
-			TASKS_RUNNING.fetch_add(1, Ordering::AcqRel);
+			TASKS_RUNNING.fetch_add(1, Ordering::SeqCst);
 			let sender = byond_callback_sender();
 			let (low_pressure_turfs, high_pressure_turfs) = {
 				let start_time = Instant::now();
@@ -323,7 +323,7 @@ fn _process_turf_start() -> Result<(), String> {
 					Ok(Value::null())
 				}));
 			}
-			TASKS_RUNNING.fetch_sub(1, Ordering::AcqRel);
+			TASKS_RUNNING.fetch_sub(1, Ordering::SeqCst);
 		});
 	});
 	Ok(())
@@ -730,7 +730,7 @@ static HEAT_PROCESS_TIME: AtomicU64 = AtomicU64::new(1_000_000);
 
 #[hook("/datum/controller/subsystem/air/proc/heat_process_time")]
 fn _process_heat_time() {
-	let tot = HEAT_PROCESS_TIME.load(Ordering::Acquire);
+	let tot = HEAT_PROCESS_TIME.load(Ordering::Relaxed);
 	Ok(Value::from(
 		Duration::new(tot / 1_000_000_000, (tot % 1_000_000_000) as u32).as_millis() as f32,
 	))
@@ -802,7 +802,7 @@ fn _process_heat_start() -> Result<(), String> {
 		rayon::spawn(|| loop {
 			//this will block until process_turf_heat is called
 			let info = with_heat_processing_callback_receiver(|receiver| receiver.recv().unwrap());
-			TASKS_RUNNING.fetch_add(1, Ordering::AcqRel);
+			TASKS_RUNNING.fetch_add(1, Ordering::SeqCst);
 			let start_time = Instant::now();
 			let sender = byond_callback_sender();
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * info.time_delta;
@@ -918,10 +918,10 @@ fn _process_heat_start() -> Result<(), String> {
 				});
 			//Alright, now how much time did that take?
 			let bench = start_time.elapsed().as_nanos();
-			let old_bench = HEAT_PROCESS_TIME.load(Ordering::Acquire);
+			let old_bench = HEAT_PROCESS_TIME.load(Ordering::SeqCst);
 			// We display this as part of the MC atmospherics stuff.
-			HEAT_PROCESS_TIME.store((old_bench * 3 + (bench * 7) as u64) / 10, Ordering::Release);
-			TASKS_RUNNING.fetch_sub(1, Ordering::AcqRel);
+			HEAT_PROCESS_TIME.store((old_bench * 3 + (bench * 7) as u64) / 10, Ordering::SeqCst);
+			TASKS_RUNNING.fetch_sub(1, Ordering::SeqCst);
 		});
 	});
 	Ok(())
@@ -929,5 +929,5 @@ fn _process_heat_start() -> Result<(), String> {
 
 #[shutdown]
 fn reset_auxmos_processing() {
-	HEAT_PROCESS_TIME.store(1_000_000, Ordering::Release);
+	HEAT_PROCESS_TIME.store(1_000_000, Ordering::Relaxed);
 }

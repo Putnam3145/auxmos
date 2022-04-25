@@ -168,7 +168,7 @@ fn _process_turf_start() -> Result<(), String> {
 		rayon::spawn(|| loop {
 			//this will block until process_turfs is called
 			let info = with_processing_callback_receiver(|receiver| receiver.recv().unwrap());
-			TASKS_RUNNING.fetch_add(1, Ordering::Release);
+			TASKS_RUNNING.fetch_add(1, Ordering::AcqRel);
 			let sender = byond_callback_sender();
 			let (low_pressure_turfs, high_pressure_turfs) = {
 				let start_time = Instant::now();
@@ -323,7 +323,7 @@ fn _process_turf_start() -> Result<(), String> {
 					Ok(Value::null())
 				}));
 			}
-			TASKS_RUNNING.fetch_sub(1, Ordering::Release);
+			TASKS_RUNNING.fetch_sub(1, Ordering::AcqRel);
 		});
 	});
 	Ok(())
@@ -802,7 +802,7 @@ fn _process_heat_start() -> Result<(), String> {
 		rayon::spawn(|| loop {
 			//this will block until process_turf_heat is called
 			let info = with_heat_processing_callback_receiver(|receiver| receiver.recv().unwrap());
-			TASKS_RUNNING.fetch_add(1, Ordering::Release);
+			TASKS_RUNNING.fetch_add(1, Ordering::AcqRel);
 			let start_time = Instant::now();
 			let sender = byond_callback_sender();
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * info.time_delta;
@@ -921,7 +921,7 @@ fn _process_heat_start() -> Result<(), String> {
 			let old_bench = HEAT_PROCESS_TIME.load(Ordering::Acquire);
 			// We display this as part of the MC atmospherics stuff.
 			HEAT_PROCESS_TIME.store((old_bench * 3 + (bench * 7) as u64) / 10, Ordering::Release);
-			TASKS_RUNNING.fetch_sub(1, Ordering::Release);
+			TASKS_RUNNING.fetch_sub(1, Ordering::AcqRel);
 		});
 	});
 	Ok(())

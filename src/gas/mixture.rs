@@ -9,6 +9,8 @@ use std::{
 	sync::atomic::{AtomicU64, Ordering::Relaxed},
 };
 
+use atomic_float::AtomicF32;
+
 use tinyvec::TinyVec;
 
 use crate::reaction::ReactionIdentifier;
@@ -19,11 +21,31 @@ use super::{
 
 type SpecificFireInfo = (usize, f32, f32);
 
-struct VisHash(AtomicU64);
+struct GasCache(AtomicF32);
 
-impl Clone for VisHash {
+impl Clone for GasCache {
 	fn clone(&self) -> Self {
-		VisHash(AtomicU64::new(self.0.load(Relaxed)))
+		Self(AtomicF32::new(self.0.load(Relaxed)))
+	}
+}
+
+impl Default for GasCache {
+	fn default() -> Self {
+		Self(AtomicF32::new(f32::NAN))
+	}
+}
+
+impl GasCache {
+	fn invalidate(&self) {
+		self.0.store(f32::NAN, Relaxed);
+	}
+	fn get_or_else(&self, mut f: impl FnMut() -> f32) -> f32 {
+		self.0
+			.fetch_update(Relaxed, Relaxed, |x| x.is_nan().then(|| f()));
+		self.0.load(Relaxed)
+	}
+	fn set(&self, v: f32) {
+		self.0.store(v, Relaxed);
 	}
 }
 
@@ -40,24 +62,10 @@ pub struct Mixture {
 	temperature: f32,
 	pub volume: f32,
 	min_heat_capacity: f32,
-	immutable: bool,
 	moles: TinyVec<[f32; 8]>,
-	cached_heat_capacity: Cell<Option<f32>>,
-	cached_vis_hash: VisHash,
+	cached_heat_capacity: GasCache,
+	immutable: bool,
 }
-
-/*
-	Cell is not thread-safe. However, we use it only for caching heat capacity. The worst case race condition
-	is thus thread A and B try to access heat capacity at the same time; both find that it's currently
-	uncached, so both go to calculate it; both calculate it, and both calculate it to the same value,
-	then one sets the cache to that value, then the other does.
-
-	Technically, a worse one would be thread A mutates the gas mixture, changing a gas amount,
-	while thread B tries to get its heat capacity; thread B finds a well-defined heat capacity,
-	which is not correct, and uses it for a calculation, but this cannot happen: thread A would
-	have a write lock, precluding thread B from accessing it.
-*/
-unsafe impl Sync for Mixture {}
 
 impl Default for Mixture {
 	fn default() -> Self {
@@ -74,8 +82,7 @@ impl Mixture {
 			volume: 2500.0,
 			min_heat_capacity: 0.0,
 			immutable: false,
-			cached_heat_capacity: Cell::new(None),
-			cached_vis_hash: VisHash(AtomicU64::new(0)),
+			cached_heat_capacity: GasCache::default(),
 		}
 	}
 	/// Makes an empty gas mixture with the given volume.
@@ -159,7 +166,7 @@ impl Mixture {
 			unsafe {
 				*self.moles.get_unchecked_mut(idx) = amt;
 			};
-			self.cached_heat_capacity.set(None);
+			self.cached_heat_capacity.invalidate();
 		}
 	}
 	pub fn adjust_moles(&mut self, idx: GasIDX, amt: f32) {
@@ -170,7 +177,7 @@ impl Mixture {
 			if amt <= 0.0 {
 				self.garbage_collect();
 			}
-			self.cached_heat_capacity.set(None);
+			self.cached_heat_capacity.invalidate();
 		}
 	}
 	pub fn adjust_multi(&mut self, adjustments: &[(usize, f32)]) {
@@ -196,7 +203,7 @@ impl Mixture {
 				}
 			}
 			if dirty {
-				self.cached_heat_capacity.set(None);
+				self.cached_heat_capacity.invalidate();
 			}
 			if should_collect {
 				self.garbage_collect();
@@ -205,23 +212,19 @@ impl Mixture {
 	}
 	#[inline(never)] // mostly this makes it so that heat_capacity itself is inlined
 	fn slow_heat_capacity(&self) -> f32 {
-		let heat_cap = with_specific_heats(|heats| {
+		with_specific_heats(|heats| {
 			self.moles
 				.iter()
 				.copied()
 				.zip(heats.iter())
 				.fold(0.0, |acc, (amt, cap)| cap.mul_add(amt, acc))
 		})
-		.max(self.min_heat_capacity);
-		self.cached_heat_capacity.set(Some(heat_cap));
-		heat_cap
+		.max(self.min_heat_capacity)
 	}
 	/// The heat capacity of the material. [joules?]/mole-kelvin.
 	pub fn heat_capacity(&self) -> f32 {
 		self.cached_heat_capacity
-			.get()
-			.filter(|cap| cap.is_finite() && cap.is_sign_positive())
-			.unwrap_or_else(|| self.slow_heat_capacity())
+			.get_or_else(|| self.slow_heat_capacity())
 	}
 	/// Heat capacity of exactly one gas in this mix.
 	pub fn partial_heat_capacity(&self, idx: GasIDX) -> f32 {
@@ -260,7 +263,7 @@ impl Mixture {
 					/ (combined_heat_capacity),
 			);
 		}
-		self.cached_heat_capacity.set(Some(combined_heat_capacity));
+		self.cached_heat_capacity.set(combined_heat_capacity);
 	}
 	/// Transfers only the given gases from us to another mix.
 	pub fn transfer_gases_to(&mut self, r: f32, gases: &[GasIDX], into: &mut Self) {
@@ -277,8 +280,8 @@ impl Mixture {
 				}
 			}
 		});
-		self.cached_heat_capacity.set(None);
-		into.cached_heat_capacity.set(None);
+		self.cached_heat_capacity.invalidate();
+		into.cached_heat_capacity.invalidate();
 		into.set_temperature((initial_energy + heat_transfer) / into.heat_capacity());
 	}
 	/// Takes a percentage of this gas mixture's moles and puts it into another mixture. if this mix is mutable, also removes those moles from the original.
@@ -317,8 +320,7 @@ impl Mixture {
 		}
 		self.moles = sample.moles.clone();
 		self.temperature = sample.temperature;
-		self.cached_heat_capacity
-			.set(sample.cached_heat_capacity.get());
+		self.cached_heat_capacity = sample.cached_heat_capacity.clone();
 	}
 	/// A very simple finite difference solution to the heat transfer equation.
 	/// Works well enough for our purposes, though perhaps called less often
@@ -404,7 +406,7 @@ impl Mixture {
 	pub fn clear(&mut self) {
 		if !self.immutable {
 			self.moles.clear();
-			self.cached_heat_capacity.set(None);
+			self.cached_heat_capacity.invalidate();
 		}
 	}
 	/// Resets the gas mixture to an initialized-with-volume state.
@@ -421,7 +423,7 @@ impl Mixture {
 			for amt in self.moles.iter_mut() {
 				*amt *= multiplier;
 			}
-			self.cached_heat_capacity.set(None);
+			self.cached_heat_capacity.invalidate();
 			self.garbage_collect();
 		}
 	}
@@ -528,8 +530,7 @@ impl Mixture {
 		self.enumerate()
 			.any(|(i, gas)| gas_visibility(i as usize).map_or(false, |amt| gas >= amt))
 	}
-	/// A hashed representation of the visibility of a gas, so that it only needs to update vis when actually changed.
-	pub fn vis_hash_changed(&self, gas_visibility: &[Option<f32>]) -> bool {
+	pub fn vis_hash(&self, gas_visibility: &[Option<f32>]) -> u64 {
 		use std::hash::Hasher;
 		let mut hasher: ahash::AHasher = ahash::AHasher::default();
 		for (i, gas) in self.enumerate() {
@@ -539,8 +540,20 @@ impl Mixture {
 				hasher.write_usize((FACTOR_GAS_VISIBLE_MAX).min((gas / amt).ceil()) as usize);
 			}
 		}
-		let cur_hash = hasher.finish();
-		self.cached_vis_hash.0.swap(cur_hash, Relaxed) != cur_hash
+		hasher.finish()
+	}
+	/// Compares the current vis hash to the provided one; returns Err(hash) if they match, otherwise Ok(hash).
+	pub fn vis_hash_changed(
+		&self,
+		gas_visibility: &[Option<f32>],
+		prev_hash: u64,
+	) -> Result<u64, u64> {
+		let cur_hash = self.vis_hash(gas_visibility);
+		if cur_hash == prev_hash {
+			Err(cur_hash)
+		} else {
+			Ok(cur_hash)
+		}
 	}
 	// Removes all redundant zeroes from the gas mixture.
 	pub fn garbage_collect(&mut self) {

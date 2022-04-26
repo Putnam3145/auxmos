@@ -41,6 +41,7 @@ nonmax = "0.5.0"
 ahash = "0.7.6"
 indexmap = { version = "1.8.0", features = ["rayon"] }
 dashmap = { version = "5.2.0", features = ["rayon"] }
+atomic_float = "0.1.0"
 
 [dependencies.tinyvec]
 version = "1.5.1"

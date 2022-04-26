@@ -560,12 +560,8 @@ fn excited_group_processing(
 								continue;
 							}
 							found_turfs.insert(loc);
-							if let Some(border_mix) = turf_gases().try_get(&loc).try_unwrap() {
-								if border_mix.simulation_level & SIMULATION_LEVEL_DISABLED
-									!= SIMULATION_LEVEL_DISABLED
-								{
-									border_turfs.push_back((loc, *border_mix));
-								}
+							if let Some(border_mix) = turf_gases().try_get(&loc).try_unwrap().filter(|b| b.enabled()) {
+								border_turfs.push_back((loc, *border_mix));
 							}
 						}
 					}
@@ -611,18 +607,29 @@ fn remove_trace_planet_gases(
 	}
 }
 
+static mut VISUALS_CACHE: Option<std::collections::HashMap<usize, u64, FxBuildHasher>> = None;
+
 // Checks if the gas can react or can update visuals, returns None if not.
 fn post_process_cell(
 	i: TurfID,
 	m: TurfMixture,
 	vis: &[Option<f32>],
 	all_mixtures: &[RwLock<Mixture>],
+	vis_cache: &std::collections::HashMap<usize, u64, FxBuildHasher>,
+	updates: &flume::Sender<(usize, u64)>,
 ) -> Option<(TurfID, bool, bool)> {
 	all_mixtures
 		.get(m.mix)
 		.and_then(RwLock::try_read)
 		.and_then(|gas| {
-			let should_update_visuals = gas.vis_hash_changed(vis);
+			let should_update_visuals =
+				match gas.vis_hash_changed(vis, vis_cache.get(&m.mix).copied().unwrap_or(0)) {
+					Ok(hash) => {
+						let _ = updates.send((m.mix, hash));
+						true
+					}
+					Err(hash) => false,
+				};
 			let reactable = gas.can_react();
 			(should_update_visuals || reactable).then(|| (i, should_update_visuals, reactable))
 		})
@@ -641,26 +648,33 @@ fn post_process() {
 		}
 	};
 	let vis = crate::gas::visibility_copies();
-	let processables = turf_gases()
-		.par_iter()
-		.map(|entry| {
-			let (&i, &m) = entry.pair();
-			(i, m)
-		})
-		.filter_map(|(i, m)| {
-			m.enabled()
-				.then(|| {
-					GasArena::with_all_mixtures(|all_mixtures| {
-						if should_check_planet_turfs {
-							let planetary_atmos = planetary_atmos();
-							remove_trace_planet_gases(m, planetary_atmos, all_mixtures);
-						}
-						post_process_cell(i, m, &vis, all_mixtures)
+	let (sender, receiver) = flume::unbounded();
+	let vis_cache = unsafe {
+		VISUALS_CACHE
+			.get_or_insert_with(|| std::collections::HashMap::with_hasher(FxBuildHasher::default()))
+	};
+	let processables = {
+		turf_gases()
+			.par_iter()
+			.map(|entry| {
+				let (&i, &m) = entry.pair();
+				(i, m)
+			})
+			.filter_map(|(i, m)| {
+				m.enabled()
+					.then(|| {
+						GasArena::with_all_mixtures(|all_mixtures| {
+							if should_check_planet_turfs {
+								let planetary_atmos = planetary_atmos();
+								remove_trace_planet_gases(m, planetary_atmos, all_mixtures);
+							}
+							post_process_cell(i, m, &vis, all_mixtures, &vis_cache, &sender.clone())
+						})
 					})
-				})
-				.flatten()
-		})
-		.collect::<Vec<_>>();
+					.flatten()
+			})
+			.collect::<Vec<_>>()
+	};
 	processables.into_par_iter().chunks(30).for_each(|chunk| {
 		let sender = byond_callback_sender();
 		let _ = sender.try_send(Box::new(move || {
@@ -680,6 +694,9 @@ fn post_process() {
 			Ok(Value::null())
 		}));
 	});
+	for (k, v) in receiver.drain() {
+		vis_cache.insert(k, v);
+	}
 }
 
 static HEAT_PROCESS_TIME: AtomicU64 = AtomicU64::new(1_000_000);
@@ -769,7 +786,7 @@ fn _process_heat_hook() {
 						let is_temp_delta_with_air = turf_gases()
 							.try_get(&i)
 							.try_unwrap()
-							.filter(|m| m.simulation_level & SIMULATION_LEVEL_ANY > 0)
+							.filter(|m| m.enabled())
 							.and_then(|m| {
 								GasArena::with_all_mixtures(|all_mixtures| {
 									all_mixtures
@@ -828,11 +845,7 @@ fn _process_heat_hook() {
 					let t: &mut ThermalInfo = &mut maybe_t.unwrap();
 					t.temperature = turf_gases()
 						.get(&i)
-						.filter(|m| {
-							m.simulation_level != SIMULATION_LEVEL_NONE
-								&& m.simulation_level & SIMULATION_LEVEL_DISABLED
-									!= SIMULATION_LEVEL_DISABLED
-						})
+						.filter(|m| m.enabled())
 						.and_then(|m| {
 							GasArena::with_all_mixtures(|all_mixtures| {
 								all_mixtures.get(m.mix).map(|entry| {
@@ -894,4 +907,5 @@ fn reset_auxmos_processing() {
 	PROCESSING_TURF_STEP.store(PROCESS_NOT_STARTED, Ordering::SeqCst);
 	PROCESSING_HEAT.store(false, Ordering::SeqCst);
 	HEAT_PROCESS_TIME.store(1_000_000, Ordering::SeqCst);
+	unsafe { VISUALS_CACHE = None };
 }

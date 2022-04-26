@@ -46,6 +46,13 @@ const fn adj_flag_to_idx(adj_flag: u8) -> usize {
 	}
 }
 
+pub const NONE: u8 = 0;
+pub const SIMULATION_DIFFUSE: u8 = 1;
+pub const SIMULATION_ALL: u8 = 2;
+pub const SIMULATION_ANY: u8 = SIMULATION_DIFFUSE | SIMULATION_ALL;
+pub const SIMULATION_DISABLED: u8 = 4;
+pub const SIMULATION_FLAGS: u8 = SIMULATION_ANY | SIMULATION_DISABLED;
+
 type TurfID = u32;
 
 // TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
@@ -53,7 +60,7 @@ type TurfID = u32;
 struct TurfMixture {
 	pub mix: usize,
 	pub adjacency: u8,
-	pub simulation_level: u8,
+	pub flags: u8,
 	pub planetary_atmos: Option<u32>,
 	pub adjacents: [Option<nonmax::NonMaxUsize>; 6], // this baby saves us 50% of the cpu time in FDM calcs
 }
@@ -61,8 +68,7 @@ struct TurfMixture {
 #[allow(dead_code)]
 impl TurfMixture {
 	pub fn enabled(&self) -> bool {
-		self.simulation_level > 0
-			&& self.simulation_level & SIMULATION_LEVEL_DISABLED != SIMULATION_LEVEL_DISABLED
+		self.flags & SIMULATION_FLAGS == SIMULATION_ANY
 	}
 	pub fn adjacent_mixes<'a>(
 		&'a self,
@@ -187,7 +193,7 @@ fn turf_temperatures() -> &'static DashMap<TurfID, ThermalInfo, FxBuildHasher> {
 
 #[hook("/turf/proc/update_air_ref")]
 fn _hook_register_turf() {
-	let simulation_level = args[0].as_number().map_err(|_| {
+	let flags = args[0].as_number().map_err(|_| {
 		runtime!(
 			"Attempt to interpret non-number value as number {} {}:{}",
 			std::file!(),
@@ -195,7 +201,7 @@ fn _hook_register_turf() {
 			std::column!()
 		)
 	})?;
-	if simulation_level < 0.0 {
+	if flags < 0.0 {
 		turf_gases().remove(&unsafe { src.raw.data.id });
 		Ok(Value::null())
 	} else {
@@ -212,7 +218,7 @@ fn _hook_register_turf() {
 				)
 			})?
 			.to_bits() as usize;
-		to_insert.simulation_level = args[0].as_number().map_err(|_| {
+		to_insert.flags = args[0].as_number().map_err(|_| {
 			runtime!(
 				"Attempt to interpret non-number value as number {} {}:{}",
 				std::file!(),
@@ -323,11 +329,11 @@ fn _hook_sleep() {
 	let src_id = unsafe { src.raw.data.id };
 	if arg == 0.0 {
 		turf_gases().entry(src_id).and_modify(|turf| {
-			turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+			turf.flags &= !SIMULATION_DISABLED;
 		});
 	} else {
 		turf_gases().entry(src_id).and_modify(|turf| {
-			turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
+			turf.flags |= SIMULATION_DISABLED;
 		});
 	}
 	Ok(Value::from(true))
@@ -364,11 +370,11 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 		if let Ok(blocks_air) = src_turf.get_number(byond_string!("blocks_air")) {
 			if blocks_air == 0.0 {
 				turf_gases().entry(id).and_modify(|turf| {
-					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+					turf.flags &= !SIMULATION_DISABLED;
 				});
 			} else {
 				turf_gases().entry(id).and_modify(|turf| {
-					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+					turf.flags |= SIMULATION_DISABLED;
 				});
 			}
 		}
@@ -507,12 +513,6 @@ fn _hook_update_visuals() {
 	src.call("set_visuals", &[&Value::from(l)])
 }
 */
-
-pub const SIMULATION_LEVEL_NONE: u8 = 0;
-pub const SIMULATION_LEVEL_DIFFUSE: u8 = 1;
-pub const SIMULATION_LEVEL_ALL: u8 = 2;
-pub const SIMULATION_LEVEL_ANY: u8 = SIMULATION_LEVEL_DIFFUSE | SIMULATION_LEVEL_ALL;
-pub const SIMULATION_LEVEL_DISABLED: u8 = 4;
 
 fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {
 	let z_size = max_x * max_y;

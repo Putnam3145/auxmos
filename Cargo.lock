@@ -23,6 +23,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "atomic_float"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62af46d040ba9df09edc6528dae9d8e49f5f3e82f55b7d2ec31a733c38dbc49d"
+
+[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -66,6 +72,7 @@ name = "auxmos"
 version = "0.4.0"
 dependencies = [
  "ahash 0.7.6",
+ "atomic_float",
  "auxcallback",
  "auxcleanup",
  "auxtools",

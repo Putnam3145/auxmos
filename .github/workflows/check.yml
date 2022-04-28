@@ -15,5 +15,7 @@ jobs:
         run: |
           sudo apt update
           sudo apt install g++-multilib -y
+      - name: Check formatting
+        run: cargo fmt --all -- --check
       - name: Check auxmos build
-        run: cargo check --target=i686-unknown-linux-gnu --release --features "all_reaction_hooks katmos"
+        run: cargo check --target=i686-unknown-linux-gnu --release --features "all_reaction_hooks katmos

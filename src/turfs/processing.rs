@@ -560,7 +560,11 @@ fn excited_group_processing(
 								continue;
 							}
 							found_turfs.insert(loc);
-							if let Some(border_mix) = turf_gases().try_get(&loc).try_unwrap().filter(|b| b.enabled()) {
+							if let Some(border_mix) = turf_gases()
+								.try_get(&loc)
+								.try_unwrap()
+								.filter(|b| b.enabled())
+							{
 								border_turfs.push_back((loc, *border_mix));
 							}
 						}
@@ -628,7 +632,7 @@ fn post_process_cell(
 						let _ = updates.send((m.mix, hash));
 						true
 					}
-					Err(hash) => false,
+					Err(_) => false,
 				};
 			let reactable = gas.can_react();
 			(should_update_visuals || reactable).then(|| (i, should_update_visuals, reactable))

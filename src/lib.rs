@@ -453,7 +453,7 @@ fn _compare_hook(other: Value) {
 fn _react_hook(holder: Value) {
 	let mut ret: i32 = 0;
 	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
-	for reaction in reactions {
+	for reaction in reactions.iter() {
 		ret |= react_by_id(reaction, src, &holder)?
 			.as_number()
 			.unwrap_or_default() as i32;

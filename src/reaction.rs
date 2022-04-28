@@ -19,7 +19,7 @@ pub struct Reaction {
 	min_gas_reqs: Vec<(GasIDX, f32)>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct ReactionIdentifier {
 	string_id_hash: u64,
 	priority: f32,
@@ -86,9 +86,9 @@ fn clean_up_reaction_values() {
 	});
 }
 
-pub fn react_by_id(id: ReactionIdentifier, src: &Value, holder: &Value) -> DMResult {
+pub fn react_by_id(id: &ReactionIdentifier, src: &Value, holder: &Value) -> DMResult {
 	REACTION_VALUES.with(|r| {
-		r.borrow().get(&id).map_or_else(
+		r.borrow().get(id).map_or_else(
 			|| Err(runtime!("Reaction with invalid id")),
 			|reaction| match reaction {
 				ReactionSide::ByondSide(val) => val.call("react", &[src, holder]),
@@ -217,6 +217,6 @@ impl Reaction {
 	}
 	/// Calls the reaction with the given arguments.
 	pub fn react(&self, src: &Value, holder: &Value) -> DMResult {
-		react_by_id(self.id, src, holder)
+		react_by_id(&self.id, src, holder)
 	}
 }

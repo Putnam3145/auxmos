@@ -4,10 +4,7 @@ use itertools::{
 	Itertools,
 };
 
-use std::{
-	cell::Cell,
-	sync::atomic::{AtomicU64, Ordering::Relaxed},
-};
+use std::sync::atomic::Ordering::Relaxed;
 
 use atomic_float::AtomicF32;
 
@@ -36,15 +33,19 @@ impl Default for GasCache {
 }
 
 impl GasCache {
-	fn invalidate(&self) {
+	pub fn invalidate(&self) {
 		self.0.store(f32::NAN, Relaxed);
 	}
-	fn get_or_else(&self, mut f: impl FnMut() -> f32) -> f32 {
-		self.0
-			.fetch_update(Relaxed, Relaxed, |x| x.is_nan().then(|| f()));
-		self.0.load(Relaxed)
+	pub fn get_or_else(&self, mut f: impl FnMut() -> f32) -> f32 {
+		match self
+			.0
+			.fetch_update(Relaxed, Relaxed, |x| x.is_nan().then(|| f()))
+		{
+			Ok(_) => self.0.load(Relaxed),
+			Err(x) => x,
+		}
 	}
-	fn set(&self, v: f32) {
+	pub fn set(&self, v: f32) {
 		self.0.store(v, Relaxed);
 	}
 }
@@ -432,7 +433,7 @@ impl Mixture {
 		with_reactions(|reactions| reactions.iter().any(|r| r.check_conditions(self)))
 	}
 	/// Gets all of the reactions this mix should do.
-	pub fn all_reactable(&self) -> Vec<ReactionIdentifier> {
+	pub fn all_reactable(&self) -> TinyVec<[ReactionIdentifier; MAX_REACTION_TINYVEC_SIZE]> {
 		with_reactions(|reactions| {
 			reactions
 				.iter()

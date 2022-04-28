@@ -191,8 +191,11 @@ impl GasType {
 								})
 								.collect(),
 						))
-					} else if let Ok(_) = product_info.as_string() {
-						Some(FireProductInfo::Plasma)
+					} else if let Ok(n) = product_info.as_number() {
+						match n as u32 {
+							0 => Some(FireProductInfo::Plasma),
+							_ => None,
+						}
 					} else {
 						None
 					}

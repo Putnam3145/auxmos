@@ -68,7 +68,8 @@ struct TurfMixture {
 #[allow(dead_code)]
 impl TurfMixture {
 	pub fn enabled(&self) -> bool {
-		self.flags & SIMULATION_FLAGS == SIMULATION_ANY
+		let simul_flags = self.flags & SIMULATION_FLAGS;
+		simul_flags & SIMULATION_DISABLED == 0 && simul_flags & SIMULATION_ANY != 0
 	}
 	pub fn adjacent_mixes<'a>(
 		&'a self,

@@ -16,7 +16,7 @@ use parking_lot::{Once, RwLock};
 
 use crate::callbacks::process_aux_callbacks;
 
-lazy_static! {
+lazy_static::lazy_static! {
 	static ref TURF_CHANNEL: (
 		flume::Sender<Box<SSairInfo>>,
 		flume::Receiver<Box<SSairInfo>>

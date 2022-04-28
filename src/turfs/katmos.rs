@@ -497,7 +497,7 @@ fn explosively_depressurize(
 		}
 	}
 
-	process_aux_callbacks(crate::callbacks::ADJACENCIES);
+	process_aux_callbacks(crate::callbacks::TURFS);
 
 	if space_turfs.is_empty() {
 		return Ok(Value::null());
@@ -858,7 +858,7 @@ pub(crate) fn equalize(
 			if !planet_turfs.is_empty() {
 				turfs_processed.fetch_add(
 					turfs.len() + planet_turfs.len(),
-					std::sync::atomic::Ordering::SeqCst,
+					std::sync::atomic::Ordering::Relaxed,
 				);
 				process_planet_turfs(
 					planet_turfs,
@@ -870,7 +870,7 @@ pub(crate) fn equalize(
 					&info,
 				);
 			} else {
-				turfs_processed.fetch_add(turfs.len(), std::sync::atomic::Ordering::SeqCst);
+				turfs_processed.fetch_add(turfs.len(), std::sync::atomic::Ordering::Relaxed);
 			}
 			(turfs, info)
 		})

@@ -6,7 +6,9 @@ type CallbackChannel = (flume::Sender<DeferredFunc>, flume::Receiver<DeferredFun
 
 static mut CALLBACK_CHANNELS: Option<[CallbackChannel; 2]> = None;
 
-pub(crate) const ADJACENCIES: usize = 0;
+pub(crate) const TURFS: usize = 0;
+
+pub(crate) const TEMPERATURE: usize = 1;
 
 #[init(partial)]
 fn _start_aux_callbacks() -> Result<(), String> {

@@ -235,12 +235,17 @@ fn _destroy_gas_info_structs() {
 	CACHED_GAS_IDS.with(|gas_ids| {
 		gas_ids.borrow_mut().clear();
 	});
+	CACHED_IDX_TO_STRINGS.with(|gas_ids| {
+		gas_ids.borrow_mut().clear();
+	});
 }
 
 #[hook("/proc/_auxtools_register_gas")]
 fn _hook_register_gas(gas: Value) {
 	let gas_id = gas.get_string(byond_string!("id"))?;
 	let gas_cache = GasType::new(&gas, TOTAL_NUM_GASES.load(Ordering::Acquire))?;
+	let cached_id = gas_id.to_owned();
+	let cached_idx = gas_cache.idx;
 	unsafe { GAS_INFO_BY_STRING.as_ref() }
 		.unwrap()
 		.insert(gas_id.into_boxed_str(), gas_cache.clone());
@@ -250,6 +255,10 @@ fn _hook_register_gas(gas: Value) {
 		.unwrap()
 		.push(gas_cache.specific_heat);
 	GAS_INFO_BY_IDX.write().as_mut().unwrap().push(gas_cache);
+	CACHED_IDX_TO_STRINGS.with(|gas_ids| {
+		let mut map = gas_ids.borrow_mut();
+		map.insert(cached_idx, cached_id.into_boxed_str())
+	});
 	TOTAL_NUM_GASES.fetch_add(1, Ordering::Release); // this is the only thing that stores it other than shutdown
 	Ok(Value::null())
 }
@@ -377,6 +386,7 @@ fn _finalize_gas_refs() {
 
 thread_local! {
 	static CACHED_GAS_IDS: RefCell<HashMap<Value, GasIDX, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
+	static CACHED_IDX_TO_STRINGS: RefCell<HashMap<usize,Box<str>, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
 }
 
 /// Returns the appropriate index to be used by auxmos for a given ID string.
@@ -404,18 +414,13 @@ pub fn gas_idx_from_value(string_val: &Value) -> Result<GasIDX, Runtime> {
 }
 
 /// Takes an index and returns a borrowed string representing the string ID of the gas datum stored in that index.
-pub fn gas_idx_to_id(
-	idx: GasIDX,
-) -> Result<parking_lot::MappedRwLockReadGuard<'static, Box<str>>, Runtime> {
-	Ok(parking_lot::RwLockReadGuard::map(
-		GAS_INFO_BY_IDX.read(),
-		|lock| {
-			&lock
-				.as_ref()
-				.unwrap_or_else(|| panic!("Gases not loaded yet! Uh oh!"))
-				.get(idx as usize)
-				.unwrap_or_else(|| panic!("Invalid gas index: {}", idx))
-				.id
-		},
-	))
+pub fn gas_idx_to_id(idx: GasIDX) -> DMResult {
+	CACHED_IDX_TO_STRINGS.with(|thin| {
+		let stuff = thin.borrow();
+		Value::from_string(
+			stuff
+				.get(&idx)
+				.unwrap_or_else(|| panic!("Invalid gas index: {}", idx)),
+		)
+	})
 }

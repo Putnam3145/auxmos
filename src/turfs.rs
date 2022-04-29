@@ -432,64 +432,57 @@ fn _hook_turf_temperature() {
 		src.get(byond_string!("initial_temperature"))
 	}
 }
-
-/*Miserable performance, I mean seriously terrible, 1000x worse than in byond, why?
-#[hook("/turf/open/proc/update_visuals")]
-fn _hook_update_visuals() {
+///*
+// gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't
+pub fn update_visuals(src: Value) -> DMResult {
 	use super::gas;
-	let old_overlay_types_value = src.get(byond_string!("atmos_overlay_types"))?;
-	let mut overlay_types: Vec<Value> = Vec::new();
-	let gas_overlays = src.get_global("meta_gas_overlays")?.as_list()?;
-	GasMixtures::with_all_mixtures(|all_mixtures| {
-		all_mixtures
-			.get(
-				TURF_GASES
-					.get(&unsafe { src.raw.data.id })
-					.unwrap()
-					.mix,
-			)
-			.unwrap()
-			.read()
-			.for_each_gas(|(i, &n)| {
-				if let Some(amt) = gas::gas_visibility(i) {
-					if n > amt {
-						if let Ok(this_gas_overlays_v) =
-							gas_overlays.get(gas::gas_idx_to_id(i).unwrap().as_ref())
-						{
-							if let Ok(this_gas_overlays) = this_gas_overlays_v.as_list() {
-								let this_idx = FACTOR_GAS_VISIBLE_MAX
-									.min((n / MOLES_GAS_VISIBLE_STEP).ceil()) as u32;
-								if let Ok(this_gas_overlay) = this_gas_overlays.get(this_idx + 1) {
-									overlay_types.push(this_gas_overlay);
-								}
+	match src.get(byond_string!("air")) {
+		Err(_) => Ok(Value::null()),
+		Ok(air) => {
+			let overlay_types = List::new();
+			let gas_overlays = Value::globals()
+				.get(byond_string!("gas_data"))?
+				.get_list(byond_string!("overlays"))?;
+			let ptr = air
+				.get_number(byond_string!("_extools_pointer_gasmixture"))
+				.map_err(|_| {
+					runtime!(
+						"Attempt to interpret non-number value as number {} {}:{}",
+						std::file!(),
+						std::line!(),
+						std::column!()
+					)
+				})?
+				.to_bits() as usize;
+			GasArena::with_gas_mixture(ptr, |mix| {
+				mix.for_each_gas(|idx, moles| {
+					if let Some(amt) = gas::types::gas_visibility(idx) {
+						if moles > amt {
+							let this_overlay_list =
+								gas_overlays.get(gas::gas_idx_to_id(idx)?)?.as_list()?;
+							if let Ok(this_gas_overlay) = this_overlay_list.get(
+								(moles / MOLES_GAS_VISIBLE_STEP)
+									.ceil()
+									.min(FACTOR_GAS_VISIBLE_MAX)
+									.max(1.0) as u32,
+							) {
+								overlay_types.append(this_gas_overlay)
 							}
 						}
 					}
-				}
-			});
-	});
-	if overlay_types.is_empty() {
-		return Ok(Value::null());
-	}
-	if let Ok(old_overlay_types) = old_overlay_types_value.as_list() {
-		if old_overlay_types.len() as usize == overlay_types.len() {
-			if overlay_types.iter().enumerate().all(|(i, v)| {
-				let v1 = v.raw;
-				let v2 = old_overlay_types.get((i+1) as u32).unwrap().raw;
-				unsafe { v1.data.id == v2.data.id && v1.tag == v2.tag }
-			}) {
+					Ok(())
+				})
+			})?;
+
+			if overlay_types.len() == 0 {
 				return Ok(Value::null());
 			}
+
+			src.call("set_visuals", &[&Value::from(overlay_types)])
 		}
 	}
-	let l = List::new();
-	for v in overlay_types.iter() {
-		l.append(v);
-	}
-	src.call("set_visuals", &[&Value::from(l)])
 }
-*/
-
+//*/
 pub const SIMULATION_LEVEL_NONE: u8 = 0;
 pub const SIMULATION_LEVEL_DIFFUSE: u8 = 1;
 pub const SIMULATION_LEVEL_ALL: u8 = 2;

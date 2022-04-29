@@ -161,7 +161,7 @@ fn _get_gases_hook() {
 		let gases_list: List = List::new();
 		mix.for_each_gas(|idx, gas| {
 			if gas > GAS_MIN_MOLES {
-				gases_list.append(Value::from_string(&*gas_idx_to_id(idx)?)?);
+				gases_list.append(gas_idx_to_id(idx)?);
 			}
 			Ok(())
 		})?;

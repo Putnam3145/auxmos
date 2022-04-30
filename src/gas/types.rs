@@ -191,11 +191,8 @@ impl GasType {
 								})
 								.collect(),
 						))
-					} else if let Ok(n) = product_info.as_number() {
-						match n as u32 {
-							0 => Some(FireProductInfo::Plasma),
-							_ => None,
-						}
+					} else if let Ok(_) = product_info.as_number() {
+						Some(FireProductInfo::Plasma) // if we add another snowflake later, add it, but for now we hack this in
 					} else {
 						None
 					}

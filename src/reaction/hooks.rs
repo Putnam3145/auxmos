@@ -310,7 +310,7 @@ fn fusion(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 
 		//Change the temperature
 		if new_heat_cap > MINIMUM_HEAT_CAPACITY
-			&& (reaction_energy == 0.0 || instability <= FUSION_INSTABILITY_ENDOTHERMALITY)
+			&& (reaction_energy != 0.0 || instability <= FUSION_INSTABILITY_ENDOTHERMALITY)
 		{
 			air.set_temperature((thermal_energy / new_heat_cap).clamp(TCMB, INFINITY));
 		}

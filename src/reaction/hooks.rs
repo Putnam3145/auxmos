@@ -35,7 +35,7 @@ fn plasma_fire(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 	let co2 = gas_idx_from_string(GAS_CO2)?;
 	let tritium = gas_idx_from_string(GAS_TRITIUM)?;
 	let (oxygen_burn_rate, plasma_burn_rate, initial_oxy, initial_plasma, initial_energy) =
-		with_mix(&byond_air, |air| {
+		with_mix(byond_air, |air| {
 			let temperature_scale = {
 				if air.get_temperature() > PLASMA_UPPER_TEMPERATURE {
 					1.0
@@ -71,7 +71,7 @@ fn plasma_fire(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 		})?;
 	let fire_amount = plasma_burn_rate * (1.0 + oxygen_burn_rate);
 	if fire_amount > 0.0 {
-		let temperature = with_mix_mut(&byond_air, |air| {
+		let temperature = with_mix_mut(byond_air, |air| {
 			air.set_moles(plasma, initial_plasma - plasma_burn_rate);
 			air.set_moles(o2, initial_oxy - (plasma_burn_rate * oxygen_burn_rate));
 			if initial_oxy / initial_plasma > SUPER_SATURATION_THRESHOLD {
@@ -216,7 +216,7 @@ fn fusion(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 		scale_factor,
 		temperature_scale,
 		gas_power,
-	) = with_mix(&byond_air, |air| {
+	) = with_mix(byond_air, |air| {
 		Ok((
 			air.thermal_energy(),
 			air.get_moles(plas),
@@ -290,7 +290,7 @@ fn fusion(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 	let standard_waste_gas_output =
 		scale_factor * (FUSION_TRITIUM_CONVERSION_COEFFICIENT * FUSION_TRITIUM_MOLES_USED);
 
-	let standard_energy = with_mix_mut(&byond_air, |air| {
+	let standard_energy = with_mix_mut(byond_air, |air| {
 		air.set_moles(plas, plasma);
 		air.set_moles(co2, carbon);
 
@@ -309,15 +309,10 @@ fn fusion(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 		let standard_energy = 400_f32 * air.get_moles(plas) * air.get_temperature(); //Prevents putting meaningless waste gases to achieve high rads.
 
 		//Change the temperature
-		if reaction_energy != 0.0 {
-			if new_heat_cap > MINIMUM_HEAT_CAPACITY {
-				air.set_temperature((thermal_energy / new_heat_cap).clamp(TCMB, INFINITY));
-			}
-		} else if reaction_energy == 0.0 && instability <= FUSION_INSTABILITY_ENDOTHERMALITY {
-			if new_heat_cap > MINIMUM_HEAT_CAPACITY {
-				air.set_temperature((thermal_energy / new_heat_cap).clamp(TCMB, INFINITY)); //THIS SHOULD STAY OR FUSION WILL EAT YOUR FACE
-			}
+		if new_heat_cap > MINIMUM_HEAT_CAPACITY {
+			air.set_temperature((thermal_energy / new_heat_cap).clamp(TCMB, INFINITY));
 		}
+
 		air.garbage_collect();
 		Ok(standard_energy)
 	})?;
@@ -325,7 +320,7 @@ fn fusion(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 		Proc::find(byond_string!("/proc/fusion_ball"))
 			.unwrap()
 			.call(&[
-				&holder,
+				holder,
 				&Value::from(reaction_energy),
 				&Value::from(standard_energy),
 			])?;
@@ -347,7 +342,7 @@ fn generic_fire(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 	);
 	let mut radiation_released = 0.0;
 	with_gas_info(|gas_info| {
-		if let Some(fire_amount) = with_mix(&byond_air, |air| {
+		if let Some(fire_amount) = with_mix(byond_air, |air| {
 			let (mut fuels, mut oxidizers) = air.get_fire_info_with_lock(gas_info);
 			let oxidation_power = oxidizers
 				.iter()
@@ -415,7 +410,7 @@ fn generic_fire(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 				))
 			}
 		})? {
-			let temperature = with_mix_mut(&byond_air, |air| {
+			let temperature = with_mix_mut(byond_air, |air| {
 				// internal energy + PV, which happens to be reducible to this
 				let initial_enthalpy = air.get_temperature()
 					* (air.heat_capacity() + R_IDEAL_GAS_EQUATION * air.total_moles());
@@ -443,7 +438,7 @@ fn generic_fire(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 			cached_results.set(byond_string!("fire"), Value::from(fire_amount))?;
 			if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
 				if let Some(fire_expose) = Proc::find(byond_string!("/proc/fire_expose")) {
-					fire_expose.call(&[&holder, &byond_air, &Value::from(temperature)])?;
+					fire_expose.call(&[holder, byond_air, &Value::from(temperature)])?;
 				} else {
 					Proc::find(byond_string!("/proc/stack_trace"))
 						.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
@@ -454,7 +449,7 @@ fn generic_fire(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 			}
 			if radiation_released > 0.0 {
 				if let Some(radiation_burn) = Proc::find(byond_string!("/proc/radiation_burn")) {
-					radiation_burn.call(&[&holder, &Value::from(radiation_released)])?;
+					radiation_burn.call(&[holder, &Value::from(radiation_released)])?;
 				} else {
 					let _ = Proc::find(byond_string!("/proc/stack_trace"))
 					.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?

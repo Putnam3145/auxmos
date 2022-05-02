@@ -720,7 +720,8 @@ fn post_process() {
 					}
 				}
 				if should_update_vis {
-					turf.call("update_visuals", &[])?;
+					//turf.call("update_visuals", &[])?;
+					update_visuals(turf)?;
 				}
 			}
 			Ok(Value::null())

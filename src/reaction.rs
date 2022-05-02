@@ -173,10 +173,10 @@ impl Reaction {
 				}
 			}
 		};
-		if func.is_some() {
+		if let Some(function) = func {
 			REACTION_VALUES.with(|r| {
 				r.borrow_mut()
-					.insert(our_reaction.id, ReactionSide::RustSide(func.unwrap()))
+					.insert(our_reaction.id, ReactionSide::RustSide(function))
 			});
 		} else {
 			REACTION_VALUES.with(|r| {

@@ -359,6 +359,8 @@ fn should_process(m: TurfMixture, all_mixtures: &[RwLock<Mixture>]) -> bool {
 }
 
 // Creates the combined gas mixture of all this mix's neighbors, as well as gathering some other pertinent info for future processing.
+// Clippy go away, this type is only used once
+#[allow(clippy::type_complexity)]
 fn process_cell(
 	i: TurfID,
 	m: TurfMixture,
@@ -518,7 +520,7 @@ fn fdm(
 					.with_min_len(5)
 					.for_each(|temp_value| {
 						let sender = byond_callback_sender();
-						let these_pressure_deltas = temp_value.iter().copied().collect::<Vec<_>>();
+						let these_pressure_deltas = temp_value.to_vec();
 						let _ = sender.try_send(Box::new(move || {
 							for &(turf_id, pressure_diffs, _) in
 								these_pressure_deltas.iter().filter(|&(id, _, _)| *id != 0)

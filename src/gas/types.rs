@@ -192,7 +192,7 @@ impl GasType {
 								})
 								.collect(),
 						))
-					} else if let Ok(_) = product_info.as_string() {
+					} else if product_info.as_string().is_ok() {
 						Some(FireProductInfo::Plasma)
 					} else {
 						None
@@ -243,7 +243,7 @@ fn _destroy_gas_info_structs() {
 #[hook("/proc/_auxtools_register_gas")]
 fn _hook_register_gas(gas: Value) {
 	let gas_id = gas.get_string(byond_string!("id"))?;
-	let gas_cache = GasType::new(&gas, TOTAL_NUM_GASES.load(Ordering::Acquire))?;
+	let gas_cache = GasType::new(gas, TOTAL_NUM_GASES.load(Ordering::Acquire))?;
 	let cached_id = gas_id.to_owned();
 	let cached_idx = gas_cache.idx;
 	unsafe { GAS_INFO_BY_STRING.as_ref() }
@@ -368,11 +368,9 @@ pub fn update_gas_refs() {
 		.unwrap_or_else(|| panic!("Gases not loaded yet! Uh oh!"))
 		.iter_mut()
 		.for_each(|gas| {
-			if let Some(product_info) = gas.fire_products.as_mut() {
-				if let FireProductInfo::Generic(products) = product_info {
-					for product in products.iter_mut() {
-						product.0.update().unwrap();
-					}
+			if let Some(FireProductInfo::Generic(products)) = gas.fire_products.as_mut() {
+				for product in products.iter_mut() {
+					product.0.update().unwrap();
 				}
 			}
 		});

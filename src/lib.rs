@@ -158,7 +158,7 @@ fn _get_gases_hook() {
 		let gases_list: List = List::new();
 		mix.for_each_gas(|idx, gas| {
 			if gas > GAS_MIN_MOLES {
-				gases_list.append(Value::from_string(&*gas_idx_to_id(idx)?)?);
+				gases_list.append(gas_idx_to_id(idx)?);
 			}
 			Ok(())
 		})?;
@@ -244,7 +244,7 @@ fn _set_moles_hook(gas_id: Value, amt_val: Value) {
 fn _adjust_moles_hook(id_val: Value, num_val: Value) {
 	let vf = num_val.as_number().unwrap_or_default();
 	with_mix_mut(src, |mix| {
-		mix.adjust_moles(gas_idx_from_value(&id_val)?, vf);
+		mix.adjust_moles(gas_idx_from_value(id_val)?, vf);
 		Ok(Value::null())
 	})
 }
@@ -413,7 +413,7 @@ fn _scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
 	let gas_scrub_vec = (1..=gases_to_scrub.len())
 		.filter_map(|idx| gas_idx_from_value(&gases_to_scrub.get(idx).unwrap()).ok())
 		.collect::<Vec<_>>();
-	with_mixes_mut(src, &into, |src_gas, dest_gas| {
+	with_mixes_mut(src, into, |src_gas, dest_gas| {
 		src_gas.transfer_gases_to(ratio, &gas_scrub_vec, dest_gas);
 		Ok(Value::from(true))
 	})
@@ -453,8 +453,8 @@ fn _compare_hook(other: Value) {
 fn _react_hook(holder: Value) {
 	let mut ret: i32 = 0;
 	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
-	for reaction in reactions.iter() {
-		ret |= react_by_id(reaction, src, &holder)?
+	for reaction in reactions {
+		ret |= react_by_id(&reaction, src, holder)?
 			.as_number()
 			.unwrap_or_default() as i32;
 		if ret & STOP_REACTIONS == STOP_REACTIONS {
@@ -488,7 +488,7 @@ fn _adjust_heat_hook() {
 /// Args: (mixture, amount). Takes the `amount` given and transfers it from `src` to `mixture`.
 #[hook("/datum/gas_mixture/proc/transfer_to")]
 fn _transfer_hook(other: Value, moles: Value) {
-	with_mixes_mut(src, &other, |our_mix, other_mix| {
+	with_mixes_mut(src, other, |our_mix, other_mix| {
 		other_mix.merge(&our_mix.remove(moles.as_number().map_err(|_| {
 			runtime!(
 				"Attempt to interpret non-number value as number {} {}:{}",
@@ -504,7 +504,7 @@ fn _transfer_hook(other: Value, moles: Value) {
 /// Args: (mixture, ratio). Transfers `ratio` of `src` to `mixture`.
 #[hook("/datum/gas_mixture/proc/transfer_ratio_to")]
 fn _transfer_ratio_hook(other: Value, ratio: Value) {
-	with_mixes_mut(src, &other, |our_mix, other_mix| {
+	with_mixes_mut(src, other, |our_mix, other_mix| {
 		other_mix.merge(&our_mix.remove_ratio(ratio.as_number().map_err(|_| {
 			runtime!(
 				"Attempt to interpret non-number value as number {} {}:{}",

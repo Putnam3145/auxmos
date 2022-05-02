@@ -132,10 +132,7 @@ impl Reaction {
 				let mut min_gas_reqs: Vec<(GasIDX, f32)> = Vec::new();
 				for i in 0..total_num_gases() {
 					if let Ok(req_amount) = min_reqs
-						.get(
-							Value::from_string(&*gas_idx_to_id(i).unwrap())
-								.unwrap_or_else(|_| Value::null()),
-						)
+						.get(gas_idx_to_id(i).unwrap_or_else(|_| Value::null()))
 						.and_then(|v| v.as_number())
 					{
 						min_gas_reqs.push((i, req_amount));
@@ -176,10 +173,10 @@ impl Reaction {
 				}
 			}
 		};
-		if func.is_some() {
+		if let Some(function) = func {
 			REACTION_VALUES.with(|r| {
 				r.borrow_mut()
-					.insert(our_reaction.id, ReactionSide::RustSide(func.unwrap()))
+					.insert(our_reaction.id, ReactionSide::RustSide(function))
 			});
 		} else {
 			REACTION_VALUES.with(|r| {

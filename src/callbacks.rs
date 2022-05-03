@@ -1,4 +1,4 @@
-use auxtools::*;
+use auxtools::{init, shutdown, DMResult, Proc, Value};
 
 type DeferredFunc = Box<dyn Fn() -> DMResult + Send + Sync>;
 
@@ -32,20 +32,29 @@ fn with_aux_callback_receiver<T>(
 	f(unsafe { &CALLBACK_CHANNELS.as_ref().unwrap()[item].1 })
 }
 
+/// Returns a clone of the sender for the given callback channel.
+/// # Panics
+/// If callback channels have (somehow) not been initialized yet.
+#[must_use]
 pub fn aux_callbacks_sender(item: usize) -> flume::Sender<DeferredFunc> {
 	unsafe { CALLBACK_CHANNELS.as_ref().unwrap()[item].0.clone() }
 }
 
+/// Process all the callbacks for the given channel.
+/// # Panics
+/// If `auxtools_stack_trace` does not exist.
 pub fn process_aux_callbacks(item: usize) {
 	let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
 	with_aux_callback_receiver(
 		|receiver| {
 			for callback in receiver.try_iter() {
 				if let Err(e) = callback() {
-					let _ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
+					std::mem::drop(
+						stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]),
+					);
 				}
 			}
 		},
 		item,
-	)
+	);
 }

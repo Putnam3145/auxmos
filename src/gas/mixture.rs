@@ -76,6 +76,7 @@ impl Default for Mixture {
 
 impl Mixture {
 	/// Makes an empty gas mixture.
+	#[must_use]
 	pub fn new() -> Self {
 		Self {
 			moles: TinyVec::new(),
@@ -87,6 +88,7 @@ impl Mixture {
 		}
 	}
 	/// Makes an empty gas mixture with the given volume.
+	#[must_use]
 	pub fn from_vol(vol: f32) -> Self {
 		let mut ret = Self::new();
 		ret.volume = vol;
@@ -122,6 +124,8 @@ impl Mixture {
 		self.moles.iter().copied().enumerate()
 	}
 	/// Allows closures to iterate over each gas.
+	/// # Errors
+	/// If the closure errors.
 	pub fn for_each_gas(
 		&self,
 		mut f: impl FnMut(GasIDX, f32) -> Result<(), auxtools::Runtime>,
@@ -131,6 +135,9 @@ impl Mixture {
 		}
 		Ok(())
 	}
+	/// As `for_each_gas`, but with mut refs to the mole counts instead of copies.
+	/// # Errors
+	/// If the closure errors.
 	pub fn for_each_gas_mut(
 		&mut self,
 		mut f: impl FnMut(GasIDX, &mut f32) -> Result<(), auxtools::Runtime>,
@@ -305,12 +312,14 @@ impl Mixture {
 		self.remove_ratio_into(amount / self.total_moles(), into);
 	}
 	/// A convenience function that makes the mixture for `remove_ratio_into` on the spot and returns it.
+	#[must_use]
 	pub fn remove_ratio(&mut self, ratio: f32) -> Self {
 		let mut removed = Self::from_vol(self.volume);
 		self.remove_ratio_into(ratio, &mut removed);
 		removed
 	}
 	/// Like `remove_ratio`, but with moles.
+	#[must_use]
 	pub fn remove(&mut self, amount: f32) -> Self {
 		self.remove_ratio(amount / self.total_moles())
 	}
@@ -400,7 +409,7 @@ impl Mixture {
 			.any(|pair| match pair {
 				Left(a) => a >= &amt,
 				Right(b) => b >= &amt,
-				Both(a, b) => a != b && (a - b).abs() >= amt,
+				Both(a, b) => (a - b).abs() >= amt,
 			})
 	}
 	/// Clears the moles from the gas.
@@ -423,6 +432,15 @@ impl Mixture {
 		if !self.immutable {
 			for amt in self.moles.iter_mut() {
 				*amt *= multiplier;
+			}
+			self.cached_heat_capacity.invalidate();
+			self.garbage_collect();
+		}
+	}
+	pub fn add(&mut self, num: f32) {
+		if !self.immutable {
+			for amt in self.moles.iter_mut() {
+				*amt += num;
 			}
 			self.cached_heat_capacity.invalidate();
 			self.garbage_collect();
@@ -543,18 +561,10 @@ impl Mixture {
 		}
 		hasher.finish()
 	}
-	/// Compares the current vis hash to the provided one; returns Err(hash) if they match, otherwise Ok(hash).
-	pub fn vis_hash_changed(
-		&self,
-		gas_visibility: &[Option<f32>],
-		prev_hash: u64,
-	) -> Result<u64, u64> {
+	/// Compares the current vis hash to the provided one; returns `Some(new_hash)` if they're different, otherwise None.
+	pub fn vis_hash_changed(&self, gas_visibility: &[Option<f32>], prev_hash: u64) -> Option<u64> {
 		let cur_hash = self.vis_hash(gas_visibility);
-		if cur_hash == prev_hash {
-			Err(cur_hash)
-		} else {
-			Ok(cur_hash)
-		}
+		(cur_hash != prev_hash).then(|| cur_hash)
 	}
 	// Removes all redundant zeroes from the gas mixture.
 	pub fn garbage_collect(&mut self) {

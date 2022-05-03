@@ -7,15 +7,18 @@ pub mod reaction;
 
 pub mod callbacks;
 
-use auxtools::*;
+use auxtools::{byond_string, hook, inventory, runtime, List, Value};
 
-use auxcleanup::*;
+use auxcleanup::{datum_del, DelDatumFunc};
 
-use gas::*;
+use gas::{
+	amt_gases, constants, gas_idx_from_value, gas_idx_to_id, tot_gases, types, with_gas_info,
+	with_mix, with_mix_mut, with_mixes, with_mixes_custom, with_mixes_mut, GasArena, Mixture,
+};
 
 use reaction::react_by_id;
 
-use gas::constants::*;
+use gas::constants::{GAS_MIN_MOLES, MINIMUM_MOLES_DELTA_TO_MOVE, STOP_REACTIONS};
 
 /// Args: (ms). Runs callbacks until time limit is reached. If time limit is omitted, runs all callbacks.
 #[hook("/proc/process_atmos_callbacks")]
@@ -263,7 +266,7 @@ fn _adjust_moles_temp_hook(id_val: Value, num_val: Value, temp_val: Value) {
 		return Ok(Value::null());
 	}
 	let mut new_mix = Mixture::new();
-	new_mix.set_moles(gas_idx_from_value(&id_val)?, vf);
+	new_mix.set_moles(gas_idx_from_value(id_val)?, vf);
 	new_mix.set_temperature(temp);
 	with_mix_mut(src, |mix| {
 		mix.merge(&new_mix);
@@ -303,10 +306,7 @@ fn _adjust_multi_hook() {
 fn _add_hook(num_val: Value) {
 	let vf = num_val.as_number().unwrap_or_default();
 	with_mix_mut(src, |mix| {
-		mix.for_each_gas_mut(|_, gas| {
-			*gas += vf;
-			Ok(())
-		})?;
+		mix.add(vf);
 		Ok(Value::null())
 	})
 }
@@ -316,10 +316,7 @@ fn _add_hook(num_val: Value) {
 fn _subtract_hook(num_val: Value) {
 	let vf = num_val.as_number().unwrap_or_default();
 	with_mix_mut(src, |mix| {
-		mix.for_each_gas_mut(|_, gas| {
-			*gas = (*gas - vf).max(0.0);
-			Ok(())
-		})?;
+		mix.add(-vf);
 		Ok(Value::null())
 	})
 }
@@ -356,7 +353,7 @@ fn _remove_by_flag_hook(into: Value, flag_val: Value, amount_val: Value) {
 			.map(|g| g.idx)
 			.collect::<Vec<_>>()
 	});
-	if pertinent_gases.len() == 0 {
+	if pertinent_gases.is_empty() {
 		return Ok(Value::from(false));
 	}
 	with_mixes_mut(src, into, |src_gas, dest_gas| {
@@ -376,7 +373,7 @@ fn get_by_flag_hook(flag_val: Value) {
 			.map(|g| g.idx)
 			.collect::<Vec<_>>()
 	});
-	if pertinent_gases.len() == 0 {
+	if pertinent_gases.is_empty() {
 		return Ok(Value::from(0.0));
 	}
 	with_mix(src, |mix| {
@@ -629,7 +626,7 @@ fn _equalize_all_hook() {
 			if let Some(src_gas_lock) = all_mixtures.get(id) {
 				let src_gas = src_gas_lock.read();
 				tot.merge(&src_gas);
-				tot_vol += src_gas.volume as f64;
+				tot_vol += f64::from(src_gas.volume);
 			}
 		}
 		if tot_vol > 0.0 {
@@ -638,7 +635,7 @@ fn _equalize_all_hook() {
 					let dest_gas = &mut dest_gas_lock.write();
 					let vol = dest_gas.volume; // don't wanna borrow it in the below
 					dest_gas.copy_from_mutable(&tot);
-					dest_gas.multiply((vol as f64 / tot_vol) as f32);
+					dest_gas.multiply((f64::from(vol) / tot_vol) as f32);
 				}
 			}
 		}

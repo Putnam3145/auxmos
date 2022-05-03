@@ -149,7 +149,7 @@ fn _process_turf_notify() {
 		!= 0.0;
 	process_aux_callbacks(crate::callbacks::TURFS);
 	process_aux_callbacks(crate::callbacks::ADJACENCIES);
-	let _ = sender.try_send(Box::new(SSairInfo {
+	drop(sender.try_send(Box::new(SSairInfo {
 		fdm_max_steps,
 		equalize_turf_limit,
 		equalize_hard_turf_limit,
@@ -158,7 +158,7 @@ fn _process_turf_notify() {
 		max_x,
 		max_y,
 		planet_enabled,
-	}));
+	})));
 	Ok(Value::null())
 }
 
@@ -182,7 +182,7 @@ fn _process_turf_start() -> Result<(), String> {
 				);
 				let bench = start_time.elapsed().as_millis();
 				let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
-				let _ = sender.try_send(Box::new(move || {
+				drop(sender.try_send(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
 					let prev_cost =
 						ssair.get_number(byond_string!("cost_turfs")).map_err(|_| {
@@ -203,7 +203,7 @@ fn _process_turf_start() -> Result<(), String> {
 						Value::from(hpt as f32),
 					)?;
 					Ok(Value::null())
-				}));
+				})));
 				(low_pressure_turfs, high_pressure_turfs)
 			};
 			{
@@ -215,7 +215,7 @@ fn _process_turf_start() -> Result<(), String> {
 					&low_pressure_turfs,
 				);
 				let bench = start_time.elapsed().as_millis();
-				let _ = sender.try_send(Box::new(move || {
+				drop(sender.try_send(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
 					let prev_cost =
 						ssair
@@ -237,7 +237,7 @@ fn _process_turf_start() -> Result<(), String> {
 						Value::from(processed_turfs as f32),
 					)?;
 					Ok(Value::null())
-				}));
+				})));
 			}
 			if info.equalize_enabled {
 				let start_time = Instant::now();
@@ -278,7 +278,7 @@ fn _process_turf_start() -> Result<(), String> {
 					}
 				};
 				let bench = start_time.elapsed().as_millis();
-				let _ = sender.try_send(Box::new(move || {
+				drop(sender.try_send(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
 					let prev_cost =
 						ssair
@@ -300,13 +300,13 @@ fn _process_turf_start() -> Result<(), String> {
 						Value::from(processed_turfs as f32),
 					)?;
 					Ok(Value::null())
-				}));
+				})));
 			}
 			{
 				let start_time = Instant::now();
 				post_process();
 				let bench = start_time.elapsed().as_millis();
-				let _ = sender.try_send(Box::new(move || {
+				drop(sender.try_send(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
 					let prev_cost = ssair
 						.get_number(byond_string!("cost_post_process"))
@@ -323,7 +323,7 @@ fn _process_turf_start() -> Result<(), String> {
 						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
 					)?;
 					Ok(Value::null())
-				}));
+				})));
 			}
 			TASKS_RUNNING.fetch_sub(1, Ordering::SeqCst);
 		});
@@ -523,7 +523,7 @@ fn fdm(
 					.for_each(|temp_value| {
 						let sender = byond_callback_sender();
 						let these_pressure_deltas = temp_value.to_vec();
-						let _ = sender.try_send(Box::new(move || {
+						drop(sender.try_send(Box::new(move || {
 							for &(turf_id, pressure_diffs, _) in
 								these_pressure_deltas.iter().filter(|&(id, _, _)| *id != 0)
 							{
@@ -546,7 +546,7 @@ fn fdm(
 								}
 							}
 							Ok(Value::null())
-						}));
+						})));
 					});
 			}
 			high_pressure_turfs.extend(high_pressure.iter().map(|(i, _, _)| i));
@@ -652,7 +652,7 @@ fn remove_trace_planet_gases(
 			.and_then(RwLock::try_read)
 			.map_or(false, |gas| !gas.compare_with(planet_atmos, 0.1))
 		{
-			if let Some(mut gas) = all_mixtures.get(m.mix).and_then(|lock| lock.try_write()) {
+			if let Some(mut gas) = all_mixtures.get(m.mix).and_then(RwLock::try_write) {
 				gas.copy_from_mutable(planet_atmos);
 			}
 		}
@@ -676,11 +676,11 @@ fn post_process_cell(
 		.and_then(|gas| {
 			let should_update_visuals =
 				match gas.vis_hash_changed(vis, vis_cache.get(&m.mix).copied().unwrap_or(0)) {
-					Ok(hash) => {
+					Some(hash) => {
 						let _ = updates.send((m.mix, hash));
 						true
 					}
-					Err(_) => false,
+					None => false,
 				};
 			let reactable = gas.can_react();
 			(should_update_visuals || reactable).then(|| (i, should_update_visuals, reactable))
@@ -720,7 +720,7 @@ fn post_process() {
 								let planetary_atmos = planetary_atmos();
 								remove_trace_planet_gases(m, planetary_atmos, all_mixtures);
 							}
-							post_process_cell(i, m, &vis, all_mixtures, &vis_cache, &sender.clone())
+							post_process_cell(i, m, &vis, all_mixtures, vis_cache, &sender.clone())
 						})
 					})
 					.flatten()
@@ -729,7 +729,7 @@ fn post_process() {
 	};
 	processables.into_par_iter().chunks(30).for_each(|chunk| {
 		let sender = byond_callback_sender();
-		let _ = sender.try_send(Box::new(move || {
+		drop(sender.try_send(Box::new(move || {
 			for (i, should_update_vis, should_react) in chunk.clone() {
 				let turf = unsafe { Value::turf_by_id_unchecked(i) };
 				if should_react {
@@ -741,11 +741,11 @@ fn post_process() {
 				}
 				if should_update_vis {
 					//turf.call("update_visuals", &[])?;
-					update_visuals(turf)?;
+					update_visuals(&turf)?;
 				}
 			}
 			Ok(Value::null())
-		}));
+		})));
 	});
 	for (k, v) in receiver.drain() {
 		vis_cache.insert(k, v);
@@ -861,9 +861,10 @@ fn _process_heat_start() -> Result<(), String> {
 								})
 								.unwrap_or(false);
 							for (_, loc) in adjacent_tile_ids(adj, i, info.max_x, info.max_y) {
-								heat_delta += turf_temperatures().try_get(&loc).try_unwrap().map_or(
-									0.0,
-									|other| {
+								heat_delta += turf_temperatures()
+									.try_get(&loc)
+									.try_unwrap()
+									.map_or(0.0, |other| {
 										/*
 											The horrible line below is essentially
 											sharing between solids--making it the minimum of both
@@ -873,8 +874,7 @@ fn _process_heat_start() -> Result<(), String> {
 											* (other.temperature - t.temperature) * (t.heat_capacity
 											* other.heat_capacity
 											/ (t.heat_capacity + other.heat_capacity))
-									},
-								)
+									});
 							}
 							if t.adjacent_to_space {
 								/*
@@ -885,7 +885,7 @@ fn _process_heat_start() -> Result<(), String> {
 									this will never go into infinities.
 								*/
 								let blackbody_radiation: f64 = (emissivity_constant
-									* ((t.temperature as f64).powi(4)))
+									* (f64::from(t.temperature).powi(4)))
 									- radiation_from_space_tick;
 								heat_delta -= blackbody_radiation as f32;
 							}
@@ -935,11 +935,11 @@ fn _process_heat_start() -> Result<(), String> {
 						&& t.temperature > t.heat_capacity
 					{
 						// not what heat capacity means but whatever
-						let _ = sender.try_send(Box::new(move || {
+						drop(sender.try_send(Box::new(move || {
 							let turf = unsafe { Value::turf_by_id_unchecked(i) };
 							turf.set(byond_string!("to_be_destroyed"), 1.0)?;
 							Ok(Value::null())
-						}));
+						})));
 					}
 				});
 			//Alright, now how much time did that take?

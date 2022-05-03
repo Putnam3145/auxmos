@@ -25,6 +25,8 @@ use rayon;
 
 use rayon::prelude::*;
 
+use std::mem::drop;
+
 use crate::callbacks::aux_callbacks_sender;
 
 const NORTH: u8 = 1;
@@ -205,10 +207,10 @@ fn _hook_register_turf() {
 	let sender = aux_callbacks_sender(crate::callbacks::TURFS);
 	if simulation_level < 0.0 {
 		let id = unsafe { src.raw.data.id };
-		let _ = sender.send(Box::new(move || {
+		drop(sender.send(Box::new(move || {
 			turf_gases().remove(&id);
 			Ok(Value::null())
-		}));
+		})));
 		Ok(Value::null())
 	} else {
 		let mut to_insert: TurfMixture = TurfMixture::default();
@@ -248,10 +250,10 @@ fn _hook_register_turf() {
 			}
 		}
 		let id = unsafe { src.raw.data.id };
-		let _ = sender.send(Box::new(move || {
+		drop(sender.send(Box::new(move || {
 			turf_gases().insert(id, to_insert);
 			Ok(Value::null())
-		}));
+		})));
 		Ok(Value::null())
 	}
 }
@@ -314,15 +316,15 @@ fn _hook_turf_update_temp() {
 					std::column!()
 				)
 			})?;
-		let _ = sender.send(Box::new(move || {
+		drop(sender.send(Box::new(move || {
 			turf_temperatures().insert(id, to_insert);
 			Ok(Value::null())
-		}));
+		})));
 	} else {
-		let _ = sender.send(Box::new(move || {
+		drop(sender.send(Box::new(move || {
 			turf_temperatures().remove(&id);
 			Ok(Value::null())
-		}));
+		})));
 	}
 	Ok(Value::null())
 }
@@ -422,7 +424,7 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 	if update_now {
 		boxed_fn()?;
 	} else {
-		let _ = sender.send(boxed_fn);
+		drop(sender.send(boxed_fn));
 	}
 	Ok(Value::null())
 }
@@ -440,7 +442,11 @@ fn _hook_turf_temperature() {
 	}
 }
 // gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't
-pub fn update_visuals(src: Value) -> DMResult {
+/// Updates the visual overlays for the given turf.
+/// Will use a cached overlay list if one exists.
+/// # Errors
+/// If auxgm wasn't implemented properly or there's an invalid gas mixture.
+pub fn update_visuals(src: &Value) -> DMResult {
 	use super::gas;
 	match src.get(byond_string!("air")) {
 		Err(_) => Ok(Value::null()),
@@ -472,7 +478,7 @@ pub fn update_visuals(src: Value) -> DMResult {
 									.min(FACTOR_GAS_VISIBLE_MAX)
 									.max(1.0) as u32,
 							) {
-								overlay_types.append(this_gas_overlay)
+								overlay_types.append(this_gas_overlay);
 							}
 						}
 					}

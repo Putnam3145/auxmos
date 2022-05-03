@@ -16,6 +16,7 @@ pub use mixture::Mixture;
 
 pub type GasIDX = usize;
 
+/// A static container, with a bunch of helper functions for accessing global data. It's horrible, I know, but video games.
 pub struct GasArena {}
 
 /*
@@ -74,12 +75,20 @@ fn _shut_down_gases() {
 }
 
 impl GasArena {
+	/// Locks the gas arena and and runs the given closure with it locked.
+	/// # Panics
+	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
 	pub fn with_all_mixtures<T, F>(f: F) -> T
 	where
 		F: FnOnce(&[RwLock<Mixture>]) -> T,
 	{
 		f(GAS_MIXTURES.read().as_ref().unwrap())
 	}
+	/// Read locks the given gas mixture and runs the given closure on it.
+	/// # Errors
+	/// If no such gas mixture exists or the closure itself errors.
+	/// # Panics
+	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
 	pub fn with_gas_mixture<T, F>(id: usize, f: F) -> Result<T, Runtime>
 	where
 		F: FnOnce(&Mixture) -> Result<T, Runtime>,
@@ -92,6 +101,11 @@ impl GasArena {
 			.read();
 		f(&mix)
 	}
+	/// Write locks the given gas mixture and runs the given closure on it.
+	/// # Errors
+	/// If no such gas mixture exists or the closure itself errors.
+	/// # Panics
+	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
 	pub fn with_gas_mixture_mut<T, F>(id: usize, f: F) -> Result<T, Runtime>
 	where
 		F: FnOnce(&mut Mixture) -> Result<T, Runtime>,
@@ -104,6 +118,11 @@ impl GasArena {
 			.write();
 		f(&mut mix)
 	}
+	/// Read locks the given gas mixtures and runs the given closure on them.
+	/// # Errors
+	/// If no such gas mixture exists or the closure itself errors.
+	/// # Panics
+	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
 	pub fn with_gas_mixtures<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
 		F: FnOnce(&Mixture, &Mixture) -> Result<T, Runtime>,
@@ -120,6 +139,11 @@ impl GasArena {
 			.read();
 		f(&src_gas, &arg_gas)
 	}
+	/// Locks the given gas mixtures and runs the given closure on them.
+	/// # Errors
+	/// If no such gas mixture exists or the closure itself errors.
+	/// # Panics
+	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
 	pub fn with_gas_mixtures_mut<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
 		F: FnOnce(&mut Mixture, &mut Mixture) -> Result<T, Runtime>,
@@ -149,6 +173,11 @@ impl GasArena {
 			)
 		}
 	}
+	/// Runs the given closure on the gas mixture *locks* rather than an already-locked version.
+	/// # Errors
+	/// If no such gas mixture exists or the closure itself errors.
+	/// # Panics
+	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
 	fn with_gas_mixtures_custom<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
 	where
 		F: FnOnce(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T, Runtime>,
@@ -175,6 +204,10 @@ impl GasArena {
 		}
 	}
 	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
+	/// # Errors
+	/// If `initial_volume` is incorrect or `_extools_pointer_gasmixture` doesn't exist, somehow.
+	/// # Panics
+	/// If `NEXT_GAS_IDS` is not initialized, somehow.
 	pub fn register_mix(mix: &Value) -> DMResult {
 		if NEXT_GAS_IDS.read().as_ref().unwrap().is_empty() {
 			let mut lock = GAS_MIXTURES.write();
@@ -227,6 +260,8 @@ impl GasArena {
 		Ok(Value::null())
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
+	/// # Panics
+	/// Panics if `NEXT_GAS_IDS` hasn't been initialized, somehow.
 	pub fn unregister_mix(mix: u32) {
 		if is_registered_mix(mix) {
 			use raw_types::values::{ValueData, ValueTag};
@@ -258,6 +293,8 @@ impl GasArena {
 }
 
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.
+/// # Errors
+/// If a gasmixture ID is not a number or the callback returns an error.
 pub fn with_mix<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
 where
 	F: FnMut(&Mixture) -> Result<T, Runtime>,
@@ -278,6 +315,8 @@ where
 }
 
 /// As `with_mix`, but mutable.
+/// # Errors
+/// If a gasmixture ID is not a number or the callback returns an error.
 pub fn with_mix_mut<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
 where
 	F: FnMut(&mut Mixture) -> Result<T, Runtime>,
@@ -298,6 +337,8 @@ where
 }
 
 /// As `with_mix`, but with two mixes.
+/// # Errors
+/// If a gasmixture ID is not a number or the callback returns an error.
 pub fn with_mixes<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
 	F: FnMut(&Mixture, &Mixture) -> Result<T, Runtime>,
@@ -330,6 +371,8 @@ where
 }
 
 /// As `with_mix_mut`, but with two mixes.
+/// # Errors
+/// If a gasmixture ID is not a number or the callback returns an error.
 pub fn with_mixes_mut<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
 	F: FnMut(&mut Mixture, &mut Mixture) -> Result<T, Runtime>,
@@ -362,6 +405,8 @@ where
 }
 
 /// Allows different lock levels for each gas. Instead of relevant refs to the gases, returns the `RWLock` object.
+/// # Errors
+/// If a gasmixture ID is not a number or the callback returns an error.
 pub fn with_mixes_custom<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
 where
 	F: FnMut(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T, Runtime>,

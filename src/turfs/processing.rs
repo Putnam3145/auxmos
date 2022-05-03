@@ -89,6 +89,7 @@ fn _finish_process_turfs() {
 		})?;
 	let processing_callbacks_unfinished = process_callbacks_for_millis(arg_limit as u64);
 	process_aux_callbacks(crate::callbacks::TURFS);
+	process_aux_callbacks(crate::callbacks::ADJACENCIES);
 	if processing_callbacks_unfinished {
 		Ok(Value::from(true))
 	} else {
@@ -147,6 +148,7 @@ fn _process_turf_notify() {
 		.unwrap_or(1.0)
 		!= 0.0;
 	process_aux_callbacks(crate::callbacks::TURFS);
+	process_aux_callbacks(crate::callbacks::ADJACENCIES);
 	let _ = sender.try_send(Box::new(SSairInfo {
 		fdm_max_steps,
 		equalize_turf_limit,

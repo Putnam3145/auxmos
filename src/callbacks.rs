@@ -4,16 +4,18 @@ type DeferredFunc = Box<dyn Fn() -> DMResult + Send + Sync>;
 
 type CallbackChannel = (flume::Sender<DeferredFunc>, flume::Receiver<DeferredFunc>);
 
-static mut CALLBACK_CHANNELS: Option<[CallbackChannel; 2]> = None;
+static mut CALLBACK_CHANNELS: Option<[CallbackChannel; 3]> = None;
 
 pub(crate) const TURFS: usize = 0;
 
 pub(crate) const TEMPERATURE: usize = 1;
 
+pub(crate) const ADJACENCIES: usize = 2;
+
 #[init(partial)]
 fn _start_aux_callbacks() -> Result<(), String> {
 	unsafe {
-		CALLBACK_CHANNELS = Some([flume::unbounded(), flume::unbounded()]);
+		CALLBACK_CHANNELS = Some([flume::unbounded(), flume::unbounded(), flume::unbounded()]);
 	}
 	Ok(())
 }

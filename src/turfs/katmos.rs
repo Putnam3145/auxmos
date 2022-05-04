@@ -774,24 +774,22 @@ pub(crate) fn equalize(
 	let zoned_turfs = high_pressure_turfs
 		.iter()
 		.filter_map(|i| {
-			if found_turfs.contains(i)
-				|| turf_gases().try_get(i).try_unwrap().map_or(true, |m| {
-					!m.enabled()
-						|| m.adjacency == 0 || GasArena::with_all_mixtures(|all_mixtures| {
-						let our_moles = all_mixtures[m.mix].read().total_moles();
-						our_moles < 10.0
-							|| m.adjacent_mixes(all_mixtures).all(|lock| {
-								(lock.read().total_moles() - our_moles).abs()
-									< MINIMUM_MOLES_DELTA_TO_MOVE
-							})
-					})
+			if found_turfs.contains(i) {
+				return None;
+			};
+			let m = *turf_gases().try_get(i).try_unwrap()?;
+			if !m.enabled()
+				|| m.adjacency == 0
+				|| GasArena::with_all_mixtures(|all_mixtures| {
+					let our_moles = all_mixtures[m.mix].read().total_moles();
+					our_moles < 10.0
+						|| m.adjacent_mixes(all_mixtures).all(|lock| {
+							(lock.read().total_moles() - our_moles).abs()
+								< MINIMUM_MOLES_DELTA_TO_MOVE
+						})
 				}) {
 				return None;
 			}
-			let m = {
-				let maybe_m = turf_gases().try_get(i).try_unwrap()?;
-				*maybe_m
-			};
 			flood_fill_equalize_turfs(
 				*i,
 				m,

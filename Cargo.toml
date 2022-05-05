@@ -1,15 +1,17 @@
 [package]
 name = "auxmos"
-version = "0.3.1"
+version = "1.0.0"
 authors = ["Putnam <putnam3145@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["auxcleanup_gas_deletion"]
+default = ["auxcleanup_gas_deletion", "turf_processing"]
 auxcleanup_gas_deletion = ["auxcleanup"]
-equalization = []
+zas_hooks = []
+turf_processing = []
+equalization = ["turf_processing"]
 monstermos = ["equalization"]
 putnamos = ["equalization"]
 katmos = ["equalization"]
@@ -41,6 +43,7 @@ ahash = "0.7.6"
 lazy_static = "1.4.0"
 indexmap = { version = "1.8.0", features = ["rayon"] }
 dashmap = { version = "5.2.0", features = ["rayon"] }
+atomic_float = "0.1.0"
 
 [dependencies.tinyvec]
 version = "1.5.1"

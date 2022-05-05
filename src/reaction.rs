@@ -1,7 +1,7 @@
 #[cfg(feature = "reaction_hooks")]
 pub mod hooks;
 
-use auxtools::*;
+use auxtools::{byond_string, inventory, runtime, shutdown, DMResult, Value};
 
 use std::cell::RefCell;
 
@@ -19,7 +19,7 @@ pub struct Reaction {
 	min_gas_reqs: Vec<(GasIDX, f32)>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct ReactionIdentifier {
 	string_id_hash: u64,
 	priority: f32,
@@ -86,9 +86,12 @@ fn clean_up_reaction_values() {
 	});
 }
 
-pub fn react_by_id(id: ReactionIdentifier, src: &Value, holder: &Value) -> DMResult {
+/// Runs a reaction given a `ReactionIdentifier`. Returns the result of the reaction, error or success.
+/// # Errors
+/// If the reaction itself has a runtime.
+pub fn react_by_id(id: &ReactionIdentifier, src: &Value, holder: &Value) -> DMResult {
 	REACTION_VALUES.with(|r| {
-		r.borrow().get(&id).map_or_else(
+		r.borrow().get(id).map_or_else(
 			|| Err(runtime!("Reaction with invalid id")),
 			|reaction| match reaction {
 				ReactionSide::ByondSide(val) => val.call("react", &[src, holder]),
@@ -105,6 +108,7 @@ impl Reaction {
 	///
 	///
 	/// If given anything but a `/datum/gas_reaction`, this will panic.
+	#[must_use]
 	pub fn from_byond_reaction(reaction: &Value) -> Self {
 		let priority = -reaction
 			.get_number(byond_string!("priority"))
@@ -186,6 +190,7 @@ impl Reaction {
 		}
 		our_reaction
 	}
+	#[must_use]
 	pub fn get_id(&self) -> ReactionIdentifier {
 		self.id
 	}
@@ -209,11 +214,14 @@ impl Reaction {
 			})
 	}
 	/// Returns the priority of the reaction.
+	#[must_use]
 	pub fn get_priority(&self) -> f32 {
 		self.id.priority
 	}
 	/// Calls the reaction with the given arguments.
+	/// # Errors
+	/// If the reaction itself has a runtime error, this will propagate it up.
 	pub fn react(&self, src: &Value, holder: &Value) -> DMResult {
-		react_by_id(self.id, src, holder)
+		react_by_id(&self.id, src, holder)
 	}
 }

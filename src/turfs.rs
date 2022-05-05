@@ -25,6 +25,8 @@ use rayon;
 
 use rayon::prelude::*;
 
+use std::mem::drop;
+
 use crate::callbacks::aux_callbacks_sender;
 
 const NORTH: u8 = 1;
@@ -46,6 +48,13 @@ const fn adj_flag_to_idx(adj_flag: u8) -> usize {
 	}
 }
 
+pub const NONE: u8 = 0;
+pub const SIMULATION_DIFFUSE: u8 = 1;
+pub const SIMULATION_ALL: u8 = 2;
+pub const SIMULATION_ANY: u8 = SIMULATION_DIFFUSE | SIMULATION_ALL;
+pub const SIMULATION_DISABLED: u8 = 4;
+pub const SIMULATION_FLAGS: u8 = SIMULATION_ANY | SIMULATION_DISABLED;
+
 type TurfID = u32;
 
 // TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
@@ -53,7 +62,7 @@ type TurfID = u32;
 struct TurfMixture {
 	pub mix: usize,
 	pub adjacency: u8,
-	pub simulation_level: u8,
+	pub flags: u8,
 	pub planetary_atmos: Option<u32>,
 	pub adjacents: [Option<nonmax::NonMaxUsize>; 6], // this baby saves us 50% of the cpu time in FDM calcs
 }
@@ -61,8 +70,8 @@ struct TurfMixture {
 #[allow(dead_code)]
 impl TurfMixture {
 	pub fn enabled(&self) -> bool {
-		self.simulation_level > 0
-			&& self.simulation_level & SIMULATION_LEVEL_DISABLED != SIMULATION_LEVEL_DISABLED
+		let simul_flags = self.flags & SIMULATION_FLAGS;
+		simul_flags & SIMULATION_DISABLED == 0 && simul_flags & SIMULATION_ANY != 0
 	}
 	pub fn adjacent_mixes<'a>(
 		&'a self,
@@ -198,10 +207,10 @@ fn _hook_register_turf() {
 	let sender = aux_callbacks_sender(crate::callbacks::TURFS);
 	if simulation_level < 0.0 {
 		let id = unsafe { src.raw.data.id };
-		let _ = sender.send(Box::new(move || {
+		drop(sender.send(Box::new(move || {
 			turf_gases().remove(&id);
 			Ok(Value::null())
-		}));
+		})));
 		Ok(Value::null())
 	} else {
 		let mut to_insert: TurfMixture = TurfMixture::default();
@@ -217,7 +226,7 @@ fn _hook_register_turf() {
 				)
 			})?
 			.to_bits() as usize;
-		to_insert.simulation_level = args[0].as_number().map_err(|_| {
+		to_insert.flags = args[0].as_number().map_err(|_| {
 			runtime!(
 				"Attempt to interpret non-number value as number {} {}:{}",
 				std::file!(),
@@ -241,10 +250,10 @@ fn _hook_register_turf() {
 			}
 		}
 		let id = unsafe { src.raw.data.id };
-		let _ = sender.send(Box::new(move || {
+		drop(sender.send(Box::new(move || {
 			turf_gases().insert(id, to_insert);
 			Ok(Value::null())
-		}));
+		})));
 		Ok(Value::null())
 	}
 }
@@ -307,15 +316,15 @@ fn _hook_turf_update_temp() {
 					std::column!()
 				)
 			})?;
-		let _ = sender.send(Box::new(move || {
+		drop(sender.send(Box::new(move || {
 			turf_temperatures().insert(id, to_insert);
 			Ok(Value::null())
-		}));
+		})));
 	} else {
-		let _ = sender.send(Box::new(move || {
+		drop(sender.send(Box::new(move || {
 			turf_temperatures().remove(&id);
 			Ok(Value::null())
-		}));
+		})));
 	}
 	Ok(Value::null())
 }
@@ -338,11 +347,11 @@ fn _hook_sleep() {
 	let src_id = unsafe { src.raw.data.id };
 	if arg == 0.0 {
 		turf_gases().entry(src_id).and_modify(|turf| {
-			turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+			turf.flags &= !SIMULATION_DISABLED;
 		});
 	} else {
 		turf_gases().entry(src_id).and_modify(|turf| {
-			turf.simulation_level |= SIMULATION_LEVEL_DISABLED;
+			turf.flags |= SIMULATION_DISABLED;
 		});
 	}
 	Ok(Value::from(true))
@@ -352,7 +361,7 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 	let update_now = arg1.as_number().unwrap_or(0.0) != 0.0;
 	let adjacent_to_spess = arg0.as_number().unwrap_or(0.0) != 0.0;
 	let id = unsafe { src.raw.data.id };
-	let sender = aux_callbacks_sender(crate::callbacks::TURFS);
+	let sender = aux_callbacks_sender(crate::callbacks::ADJACENCIES);
 	let boxed_fn: Box<dyn Fn() -> DMResult + Send + Sync> = Box::new(move || {
 		let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
 		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
@@ -379,11 +388,11 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 		if let Ok(blocks_air) = src_turf.get_number(byond_string!("blocks_air")) {
 			if blocks_air == 0.0 {
 				turf_gases().entry(id).and_modify(|turf| {
-					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+					turf.flags &= !SIMULATION_DISABLED;
 				});
 			} else {
 				turf_gases().entry(id).and_modify(|turf| {
-					turf.simulation_level &= !SIMULATION_LEVEL_DISABLED;
+					turf.flags |= SIMULATION_DISABLED;
 				});
 			}
 		}
@@ -415,7 +424,7 @@ fn _hook_infos(arg0: Value, arg1: Value) {
 	if update_now {
 		boxed_fn()?;
 	} else {
-		let _ = sender.send(boxed_fn);
+		drop(sender.send(boxed_fn));
 	}
 	Ok(Value::null())
 }
@@ -432,9 +441,12 @@ fn _hook_turf_temperature() {
 		src.get(byond_string!("initial_temperature"))
 	}
 }
-///*
 // gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't
-pub fn update_visuals(src: Value) -> DMResult {
+/// Updates the visual overlays for the given turf.
+/// Will use a cached overlay list if one exists.
+/// # Errors
+/// If auxgm wasn't implemented properly or there's an invalid gas mixture.
+pub fn update_visuals(src: &Value) -> DMResult {
 	use super::gas;
 	match src.get(byond_string!("air")) {
 		Err(_) => Ok(Value::null()),
@@ -466,7 +478,7 @@ pub fn update_visuals(src: Value) -> DMResult {
 									.min(FACTOR_GAS_VISIBLE_MAX)
 									.max(1.0) as u32,
 							) {
-								overlay_types.append(this_gas_overlay)
+								overlay_types.append(this_gas_overlay);
 							}
 						}
 					}
@@ -482,12 +494,6 @@ pub fn update_visuals(src: Value) -> DMResult {
 		}
 	}
 }
-//*/
-pub const SIMULATION_LEVEL_NONE: u8 = 0;
-pub const SIMULATION_LEVEL_DIFFUSE: u8 = 1;
-pub const SIMULATION_LEVEL_ALL: u8 = 2;
-pub const SIMULATION_LEVEL_ANY: u8 = SIMULATION_LEVEL_DIFFUSE | SIMULATION_LEVEL_ALL;
-pub const SIMULATION_LEVEL_DISABLED: u8 = 4;
 
 fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {
 	let z_size = max_x * max_y;

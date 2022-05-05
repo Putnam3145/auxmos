@@ -112,6 +112,13 @@ pub const MOLES_GAS_VISIBLE_STEP: f32 = 0.25;
 
 /// REACTIONS
 
+// Maximum amount of ReactionIdentifiers in the TinyVec that all_reactions returns.
+// We can't guarantee the max number of reactions that will ever be registered,
+// so this is here to prevent that from getting out of control.
+// TinyVec is used mostly to prevent too much heap stuff from going on, since there can be a LOT of reactions going.
+// ReactionIdentifier is 12 bytes, so this can be pretty generous.
+pub(crate) const MAX_REACTION_TINYVEC_SIZE: usize = 32;
+
 /// return values for reactions (bitflags)
 pub const NO_REACTION: i32 = 0;
 pub const REACTING: i32 = 1;

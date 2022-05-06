@@ -486,10 +486,6 @@ pub fn update_visuals(src: &Value) -> DMResult {
 				})
 			})?;
 
-			if overlay_types.len() == 0 {
-				return Ok(Value::null());
-			}
-
 			src.call("set_visuals", &[&Value::from(overlay_types)])
 		}
 	}

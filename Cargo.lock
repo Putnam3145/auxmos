@@ -28,7 +28,7 @@ checksum = "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa"
 [[package]]
 name = "auxcallback"
 version = "0.2.1"
-source = "git+https://github.com/Putnam3145/auxcallback#9fa049a34849723c86029cebecfcf9d93af883a7"
+source = "git+https://github.com/Putnam3145/auxcallback#82e7561361440a28e7c4381548859c45e73d72f0"
 dependencies = [
  "auxtools",
  "flume",
@@ -37,7 +37,7 @@ dependencies = [
 [[package]]
 name = "auxcleanup"
 version = "0.1.0"
-source = "git+https://github.com/Putnam3145/auxcleanup#c5cef5351d5db1ebc7432fbaf1bbfaf5362fbca8"
+source = "git+https://github.com/Putnam3145/auxcleanup#28654b8f924359b9852dce01720d5a9323abd6f9"
 dependencies = [
  "auxcleanup-impl",
  "auxtools",
@@ -50,7 +50,7 @@ dependencies = [
 [[package]]
 name = "auxcleanup-impl"
 version = "0.1.0"
-source = "git+https://github.com/Putnam3145/auxcleanup#c5cef5351d5db1ebc7432fbaf1bbfaf5362fbca8"
+source = "git+https://github.com/Putnam3145/auxcleanup#28654b8f924359b9852dce01720d5a9323abd6f9"
 dependencies = [
  "inventory",
  "proc-macro2",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "auxmos"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "ahash",
  "atomic_float",

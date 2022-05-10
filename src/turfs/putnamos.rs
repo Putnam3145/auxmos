@@ -94,7 +94,7 @@ fn explosively_depressurize(
 			)
 		})?;
 	for (i, m) in progression_order.iter().rev() {
-		let cur_orig = adjacency_info.get(i).unwrap_or_default();
+		let cur_orig = adjacency_info.get(i).unwrap();
 		let mut cur_info = cur_orig.get();
 		if cur_info.0 == 6 {
 			continue;
@@ -104,7 +104,7 @@ fn explosively_depressurize(
 		let loc = adjacent_tile_id(cur_info.0, *i, max_x, max_y);
 		if let Some(adj) = turf_gases().get(&loc) {
 			let (adj_i, adj_m) = (*adj.key(), adj.value());
-			let adj_orig = adjacency_info.get(&adj_i).unwrap_or_default();
+			let adj_orig = adjacency_info.get(&adj_i).unwrap();
 			let mut adj_info = adj_orig.get();
 			let sum = adj_m.total_moles();
 			cur_info.1 += sum;
@@ -139,7 +139,7 @@ pub fn equalize(
 	equalize_hard_turf_limit: usize,
 	max_x: i32,
 	max_y: i32,
-	high_pressure_turfs: BTreeSet<TurfID>,
+	high_pressure_turfs: &BTreeSet<TurfID>,
 ) -> usize {
 	let sender = byond_callback_sender();
 	let mut turfs_processed = 0;
@@ -154,7 +154,7 @@ pub fn equalize(
 			merger.clear_with_vol(0.0);
 			border_turfs.push_back((initial_idx, *initial_turf, initial_idx, 0.0));
 			found_turfs.insert(initial_idx);
-			if GasMixtures::with_all_mixtures(|all_mixtures| {
+			if GasArena::with_all_mixtures(|all_mixtures| {
 				// floodfill
 				while !border_turfs.is_empty() && turfs.len() < equalize_turf_limit {
 					let (cur_idx, cur_turf, parent_turf, pressure_delta) =
@@ -210,7 +210,7 @@ pub fn equalize(
 			}
 			merger.multiply(1.0 / turfs.len() as f32);
 			turfs_processed += turfs.len();
-			let to_send = GasMixtures::with_all_mixtures(|all_mixtures| {
+			let to_send = GasArena::with_all_mixtures(|all_mixtures| {
 				turfs
 					.par_iter()
 					.with_min_len(50)

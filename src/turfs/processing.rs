@@ -245,22 +245,22 @@ fn _process_turf_start() -> Result<(), String> {
 					#[cfg(feature = "putnamos")]
 					{
 						super::putnamos::equalize(
-							equalize_turf_limit,
-							equalize_hard_turf_limit,
-							max_x,
-							max_y,
-							high_pressure_turfs,
+							info.equalize_turf_limit,
+							info.equalize_hard_turf_limit,
+							info.max_x,
+							info.max_y,
+							&high_pressure_turfs,
 						)
 					}
 					#[cfg(feature = "monstermos")]
 					{
 						super::monstermos::equalize(
-							equalize_turf_limit,
-							equalize_hard_turf_limit,
-							max_x,
-							max_y,
-							high_pressure_turfs,
-							planet_enabled,
+							info.equalize_turf_limit,
+							info.equalize_hard_turf_limit,
+							info.max_x,
+							info.max_y,
+							&high_pressure_turfs,
+							info.planet_enabled,
 						)
 					}
 					#[cfg(feature = "katmos")]

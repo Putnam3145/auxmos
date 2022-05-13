@@ -252,23 +252,37 @@ fn _destroy_gas_info_structs() {
 #[hook("/proc/_auxtools_register_gas")]
 fn _hook_register_gas(gas: Value) {
 	let gas_id = gas.get_string(byond_string!("id"))?;
-	let gas_cache = GasType::new(gas, TOTAL_NUM_GASES.load(Ordering::Acquire))?;
-	let cached_id = gas_id.clone();
-	let cached_idx = gas_cache.idx;
-	unsafe { GAS_INFO_BY_STRING.as_ref() }
-		.unwrap()
-		.insert(gas_id.into_boxed_str(), gas_cache.clone());
-	GAS_SPECIFIC_HEATS
-		.write()
-		.as_mut()
-		.unwrap()
-		.push(gas_cache.specific_heat);
-	GAS_INFO_BY_IDX.write().as_mut().unwrap().push(gas_cache);
-	CACHED_IDX_TO_STRINGS.with(|gas_ids| {
-		let mut map = gas_ids.borrow_mut();
-		map.insert(cached_idx, cached_id.into_boxed_str())
-	});
-	TOTAL_NUM_GASES.fetch_add(1, Ordering::Release); // this is the only thing that stores it other than shutdown
+	match {
+		unsafe { GAS_INFO_BY_STRING.as_ref() }
+			.unwrap()
+			.get_mut(&gas_id as &str)
+	} {
+		Some(mut old_gas) => {
+			let gas_cache = GasType::new(gas, old_gas.idx)?;
+			*old_gas = gas_cache.clone();
+			GAS_SPECIFIC_HEATS.write().as_mut().unwrap()[old_gas.idx] = gas_cache.specific_heat;
+			GAS_INFO_BY_IDX.write().as_mut().unwrap()[old_gas.idx] = gas_cache;
+		}
+		None => {
+			let gas_cache = GasType::new(gas, TOTAL_NUM_GASES.load(Ordering::Acquire))?;
+			let cached_id = gas_id.clone();
+			let cached_idx = gas_cache.idx;
+			unsafe { GAS_INFO_BY_STRING.as_ref() }
+				.unwrap()
+				.insert(gas_id.into_boxed_str(), gas_cache.clone());
+			GAS_SPECIFIC_HEATS
+				.write()
+				.as_mut()
+				.unwrap()
+				.push(gas_cache.specific_heat);
+			GAS_INFO_BY_IDX.write().as_mut().unwrap().push(gas_cache);
+			CACHED_IDX_TO_STRINGS.with(|gas_ids| {
+				let mut map = gas_ids.borrow_mut();
+				map.insert(cached_idx, cached_id.into_boxed_str())
+			});
+			TOTAL_NUM_GASES.fetch_add(1, Ordering::Release); // this is the only thing that stores it other than shutdown
+		}
+	}
 	Ok(Value::null())
 }
 

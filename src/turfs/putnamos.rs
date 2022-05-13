@@ -133,7 +133,9 @@ fn explosively_depressurize(
 
 // Just floodfills to lower-pressure turfs until it can't find any more.
 
-#[deprecated(note = "Katmos should be used intead of Monstermos or Putnamos, as that one is actively maintained.")]
+#[deprecated(
+	note = "Katmos should be used intead of Monstermos or Putnamos, as that one is actively maintained."
+)]
 pub fn equalize(
 	equalize_turf_limit: usize,
 	equalize_hard_turf_limit: usize,

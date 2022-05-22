@@ -567,26 +567,25 @@ fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (Vec<NodeIndex>, Vec<NodeI
 fn excited_group_processing(pressure_goal: f32, low_pressure_turfs: &Vec<NodeIndex>) -> usize {
 	let mut found_turfs: HashSet<NodeIndex, FxBuildHasher> = Default::default();
 	with_turf_gases_read(|arena| {
-		GasArena::with_all_mixtures(|all_mixtures| {
-			for &initial_turf in low_pressure_turfs {
-				if found_turfs.contains(&initial_turf) {
+		for &initial_turf in low_pressure_turfs {
+			if found_turfs.contains(&initial_turf) {
+				continue;
+			}
+			let initial_mix_ref = {
+				let maybe_initial_mix_ref = arena.get(initial_turf);
+				if maybe_initial_mix_ref.is_none() {
 					continue;
 				}
-				let initial_mix_ref = {
-					let maybe_initial_mix_ref = arena.get(initial_turf);
-					if maybe_initial_mix_ref.is_none() {
-						continue;
-					}
-					*maybe_initial_mix_ref.unwrap()
-				};
-				let mut border_turfs: VecDeque<NodeIndex> = VecDeque::with_capacity(40);
-				let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
-				let mut min_pressure = initial_mix_ref.return_pressure();
-				let mut max_pressure = min_pressure;
-				let mut fully_mixed = Mixture::new();
-				border_turfs.push_back(initial_turf);
-				found_turfs.insert(initial_turf);
-
+				*maybe_initial_mix_ref.unwrap()
+			};
+			let mut border_turfs: VecDeque<NodeIndex> = VecDeque::with_capacity(40);
+			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
+			let mut min_pressure = initial_mix_ref.return_pressure();
+			let mut max_pressure = min_pressure;
+			let mut fully_mixed = Mixture::new();
+			border_turfs.push_back(initial_turf);
+			found_turfs.insert(initial_turf);
+			GasArena::with_all_mixtures(|all_mixtures| {
 				loop {
 					if turfs.len() >= 2500 {
 						break;
@@ -628,8 +627,8 @@ fn excited_group_processing(pressure_goal: f32, low_pressure_turfs: &Vec<NodeInd
 						}
 					});
 				}
-			}
-		});
+			});
+		}
 	});
 	found_turfs.len()
 }

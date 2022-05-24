@@ -510,7 +510,15 @@ fn explosively_depressurize(initial_index: NodeIndex, equalize_hard_turf_limit: 
 				)
 			})?;
 
-		let get_dir = Proc::find(byond_string!("/proc/get_dir_multiz")).unwrap();
+		let get_dir = Proc::find(byond_string!("/proc/get_dir_multiz")).map_or(
+			Err(runtime!(
+				"Proc get_dir_multiz not found! {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)),
+			|opt| Ok(opt),
+		)?;
 
 		for (cur_index, cur_mixture) in progression_order.iter().rev() {
 			let cur_orig = info.entry(*cur_index).or_default();

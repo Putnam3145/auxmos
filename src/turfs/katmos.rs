@@ -6,7 +6,7 @@ use std::{
 	cell::Cell,
 	{
 		collections::{BTreeSet, HashMap, HashSet},
-		sync::atomic::AtomicUsize,
+		sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 	},
 };
 
@@ -630,6 +630,7 @@ fn flood_fill_equalize_turfs(
 	max_x: i32,
 	max_y: i32,
 	equalize_hard_turf_limit: usize,
+	contains_planet: &AtomicBool,
 	found_turfs: &mut HashSet<TurfID, FxBuildHasher>,
 ) -> Option<(
 	IndexMap<TurfID, TurfMixture, FxBuildHasher>,
@@ -648,6 +649,7 @@ fn flood_fill_equalize_turfs(
 	let mut ignore_zone = false;
 	while let Some((cur_idx, cur_turf)) = border_turfs.pop_front() {
 		if cur_turf.planetary_atmos.is_some() {
+			contains_planet.store(true, Ordering::Relaxed);
 			planet_turfs.insert(cur_idx, cur_turf);
 			continue;
 		}
@@ -682,13 +684,16 @@ fn flood_fill_equalize_turfs(
 	(!ignore_zone).then(|| (turfs, planet_turfs, total_moles))
 }
 
+static PLANET_TURF_CYCLE: AtomicBool = AtomicBool::new(false);
+
 fn process_planet_turfs(
 	planet_turfs: &IndexMap<TurfID, TurfMixture, FxBuildHasher>,
 	turfs: &IndexMap<TurfID, TurfMixture, FxBuildHasher>,
 	average_moles: f32,
+	did_firelocks: bool,
 	max_x: i32,
 	max_y: i32,
-	equalize_hard_turf_limit: usize,
+	_equalize_hard_turf_limit: usize,
 	info: &mut HashMap<TurfID, MonstermosInfo, FxBuildHasher>,
 ) {
 	let sender = byond_callback_sender();
@@ -706,52 +711,50 @@ fn process_planet_turfs(
 	let planet_sum = maybe_planet_sum.unwrap().value().total_moles();
 	let target_delta = planet_sum - average_moles;
 
-	let mut progression_order: IndexSet<TurfID, FxBuildHasher> =
-		IndexSet::with_hasher(FxBuildHasher::default());
+	let mut progression_order: IndexMap<TurfID, TurfMixture, FxBuildHasher> = Default::default();
 
-	for (i, _) in planet_turfs.iter() {
-		progression_order.insert(*i);
-		let mut cur_info = info.entry(*i).or_default();
+	for (&i, &m) in planet_turfs.iter() {
+		progression_order.insert(i, m);
+		let mut cur_info = info.entry(i).or_default();
 		cur_info.curr_transfer_dir = 6;
 	}
 	// now build a map of where the path to a planet turf is for each tile.
 	let mut queue_idx = 0;
+	let mut firelock_callbacks = Vec::new();
 	while queue_idx < progression_order.len() {
-		let i = progression_order[queue_idx];
+		let (&i, m) = progression_order.get_index(queue_idx).unwrap();
 		queue_idx += 1;
-		let maybe_m = turfs.get(&i);
-		if maybe_m.is_none() {
-			info.entry(i)
-				.and_modify(|entry| *entry = MonstermosInfo::default());
-			continue;
-		}
-		let m = *maybe_m.unwrap();
 		for (j, loc) in adjacent_tile_ids_no_orig(m.adjacency, i, max_x, max_y) {
 			if let Some(mut adj_info) = info.get_mut(&loc) {
-				if queue_idx < equalize_hard_turf_limit {
-					drop(sender.try_send(Box::new(move || {
+				if !did_firelocks {
+					firelock_callbacks.push(Box::new(move || -> DMResult {
 						let that_turf = unsafe { Value::turf_by_id_unchecked(loc) };
 						let this_turf = unsafe { Value::turf_by_id_unchecked(i) };
 						this_turf.call("consider_firelocks", &[&that_turf])?;
 						Ok(Value::null())
-					})));
+					}));
 				}
-				if let Some(adj) = turfs
+				if let Some(&adj) = turfs
 					.get(&loc)
 					.and_then(|terf| terf.enabled().then(|| terf))
 				{
-					if !progression_order.insert(loc) || adj.planetary_atmos.is_some() {
-						continue;
+					if progression_order.insert(loc, adj).is_none() {
+						adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 					}
-					adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 				}
 			}
 		}
 	}
-	for i in progression_order.iter().rev() {
-		if turfs.get(i).is_none() {
-			continue;
+	drop(sender.send(Box::new(move || {
+		for callback in firelock_callbacks.iter() {
+			callback()?;
 		}
+		Ok(Value::null())
+	})));
+	if !did_firelocks {
+		return;
+	}
+	for (i, _) in progression_order.iter().rev() {
 		let mut cur_info = {
 			if let Some(opt) = info.get(&i) {
 				*opt
@@ -787,6 +790,7 @@ pub(crate) fn equalize(
 	let turfs_processed: AtomicUsize = AtomicUsize::new(0);
 	let mut found_turfs: HashSet<TurfID, FxBuildHasher> =
 		HashSet::with_hasher(FxBuildHasher::default());
+	let contains_planet: AtomicBool = AtomicBool::new(false);
 	let zoned_turfs = high_pressure_turfs
 		.iter()
 		.filter_map(|i| {
@@ -812,11 +816,19 @@ pub(crate) fn equalize(
 				max_x,
 				max_y,
 				equalize_hard_turf_limit,
+				&contains_planet,
 				&mut found_turfs,
 			)
 		})
 		.collect::<Vec<_>>();
-
+	let did_firelocks = {
+		if contains_planet.load(Ordering::Relaxed) {
+			PLANET_TURF_CYCLE.fetch_xor(true, Ordering::Relaxed)
+		} else {
+			PLANET_TURF_CYCLE.store(false, Ordering::Relaxed);
+			false
+		}
+	};
 	let turfs = zoned_turfs
 		.into_par_iter()
 		.map(|(turfs, planet_turfs, total_moles)| {
@@ -861,16 +873,14 @@ pub(crate) fn equalize(
 				take_from_givers(&taker_turfs, &turfs, max_x, max_y, &mut info);
 			}
 			if planet_turfs.is_empty() {
-				turfs_processed.fetch_add(turfs.len(), std::sync::atomic::Ordering::Relaxed);
+				turfs_processed.fetch_add(turfs.len(), Ordering::Relaxed);
 			} else {
-				turfs_processed.fetch_add(
-					turfs.len() + planet_turfs.len(),
-					std::sync::atomic::Ordering::Relaxed,
-				);
+				turfs_processed.fetch_add(turfs.len() + planet_turfs.len(), Ordering::Relaxed);
 				process_planet_turfs(
 					&planet_turfs,
 					&turfs,
 					average_moles,
+					did_firelocks,
 					max_x,
 					max_y,
 					equalize_hard_turf_limit,
@@ -886,5 +896,5 @@ pub(crate) fn equalize(
 			finalize_eq(*i, m, &turf, max_x, max_y, &mut info);
 		});
 	});
-	turfs_processed.load(std::sync::atomic::Ordering::Relaxed)
+	turfs_processed.load(Ordering::Relaxed)
 }

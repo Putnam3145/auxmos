@@ -355,18 +355,8 @@ fn _hook_register_turf() {
 	let id = unsafe { src.raw.data.id };
 	drop(sender.send(Box::new(move || {
 		let src = unsafe { Value::turf_by_id_unchecked(id) };
-		let simulation_level =
-			src.get(byond_string!("atmos_flags"))?
-				.as_number()
-				.map_err(|_| {
-					runtime!(
-						"Attempt to interpret non-number value as number {} {}:{}",
-						std::file!(),
-						std::line!(),
-						std::column!()
-					)
-				})?;
-		if simulation_level >= 0.0 {
+		let flag = determine_turf_flag(&src);
+		if flag >= 0 {
 			let mut to_insert: TurfMixture = TurfMixture::default();
 			let air = src.get(byond_string!("air"))?;
 			to_insert.mix = air
@@ -380,7 +370,7 @@ fn _hook_register_turf() {
 					)
 				})?
 				.to_bits() as usize;
-			to_insert.flags = simulation_level as u8;
+			to_insert.flags = flag as u8;
 			to_insert.id = id;
 
 			if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
@@ -405,6 +395,29 @@ fn _hook_register_turf() {
 		Ok(Value::null())
 	})));
 	Ok(Value::null())
+}
+
+const PLANET_TURF: i32 = 1;
+const SPACE_TURF: i32 = 0;
+const CLOSED_TURF: i32 = -1;
+const OPEN_TURF: i32 = 2;
+
+//hardcoded because we can't have nice things
+fn determine_turf_flag(src: &Value) -> i32 {
+	let path = src.get_type().unwrap_or("TYPENOTFOUND".to_string());
+	let is_open = path.as_str().starts_with("/turf/open");
+	let is_planet = src.get_number(byond_string!("planetary_atmos")).unwrap_or(0.0) > 0.0;
+	let is_space = path.as_str().starts_with("/turf/open/space");
+
+	let mut flag: i32 = CLOSED_TURF;
+	if is_space {
+		flag = SPACE_TURF
+	} else if is_planet && is_open {
+		flag = PLANET_TURF
+	} else if is_open {
+		flag = OPEN_TURF
+	}
+	flag
 }
 
 #[hook("/turf/proc/__auxtools_update_turf_temp_info")]

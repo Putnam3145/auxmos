@@ -226,6 +226,10 @@ impl TurfGases {
 			.and_then(|index| self.graph.node_weight(*index))
 	}
 
+	pub fn get_nodeid(&self, idx: &TurfID) -> Option<NodeIndex> {
+		self.map.get(idx).copied()
+	}
+
 	pub fn get(&self, idx: NodeIndex) -> Option<&TurfMixture> {
 		self.graph.node_weight(idx)
 	}
@@ -235,6 +239,12 @@ impl TurfGases {
 		index: NodeIndex,
 	) -> impl Iterator<Item = NodeIndex> + '_ {
 		self.graph.neighbors(index)
+	}
+
+	pub fn adjacent_turf_ids<'a>(&'a self, index: NodeIndex) -> impl Iterator<Item = TurfID> + '_ {
+		self.graph
+			.neighbors(index)
+			.filter_map(|index| Some(self.get(index)?.id))
 	}
 
 	pub fn adjacent_node_ids_enabled<'a>(
@@ -404,9 +414,12 @@ const OPEN_TURF: i32 = 2;
 
 //hardcoded because we can't have nice things
 fn determine_turf_flag(src: &Value) -> i32 {
-	let path = src.get_type().unwrap_or("TYPENOTFOUND".to_string());
+	let path = src.get_type().unwrap_or_else(|_| "TYPPENOTFOUND".to_string());
 	let is_open = path.as_str().starts_with("/turf/open");
-	let is_planet = src.get_number(byond_string!("planetary_atmos")).unwrap_or(0.0) > 0.0;
+	let is_planet = src
+		.get_number(byond_string!("planetary_atmos"))
+		.unwrap_or(0.0)
+		> 0.0;
 	let is_space = path.as_str().starts_with("/turf/open/space");
 
 	let mut flag: i32 = CLOSED_TURF;

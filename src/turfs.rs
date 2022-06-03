@@ -77,6 +77,12 @@ impl TurfMixture {
 		let simul_flags = self.flags & SIMULATION_FLAGS;
 		simul_flags & SIMULATION_DISABLED == 0 && simul_flags & SIMULATION_ANY != 0
 	}
+
+	pub fn is_sleeping(&self) -> bool {
+		let simul_flags = self.flags & SIMULATION_FLAGS;
+		simul_flags & SIMULATION_DISABLED != 0
+	}
+
 	pub fn is_immutable(&self) -> bool {
 		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
@@ -514,6 +520,7 @@ fn _hook_turf_update_temp() {
 	}
 	Ok(Value::null())
 }
+
 /* will deadlock, don't recommend using this
 #[hook("/turf/proc/set_sleeping")]
 fn _hook_sleep() {

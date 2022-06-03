@@ -395,26 +395,29 @@ fn take_from_givers(
 
 fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usize) -> DMResult {
 	//1st floodfill
-	let (space_turfs, warned_about_planet_atmos) = with_turf_gases_read(
-		|arena| -> Result<(IndexSet<TurfID, FxBuildHasher>, bool), Runtime> {
-			let mut cur_queue_idx = 0;
-			let mut warned_about_planet_atmos = false;
-			let mut space_turfs: IndexSet<TurfID, FxBuildHasher> = Default::default();
-			let mut turfs: IndexSet<TurfID, FxBuildHasher> = Default::default();
-			turfs.insert(initial_index);
-			while cur_queue_idx < turfs.len() {
-				let cur_index = turfs[cur_queue_idx];
-				cur_queue_idx += 1;
+	let (space_turfs, warned_about_planet_atmos) = {
+		let mut cur_queue_idx = 0;
+		let mut warned_about_planet_atmos = false;
+		let mut space_turfs: IndexSet<TurfID, FxBuildHasher> = Default::default();
+		let mut turfs: IndexSet<TurfID, FxBuildHasher> = Default::default();
+		turfs.insert(initial_index);
+		while cur_queue_idx < turfs.len() {
+			let cur_index = turfs[cur_queue_idx];
+			cur_queue_idx += 1;
+			with_turf_gases_read(|arena| -> Result<(), Runtime> {
 				let cur_mixture = {
 					let maybe = arena.get_from_turfid(&cur_index);
 					if maybe.is_none() {
-						continue;
+						return Ok(());
 					}
 					*maybe.unwrap()
 				};
+				if cur_mixture.is_sleeping() {
+					return Ok(());
+				}
 				if cur_mixture.planetary_atmos.is_some() {
 					warned_about_planet_atmos = true;
-					continue;
+					return Ok(());
 				}
 				if cur_mixture.is_immutable() {
 					if space_turfs.insert(cur_index) {
@@ -425,7 +428,7 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 					}
 				} else {
 					if cur_queue_idx > equalize_hard_turf_limit {
-						continue;
+						return Ok(());
 					}
 					for adj_index in arena.adjacent_turf_ids(arena.get_nodeid(&cur_index).unwrap())
 					{
@@ -437,13 +440,15 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 						}
 					}
 				}
-				if warned_about_planet_atmos {
-					break;
-				}
+				Ok(())
+			})?;
+			process_aux_callbacks(crate::callbacks::ADJACENCIES);
+			if warned_about_planet_atmos {
+				break;
 			}
-			Ok((space_turfs, warned_about_planet_atmos))
-		},
-	)?;
+		}
+		(space_turfs, warned_about_planet_atmos)
+	};
 
 	if warned_about_planet_atmos || space_turfs.is_empty() {
 		return Ok(Value::null()); // planet atmos > space

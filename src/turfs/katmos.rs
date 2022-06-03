@@ -87,8 +87,8 @@ fn finalize_eq(
 	arena: &RwLockReadGuard<TurfGases>,
 	info: &HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
 	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
+	pressures: &mut Vec<(f32, u32, u32)>,
 ) {
-	let sender = byond_callback_sender();
 	let transfer_dirs = {
 		let pairs = eq_movement_graph
 			.edges(Some(index))
@@ -107,7 +107,14 @@ fn finalize_eq(
 	if let Some(&planet_transfer_amount) = transfer_dirs.get(&None) {
 		if planet_transfer_amount > 0.0 {
 			if turf.total_moles() < planet_transfer_amount {
-				finalize_eq_neighbors(index, arena, &transfer_dirs, info, eq_movement_graph);
+				finalize_eq_neighbors(
+					index,
+					arena,
+					&transfer_dirs,
+					info,
+					eq_movement_graph,
+					pressures,
+				);
 			}
 			drop(GasArena::with_gas_mixture_mut(turf.mix, |gas| {
 				gas.add(-planet_transfer_amount);
@@ -134,7 +141,14 @@ fn finalize_eq(
 		let amount = *transfer_dirs.get(&Some(adj_index)).unwrap_or(&0.0);
 		if amount > 0.0 {
 			if turf.total_moles() < amount {
-				finalize_eq_neighbors(index, arena, &transfer_dirs, info, eq_movement_graph);
+				finalize_eq_neighbors(
+					index,
+					arena,
+					&transfer_dirs,
+					info,
+					eq_movement_graph,
+					pressures,
+				);
 			}
 			if let Some(adj_tmix) = arena.get(adj_index) {
 				if let Some(amt) = eq_movement_graph.edge_weight_mut(Some(adj_index), Some(index)) {
@@ -151,19 +165,7 @@ fn finalize_eq(
 					));
 				}
 				let adj_turf_id = adj_tmix.id;
-				drop(sender.try_send(Box::new(move || {
-					let real_amount = Value::from(amount);
-					let turf = unsafe { Value::turf_by_id_unchecked(cur_turf_id) };
-					let other_turf = unsafe { Value::turf_by_id_unchecked(adj_turf_id) };
-					if let Err(e) =
-						turf.call("consider_pressure_difference", &[&other_turf, &real_amount])
-					{
-						Proc::find(byond_string!("/proc/stack_trace"))
-							.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
-							.call(&[&Value::from_string(e.message.as_str())?])?;
-					}
-					Ok(Value::null())
-				})));
+				pressures.push((amount, cur_turf_id, adj_turf_id));
 			}
 		}
 	}
@@ -175,6 +177,7 @@ fn finalize_eq_neighbors(
 	transfer_dirs: &HashMap<Option<NodeIndex<usize>>, f32, FxBuildHasher>,
 	info: &HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
 	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
+	pressures: &mut Vec<(f32, u32, u32)>,
 ) {
 	for adj_index in arena.adjacent_node_ids(index) {
 		let amount = *transfer_dirs.get(&Some(adj_index)).unwrap_or(&0.0);
@@ -186,7 +189,14 @@ fn finalize_eq_neighbors(
 				}
 				maybe.unwrap()
 			};
-			finalize_eq(adj_index, other_turf, arena, info, eq_movement_graph);
+			finalize_eq(
+				adj_index,
+				other_turf,
+				arena,
+				info,
+				eq_movement_graph,
+				pressures,
+			);
 		}
 	}
 }
@@ -875,8 +885,37 @@ pub(crate) fn equalize(
 			.collect::<Vec<_>>();
 
 		turfs.into_par_iter().for_each(|(turf, info, mut graph)| {
+			let mut pressures: Vec<(f32, u32, u32)> = Vec::new();
 			turf.iter().for_each(|(&cur_index, cur_mixture)| {
-				finalize_eq(cur_index, cur_mixture, &arena, &info, &mut graph);
+				finalize_eq(
+					cur_index,
+					cur_mixture,
+					&arena,
+					&info,
+					&mut graph,
+					&mut pressures,
+				);
+			});
+
+			pressures.par_chunks(20).for_each(|chunk| {
+				let sender = byond_callback_sender();
+				//fuck all this copying, but it's pretty much the only way
+				let actual_chunk = chunk.iter().copied().collect::<Vec<_>>();
+				drop(sender.try_send(Box::new(move || {
+					for &(amt, cur_turf, adj_turf) in actual_chunk.iter() {
+						let real_amount = Value::from(amt);
+						let turf = unsafe { Value::turf_by_id_unchecked(cur_turf) };
+						let other_turf = unsafe { Value::turf_by_id_unchecked(adj_turf) };
+						if let Err(e) =
+							turf.call("consider_pressure_difference", &[&other_turf, &real_amount])
+						{
+							Proc::find(byond_string!("/proc/stack_trace"))
+								.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
+								.call(&[&Value::from_string(e.message.as_str())?])?;
+						}
+					}
+					Ok(Value::null())
+				})))
 			});
 		});
 	});

@@ -44,6 +44,7 @@ lazy_static = "1.4.0"
 indexmap = { version = "1.8.0", features = ["rayon"] }
 dashmap = { version = "5.2.0", features = ["rayon"] }
 atomic_float = "0.1.0"
+petgraph = { git = "https://github.com/jupyterkat/petgraph"}
 
 [dependencies.tinyvec]
 version = "1.5.1"

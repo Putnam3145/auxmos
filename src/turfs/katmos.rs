@@ -23,7 +23,7 @@ use parking_lot::RwLockReadGuard;
 
 type MixWithID = (TurfID, TurfMixture);
 
-type RefMixWithID<'a> = (&'a NodeIndex, &'a TurfMixture);
+type RefMixWithID<'a> = (&'a NodeIndex<usize>, &'a TurfMixture);
 
 use petgraph::{graph::NodeIndex, graphmap::DiGraphMap};
 
@@ -31,7 +31,7 @@ use petgraph::{graph::NodeIndex, graphmap::DiGraphMap};
 struct MonstermosInfo {
 	mole_delta: f32,
 	curr_transfer_amount: f32,
-	curr_transfer_dir: Option<NodeIndex>,
+	curr_transfer_dir: Option<NodeIndex<usize>>,
 	fast_done: bool,
 }
 
@@ -62,10 +62,10 @@ impl Default for ReducedInfo {
 }
 
 fn adjust_eq_movement(
-	this_turf: Option<NodeIndex>,
-	that_turf: Option<NodeIndex>,
+	this_turf: Option<NodeIndex<usize>>,
+	that_turf: Option<NodeIndex<usize>>,
 	amount: f32,
-	graph: &mut DiGraphMap<Option<NodeIndex>, f32>,
+	graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
 	if graph.contains_edge(this_turf, that_turf) {
 		*graph.edge_weight_mut(this_turf, that_turf).unwrap() += amount;
@@ -82,11 +82,11 @@ fn adjust_eq_movement(
 }
 
 fn finalize_eq(
-	index: NodeIndex,
+	index: NodeIndex<usize>,
 	turf: &TurfMixture,
 	arena: &RwLockReadGuard<TurfGases>,
-	info: &HashMap<NodeIndex, MonstermosInfo, FxBuildHasher>,
-	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex>, f32>,
+	info: &HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
+	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
 	let sender = byond_callback_sender();
 	let transfer_dirs = {
@@ -170,11 +170,11 @@ fn finalize_eq(
 }
 
 fn finalize_eq_neighbors(
-	index: NodeIndex,
+	index: NodeIndex<usize>,
 	arena: &RwLockReadGuard<TurfGases>,
-	transfer_dirs: &HashMap<Option<NodeIndex>, f32, FxBuildHasher>,
-	info: &HashMap<NodeIndex, MonstermosInfo, FxBuildHasher>,
-	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex>, f32>,
+	transfer_dirs: &HashMap<Option<NodeIndex<usize>>, f32, FxBuildHasher>,
+	info: &HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
+	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
 	for adj_index in arena.adjacent_node_ids(index) {
 		let amount = *transfer_dirs.get(&Some(adj_index)).unwrap_or(&0.0);
@@ -192,17 +192,17 @@ fn finalize_eq_neighbors(
 }
 
 fn monstermos_fast_process(
-	cur_index: NodeIndex,
+	cur_index: NodeIndex<usize>,
 	arena: &RwLockReadGuard<TurfGases>,
-	info: &mut HashMap<NodeIndex, MonstermosInfo, FxBuildHasher>,
-	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex>, f32>,
+	info: &mut HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
+	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
 	let mut cur_info = {
 		let mut cur_info = info.get_mut(&cur_index).unwrap();
 		cur_info.fast_done = true;
 		*cur_info
 	};
-	let mut eligible_adjacents: Vec<NodeIndex> = Default::default();
+	let mut eligible_adjacents: Vec<NodeIndex<usize>> = Default::default();
 	if cur_info.mole_delta > 0.0 {
 		for adj_turf in arena.adjacent_node_ids_enabled(cur_index) {
 			if let Some(adj_info) = info.get(&adj_turf) {
@@ -235,10 +235,10 @@ fn monstermos_fast_process(
 fn give_to_takers(
 	giver_turfs: &[RefMixWithID],
 	arena: &RwLockReadGuard<TurfGases>,
-	info: &mut HashMap<NodeIndex, MonstermosInfo, FxBuildHasher>,
-	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex>, f32>,
+	info: &mut HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
+	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
-	let mut queue: IndexSet<NodeIndex, FxBuildHasher> = Default::default();
+	let mut queue: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 	for (&index, _) in giver_turfs {
 		let mut giver_info = {
 			let giver_info = info.get_mut(&index).unwrap();
@@ -312,10 +312,10 @@ fn give_to_takers(
 fn take_from_givers(
 	taker_turfs: &[RefMixWithID],
 	arena: &RwLockReadGuard<TurfGases>,
-	info: &mut HashMap<NodeIndex, MonstermosInfo, FxBuildHasher>,
-	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex>, f32>,
+	info: &mut HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
+	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
-	let mut queue: IndexSet<NodeIndex, FxBuildHasher> = Default::default();
+	let mut queue: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 	for (&index, _) in taker_turfs {
 		let mut taker_info = {
 			let taker_info = info.get_mut(&index).unwrap();
@@ -589,19 +589,20 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 // Clippy go away, this type is only used once
 #[allow(clippy::type_complexity)]
 fn flood_fill_equalize_turfs(
-	index: NodeIndex,
+	index: NodeIndex<usize>,
 	equalize_hard_turf_limit: usize,
-	found_turfs: &mut HashSet<NodeIndex, FxBuildHasher>,
+	found_turfs: &mut HashSet<NodeIndex<usize>, FxBuildHasher>,
 	arena: &RwLockReadGuard<TurfGases>,
 	contains_planet: &AtomicBool,
 ) -> Option<(
-	IndexMap<NodeIndex, TurfMixture, FxBuildHasher>,
-	IndexSet<NodeIndex, FxBuildHasher>,
+	IndexMap<NodeIndex<usize>, TurfMixture, FxBuildHasher>,
+	IndexSet<NodeIndex<usize>, FxBuildHasher>,
 	f64,
 )> {
-	let mut turfs: IndexMap<NodeIndex, TurfMixture, FxBuildHasher> = Default::default();
-	let mut border_turfs: std::collections::VecDeque<(NodeIndex, TurfMixture)> = Default::default();
-	let mut planet_turfs: IndexSet<NodeIndex, FxBuildHasher> = Default::default();
+	let mut turfs: IndexMap<NodeIndex<usize>, TurfMixture, FxBuildHasher> = Default::default();
+	let mut border_turfs: std::collections::VecDeque<(NodeIndex<usize>, TurfMixture)> =
+		Default::default();
+	let mut planet_turfs: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 	let sender = byond_callback_sender();
 	let mut total_moles = 0.0_f64;
 	border_turfs.push_back((index, *arena.get(index).unwrap()));
@@ -644,13 +645,13 @@ fn flood_fill_equalize_turfs(
 }
 
 fn process_planet_turfs(
-	planet_turfs: &IndexSet<NodeIndex, FxBuildHasher>,
+	planet_turfs: &IndexSet<NodeIndex<usize>, FxBuildHasher>,
 	arena: &RwLockReadGuard<TurfGases>,
 	average_moles: f32,
 	did_firelocks: bool,
 	equalize_hard_turf_limit: usize,
-	info: &mut HashMap<NodeIndex, MonstermosInfo, FxBuildHasher>,
-	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex>, f32>,
+	info: &mut HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
+	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
 	let sender = byond_callback_sender();
 	let sample_turf = arena.get(planet_turfs[0]);
@@ -671,7 +672,8 @@ fn process_planet_turfs(
 	let planet_sum = maybe_planet_sum.unwrap().value().total_moles();
 	let target_delta = planet_sum - average_moles;
 
-	let mut progression_order: IndexMap<NodeIndex, TurfMixture, FxBuildHasher> = Default::default();
+	let mut progression_order: IndexMap<NodeIndex<usize>, TurfMixture, FxBuildHasher> =
+		Default::default();
 
 	for &cur_index in planet_turfs.iter() {
 		let cur_mixture = arena.get(cur_index).unwrap();
@@ -753,10 +755,10 @@ static PLANET_TURF_CYCLE: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn equalize(
 	equalize_hard_turf_limit: usize,
-	high_pressure_turfs: &[NodeIndex],
+	high_pressure_turfs: &[NodeIndex<usize>],
 ) -> usize {
 	let turfs_processed: AtomicUsize = AtomicUsize::new(0);
-	let mut found_turfs: HashSet<NodeIndex, FxBuildHasher> = Default::default();
+	let mut found_turfs: HashSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 	let contains_planet: AtomicBool = AtomicBool::new(false);
 	with_turf_gases_read(|arena| {
 		let zoned_turfs = high_pressure_turfs
@@ -807,7 +809,7 @@ pub(crate) fn equalize(
 		let turfs = zoned_turfs
 			.into_par_iter()
 			.map(|(turfs, planet_turfs, total_moles)| {
-				let mut graph: DiGraphMap<Option<NodeIndex>, f32> = Default::default();
+				let mut graph: DiGraphMap<Option<NodeIndex<usize>>, f32> = Default::default();
 				let average_moles =
 					(total_moles / (turfs.len() - planet_turfs.len()) as f64) as f32;
 

@@ -173,6 +173,7 @@ fn _process_turf_start() -> Result<(), String> {
 			//this will block until process_turfs is called
 			let info = with_processing_callback_receiver(|receiver| receiver.recv().unwrap());
 			TASKS_RUNNING.fetch_add(1, Ordering::Acquire);
+			let mut stats: Vec<Box<dyn Fn() -> DMResult + Send + Sync>> = Vec::new();
 			let sender = byond_callback_sender();
 			let (low_pressure_turfs, high_pressure_turfs) = {
 				let start_time = Instant::now();
@@ -180,7 +181,7 @@ fn _process_turf_start() -> Result<(), String> {
 					fdm(info.fdm_max_steps, info.equalize_enabled);
 				let bench = start_time.elapsed().as_millis();
 				let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
-				drop(sender.try_send(Box::new(move || {
+				stats.push(Box::new(move || -> DMResult {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
 					let prev_cost =
 						ssair.get_number(byond_string!("cost_turfs")).map_err(|_| {
@@ -201,7 +202,7 @@ fn _process_turf_start() -> Result<(), String> {
 						Value::from(hpt as f32),
 					)?;
 					Ok(Value::null())
-				})));
+				}));
 				(low_pressure_turfs, high_pressure_turfs)
 			};
 			{
@@ -209,7 +210,7 @@ fn _process_turf_start() -> Result<(), String> {
 				let processed_turfs =
 					excited_group_processing(info.group_pressure_goal, &low_pressure_turfs);
 				let bench = start_time.elapsed().as_millis();
-				drop(sender.try_send(Box::new(move || {
+				stats.push(Box::new(move || -> DMResult {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
 					let prev_cost =
 						ssair
@@ -231,7 +232,7 @@ fn _process_turf_start() -> Result<(), String> {
 						Value::from(processed_turfs as f32),
 					)?;
 					Ok(Value::null())
-				})));
+				}));
 			}
 			if info.equalize_enabled {
 				let start_time = Instant::now();
@@ -267,7 +268,7 @@ fn _process_turf_start() -> Result<(), String> {
 					}
 				};
 				let bench = start_time.elapsed().as_millis();
-				drop(sender.try_send(Box::new(move || {
+				stats.push(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
 					let prev_cost =
 						ssair
@@ -289,13 +290,13 @@ fn _process_turf_start() -> Result<(), String> {
 						Value::from(processed_turfs as f32),
 					)?;
 					Ok(Value::null())
-				})));
+				}));
 			}
 			{
 				let start_time = Instant::now();
 				post_process();
 				let bench = start_time.elapsed().as_millis();
-				drop(sender.try_send(Box::new(move || {
+				stats.push(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
 					let prev_cost = ssair
 						.get_number(byond_string!("cost_post_process"))
@@ -312,6 +313,14 @@ fn _process_turf_start() -> Result<(), String> {
 						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
 					)?;
 					Ok(Value::null())
+				}));
+			}
+			{
+				drop(sender.try_send(Box::new(move || {
+					for callback in stats.iter() {
+						callback()?;
+					}
+					Ok(Value::null())
 				})));
 			}
 			TASKS_RUNNING.fetch_sub(1, Ordering::Release);
@@ -322,7 +331,7 @@ fn _process_turf_start() -> Result<(), String> {
 
 // Compares with neighbors, returning early if any of them are valid.
 fn should_process(
-	index: NodeIndex,
+	index: NodeIndex<usize>,
 	mixture: &TurfMixture,
 	all_mixtures: &[RwLock<Mixture>],
 	arena: &RwLockReadGuard<TurfGases>,
@@ -359,11 +368,11 @@ fn should_process(
 // Clippy go away, this type is only used once
 #[allow(clippy::type_complexity)]
 fn process_cell(
-	index: NodeIndex,
+	index: NodeIndex<usize>,
 	mixture: TurfMixture,
 	all_mixtures: &[RwLock<Mixture>],
 	arena: &RwLockReadGuard<TurfGases>,
-) -> Option<(NodeIndex, Mixture, TinyVec<[(TurfID, f32); 6]>, i32)> {
+) -> Option<(NodeIndex<usize>, Mixture, TinyVec<[(TurfID, f32); 6]>, i32)> {
 	let mut adj_amount = 0;
 	/*
 		Getting write locks is potential danger zone,
@@ -421,15 +430,18 @@ fn process_cell(
 }
 
 // Solving the heat equation using a Finite Difference Method, an iterative stencil loop.
-fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (Vec<NodeIndex>, Vec<NodeIndex>) {
+fn fdm(
+	fdm_max_steps: i32,
+	equalize_enabled: bool,
+) -> (Vec<NodeIndex<usize>>, Vec<NodeIndex<usize>>) {
 	/*
 		This is the replacement system for LINDA. LINDA requires a lot of bookkeeping,
 		which, when coefficient-wise operations are this fast, is all just unnecessary overhead.
 		This is a much simpler FDM system, basically like LINDA but without its most important feature,
 		sleeping turfs, which is why I've renamed it to fdm.
 	*/
-	let mut low_pressure_turfs: Vec<NodeIndex> = Vec::new();
-	let mut high_pressure_turfs: Vec<NodeIndex> = Vec::new();
+	let mut low_pressure_turfs: Vec<NodeIndex<usize>> = Vec::new();
+	let mut high_pressure_turfs: Vec<NodeIndex<usize>> = Vec::new();
 	let mut cur_count = 1;
 	with_turf_gases_read(|arena| {
 		loop {
@@ -439,7 +451,7 @@ fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (Vec<NodeIndex>, Vec<NodeI
 			GasArena::with_all_mixtures(|all_mixtures| {
 				let turfs_to_save = arena
 					/*
-						This directly yoinks the internal node vec
+						This directly yanks the internal node vec
 						of the graph as a slice to parallelize the process.
 						The speedup gained from this is actually linear
 						with the amount of cores the CPU has, which, to be frank,
@@ -452,7 +464,7 @@ fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (Vec<NodeIndex>, Vec<NodeI
 					.raw_nodes()
 					.par_iter()
 					.enumerate()
-					.filter_map(|(index, node)| Some((NodeIndex::from(index as u32), node.weight?)))
+					.filter_map(|(index, node)| Some((NodeIndex::from(index), node.weight?)))
 					.filter(|(index, mixture)| {
 						should_process(*index, mixture, all_mixtures, &arena)
 					})
@@ -564,8 +576,11 @@ fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (Vec<NodeIndex>, Vec<NodeI
 }
 
 // Finds small differences in turf pressures and equalizes them.
-fn excited_group_processing(pressure_goal: f32, low_pressure_turfs: &Vec<NodeIndex>) -> usize {
-	let mut found_turfs: HashSet<NodeIndex, FxBuildHasher> = Default::default();
+fn excited_group_processing(
+	pressure_goal: f32,
+	low_pressure_turfs: &Vec<NodeIndex<usize>>,
+) -> usize {
+	let mut found_turfs: HashSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 	with_turf_gases_read(|arena| {
 		for &initial_turf in low_pressure_turfs {
 			if found_turfs.contains(&initial_turf) {
@@ -578,7 +593,7 @@ fn excited_group_processing(pressure_goal: f32, low_pressure_turfs: &Vec<NodeInd
 				}
 				*maybe_initial_mix_ref.unwrap()
 			};
-			let mut border_turfs: VecDeque<NodeIndex> = VecDeque::with_capacity(40);
+			let mut border_turfs: VecDeque<NodeIndex<usize>> = VecDeque::with_capacity(40);
 			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
 			let mut min_pressure = initial_mix_ref.return_pressure();
 			let mut max_pressure = min_pressure;

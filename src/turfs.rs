@@ -165,8 +165,8 @@ struct ThermalInfo {
 //It's a stable graph because we want to be able to remove turfs
 //without screwing with other turf's ids
 struct TurfGases {
-	graph: StableDiGraph<TurfMixture, ()>,
-	map: HashMap<TurfID, NodeIndex, FxBuildHasher>,
+	graph: StableDiGraph<TurfMixture, (), usize>,
+	map: HashMap<TurfID, NodeIndex<usize>, FxBuildHasher>,
 }
 
 #[allow(unused)]
@@ -232,22 +232,25 @@ impl TurfGases {
 			.and_then(|index| self.graph.node_weight(*index))
 	}
 
-	pub fn get_nodeid(&self, idx: &TurfID) -> Option<NodeIndex> {
+	pub fn get_nodeid(&self, idx: &TurfID) -> Option<NodeIndex<usize>> {
 		self.map.get(idx).copied()
 	}
 
-	pub fn get(&self, idx: NodeIndex) -> Option<&TurfMixture> {
+	pub fn get(&self, idx: NodeIndex<usize>) -> Option<&TurfMixture> {
 		self.graph.node_weight(idx)
 	}
 
 	pub fn adjacent_node_ids<'a>(
 		&'a self,
-		index: NodeIndex,
-	) -> impl Iterator<Item = NodeIndex> + '_ {
+		index: NodeIndex<usize>,
+	) -> impl Iterator<Item = NodeIndex<usize>> + '_ {
 		self.graph.neighbors(index)
 	}
 
-	pub fn adjacent_turf_ids<'a>(&'a self, index: NodeIndex) -> impl Iterator<Item = TurfID> + '_ {
+	pub fn adjacent_turf_ids<'a>(
+		&'a self,
+		index: NodeIndex<usize>,
+	) -> impl Iterator<Item = TurfID> + '_ {
 		self.graph
 			.neighbors(index)
 			.filter_map(|index| Some(self.get(index)?.id))
@@ -255,8 +258,8 @@ impl TurfGases {
 
 	pub fn adjacent_node_ids_enabled<'a>(
 		&'a self,
-		index: NodeIndex,
-	) -> impl Iterator<Item = NodeIndex> + '_ {
+		index: NodeIndex<usize>,
+	) -> impl Iterator<Item = NodeIndex<usize>> + '_ {
 		self.graph.neighbors(index).filter(|&adj_index| {
 			self.graph
 				.node_weight(adj_index)
@@ -266,7 +269,7 @@ impl TurfGases {
 
 	pub fn adjacent_mixes<'a>(
 		&'a self,
-		index: NodeIndex,
+		index: NodeIndex<usize>,
 		all_mixtures: &'a [parking_lot::RwLock<Mixture>],
 	) -> impl Iterator<Item = &'a parking_lot::RwLock<Mixture>> {
 		self.graph
@@ -277,7 +280,7 @@ impl TurfGases {
 
 	pub fn adjacent_mixes_with_adj_ids<'a>(
 		&'a self,
-		index: NodeIndex,
+		index: NodeIndex<usize>,
 		all_mixtures: &'a [parking_lot::RwLock<Mixture>],
 	) -> impl Iterator<Item = (&'a TurfID, &'a parking_lot::RwLock<Mixture>)> {
 		self.graph
@@ -286,7 +289,7 @@ impl TurfGases {
 			.filter_map(move |idx| Some((&idx.id, all_mixtures.get(idx.mix)?)))
 	}
 
-	pub fn adjacent_infos(&self, index: NodeIndex) -> impl Iterator<Item = &TurfMixture> {
+	pub fn adjacent_infos(&self, index: NodeIndex<usize>) -> impl Iterator<Item = &TurfMixture> {
 		self.graph
 			.neighbors(index)
 			.filter_map(|neighbor| self.graph.node_weight(neighbor))

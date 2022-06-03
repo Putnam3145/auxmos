@@ -414,7 +414,9 @@ const OPEN_TURF: i32 = 2;
 
 //hardcoded because we can't have nice things
 fn determine_turf_flag(src: &Value) -> i32 {
-	let path = src.get_type().unwrap_or_else(|_| "TYPPENOTFOUND".to_string());
+	let path = src
+		.get_type()
+		.unwrap_or_else(|_| "TYPPENOTFOUND".to_string());
 	let is_open = path.as_str().starts_with("/turf/open");
 	let is_planet = src
 		.get_number(byond_string!("planetary_atmos"))

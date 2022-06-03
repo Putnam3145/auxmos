@@ -417,8 +417,7 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 					if cur_queue_idx > equalize_hard_turf_limit {
 						continue;
 					}
-					for adj_index in arena
-						.adjacent_turf_ids(arena.get_nodeid(&cur_index).unwrap())
+					for adj_index in arena.adjacent_turf_ids(arena.get_nodeid(&cur_index).unwrap())
 					{
 						if turfs.insert(adj_index) {
 							unsafe { Value::turf_by_id_unchecked(cur_index) }.call(

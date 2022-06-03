@@ -160,11 +160,16 @@ struct ThermalInfo {
 	pub adjacency: u8,
 	pub adjacent_to_space: bool,
 }
+
+//adjacency/turf infos goes here
+//It's a stable graph because we want to be able to remove turfs
+//without screwing with other turf's ids
 struct TurfGases {
 	graph: StableDiGraph<TurfMixture, ()>,
 	map: HashMap<TurfID, NodeIndex, FxBuildHasher>,
 }
 
+#[allow(unused)]
 impl TurfGases {
 	pub fn remove_turf(&mut self, idx: TurfID) {
 		if let Some(tmix) = self.map.remove(&idx) {
@@ -207,6 +212,7 @@ impl TurfGases {
 	}
 
 	//This isn't a useless collect(), we can't hold a mutable ref and an immutable ref at once on the graph
+	#[allow(clippy::needless_collect)]
 	pub fn remove_adjacencies(&mut self, idx: TurfID) {
 		if let Some(index) = self.map.get(&idx) {
 			let edges = self

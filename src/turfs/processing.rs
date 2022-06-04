@@ -149,8 +149,17 @@ fn _process_turf_notify() {
 		.get_number(byond_string!("planet_equalize_enabled"))
 		.unwrap_or(1.0)
 		!= 0.0;
-	process_aux_callbacks(crate::callbacks::TURFS);
-	process_aux_callbacks(crate::callbacks::ADJACENCIES);
+	with_dirty_turfs(|mut dirty_turfs| {
+		for (t, flags) in dirty_turfs.drain() {
+			if flags & DIRTY_MIX_REF > 0 {
+				register_turf(t)?;
+			}
+			if flags & DIRTY_ADJACENT > 0 {
+				update_adjacency_info(t, flags & DIRTY_ADJACENT_TO_SPACE > 0)?;
+			}
+		}
+		Ok(())
+	})?;
 	drop(sender.try_send(Box::new(SSairInfo {
 		fdm_max_steps,
 		equalize_turf_limit,
@@ -172,6 +181,7 @@ fn _process_turf_start() -> Result<(), String> {
 		rayon::spawn(|| loop {
 			//this will block until process_turfs is called
 			let info = with_processing_callback_receiver(|receiver| receiver.recv().unwrap());
+			set_turfs_dirty(false);
 			TASKS_RUNNING.fetch_add(1, Ordering::Acquire);
 			let mut stats: Vec<Box<dyn Fn() -> DMResult + Send + Sync>> = Vec::new();
 			let sender = byond_callback_sender();
@@ -205,6 +215,7 @@ fn _process_turf_start() -> Result<(), String> {
 				}));
 				(low_pressure_turfs, high_pressure_turfs)
 			};
+			if !check_turfs_dirty()
 			{
 				let start_time = Instant::now();
 				let processed_turfs =
@@ -234,35 +245,14 @@ fn _process_turf_start() -> Result<(), String> {
 					Ok(Value::null())
 				}));
 			}
-			if info.equalize_enabled {
+			if info.equalize_enabled && !check_turfs_dirty() {
 				let start_time = Instant::now();
 				let processed_turfs = {
-					#[cfg(feature = "putnamos")]
-					{
-						super::putnamos::equalize(
-							equalize_turf_limit,
-							equalize_hard_turf_limit,
-							max_x,
-							max_y,
-							high_pressure_turfs,
-						)
-					}
-					#[cfg(feature = "monstermos")]
-					{
-						super::monstermos::equalize(
-							equalize_turf_limit,
-							equalize_hard_turf_limit,
-							max_x,
-							max_y,
-							high_pressure_turfs,
-							planet_enabled,
-						)
-					}
-					#[cfg(feature = "katmos")]
+					#[cfg(feature = "fastmos")]
 					{
 						super::katmos::equalize(info.equalize_hard_turf_limit, &high_pressure_turfs)
 					}
-					#[cfg(not(feature = "equalization"))]
+					#[cfg(not(feature = "fastmos"))]
 					{
 						0
 					}
@@ -445,7 +435,7 @@ fn fdm(
 	let mut cur_count = 1;
 	with_turf_gases_read(|arena| {
 		loop {
-			if cur_count > fdm_max_steps {
+			if cur_count > fdm_max_steps || check_turfs_dirty() {
 				break;
 			}
 			GasArena::with_all_mixtures(|all_mixtures| {

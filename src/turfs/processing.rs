@@ -149,17 +149,26 @@ fn _process_turf_notify() {
 		.get_number(byond_string!("planet_equalize_enabled"))
 		.unwrap_or(1.0)
 		!= 0.0;
+	let mut deletions: HashSet<u32, FxBuildHasher> = HashSet::with_capacity_and_hasher(500, FxBuildHasher::default());
 	with_dirty_turfs(|mut dirty_turfs| {
-		for (t, flags) in dirty_turfs.drain() {
-			if flags & DIRTY_MIX_REF > 0 {
-				register_turf(t)?;
+		for (&t, &flags) in dirty_turfs.iter().filter(|&(_, &flags)| flags & DIRTY_MIX_REF > 0) {
+			if let Some(id) = register_turf(t)? {
+				deletions.insert(id);
 			}
-			if flags & DIRTY_ADJACENT > 0 {
-				update_adjacency_info(t, flags & DIRTY_ADJACENT_TO_SPACE > 0)?;
+		}
+		let map = with_turf_gases_read(|arena| arena.turf_id_map());
+		for (t, flags) in dirty_turfs.drain().filter(|&(_, flags)| flags & DIRTY_ADJACENT > 0) {
+			if let Some(id) = update_adjacency_info(t, flags & DIRTY_ADJACENT_TO_SPACE > 0, map)? {
+				deletions.insert(id);
 			}
 		}
 		Ok(())
 	})?;
+	with_turf_gases_write(|mut arena| {
+		arena.graph.retain_nodes(|graph, node_idx| {
+			graph.node_weight(node_idx).map(|mix| !deletions.contains(&mix.id)).unwrap_or(true)
+		});
+	});
 	drop(sender.try_send(Box::new(SSairInfo {
 		fdm_max_steps,
 		equalize_turf_limit,
@@ -185,6 +194,17 @@ fn _process_turf_start() -> Result<(), String> {
 			TASKS_RUNNING.fetch_add(1, Ordering::Acquire);
 			let mut stats: Vec<Box<dyn Fn() -> DMResult + Send + Sync>> = Vec::new();
 			let sender = byond_callback_sender();
+			{
+				let start_time = Instant::now();
+				with_turf_gases_write(|mut arena| {
+					arena.graph.retain_edges(|graph, edge_idx| {
+						graph.edge_endpoints(edge_idx).map_or(false, |(n1, n2)| {
+							graph.node_weight(n1).map_or(false, |n| n.enabled())
+						})
+					})
+				});
+				let bench = start_time.elapsed().as_millis();
+			};
 			let (low_pressure_turfs, high_pressure_turfs) = {
 				let start_time = Instant::now();
 				let (low_pressure_turfs, high_pressure_turfs) =
@@ -321,17 +341,16 @@ fn _process_turf_start() -> Result<(), String> {
 
 // Compares with neighbors, returning early if any of them are valid.
 fn should_process(
-	index: NodeIndex<usize>,
-	mixture: &TurfMixture,
+	edge: &Edge<(), usize>,
 	all_mixtures: &[RwLock<Mixture>],
 	arena: &RwLockReadGuard<TurfGases>,
 ) -> bool {
-	arena.adjacent_infos(index).next().is_some()
-		&& mixture.enabled()
+	arena.graph.node_weight(edge.source()).map(|mixture|
 		&& all_mixtures
 			.get(mixture.mix)
 			.and_then(RwLock::try_read)
 			.map_or(false, |gas| {
+
 				for entry in arena.adjacent_mixes(index, all_mixtures) {
 					if let Some(mix) = entry.try_read() {
 						if gas.temperature_compare(&mix)
@@ -351,7 +370,7 @@ fn should_process(
 						gas.temperature_compare(planet_atmos)
 							|| gas.compare_with(planet_atmos, MINIMUM_MOLES_DELTA_TO_MOVE)
 					})
-			})
+			})).unwrap_or(false)
 }
 
 // Creates the combined gas mixture of all this mix's neighbors, as well as gathering some other pertinent info for future processing.
@@ -434,12 +453,15 @@ fn fdm(
 	let mut high_pressure_turfs: Vec<NodeIndex<usize>> = Vec::new();
 	let mut cur_count = 1;
 	with_turf_gases_read(|arena| {
+		let valid_only = arena.graph.filter_map(|n| Some(n), |edge| {
+
+		})
 		loop {
 			if cur_count > fdm_max_steps || check_turfs_dirty() {
 				break;
 			}
 			GasArena::with_all_mixtures(|all_mixtures| {
-				let turfs_to_save = arena
+				let turfs_to_save = arena.graph
 					/*
 						This directly yanks the internal node vec
 						of the graph as a slice to parallelize the process.
@@ -450,13 +472,10 @@ fn fdm(
 						some maximum due to the global turf mixture lock access,
 						but it's already blazingly fast on my i7, so it should be fine.
 					*/
-					.graph
-					.raw_nodes()
+					.raw_edges()
 					.par_iter()
-					.enumerate()
-					.filter_map(|(index, node)| Some((NodeIndex::from(index), node.weight?)))
-					.filter(|(index, mixture)| {
-						should_process(*index, mixture, all_mixtures, &arena)
+					.filter(|&edge| {
+						should_process(edge, all_mixtures, &arena)
 					})
 					.filter_map(|(index, mixture)| {
 						process_cell(index, mixture, all_mixtures, &arena)

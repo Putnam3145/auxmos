@@ -31,7 +31,10 @@ use std::mem::drop;
 use crate::callbacks::aux_callbacks_sender;
 
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use petgraph::{graph::{DiGraph, NodeIndex, Edge}, visit::EdgeRef};
+use petgraph::{
+	graph::{DiGraph, NodeIndex},
+	visit::EdgeRef,
+};
 
 const NORTH: u8 = 1;
 const SOUTH: u8 = 2;
@@ -163,7 +166,7 @@ struct ThermalInfo {
 //It's a stable graph because we want to be able to remove turfs
 //without screwing with other turf's ids
 struct TurfGases {
-	graph: DiGraph<TurfMixture, (), usize>
+	graph: DiGraph<TurfMixture, (), usize>,
 }
 
 type TurfGraphMap = HashMap<TurfID, NodeIndex<usize>, FxBuildHasher>;
@@ -174,9 +177,19 @@ impl TurfGases {
 		self.graph.add_node(tmix);
 	}
 	pub fn turf_id_map(&self) -> TurfGraphMap {
-		self.graph.raw_nodes().iter().enumerate().map(|(i,n)| (n.weight.id, NodeIndex::from(i))).collect()
+		self.graph
+			.raw_nodes()
+			.iter()
+			.enumerate()
+			.map(|(i, n)| (n.weight.id, NodeIndex::from(i)))
+			.collect()
 	}
-	pub fn update_adjacencies(&mut self, idx: TurfID, adjacent_list: List, map: TurfGraphMap) -> Result<(), Runtime> {
+	pub fn update_adjacencies(
+		&mut self,
+		idx: TurfID,
+		adjacent_list: List,
+		map: &TurfGraphMap,
+	) -> Result<(), Runtime> {
 		if let Some(&this_index) = map.get(&idx) {
 			self.remove_adjacencies(this_index);
 			for i in 1..=adjacent_list.len() {
@@ -193,14 +206,14 @@ impl TurfGases {
 	//This isn't a useless collect(), we can't hold a mutable ref and an immutable ref at once on the graph
 	#[allow(clippy::needless_collect)]
 	pub fn remove_adjacencies(&mut self, index: NodeIndex<usize>) {
-			let edges = self
-				.graph
-				.edges(index)
-				.map(|edgeref| edgeref.id())
-				.collect::<Vec<_>>();
-			edges.into_iter().for_each(|edgeindex| {
-				self.graph.remove_edge(edgeindex);
-			});
+		let edges = self
+			.graph
+			.edges(index)
+			.map(|edgeref| edgeref.id())
+			.collect::<Vec<_>>();
+		edges.into_iter().for_each(|edgeindex| {
+			self.graph.remove_edge(edgeindex);
+		});
 	}
 
 	pub fn get(&self, idx: NodeIndex<usize>) -> Option<&TurfMixture> {
@@ -510,12 +523,17 @@ fn _hook_turf_update_temp() {
 	Ok(Value::null())
 }
 
-fn update_adjacency_info(id: u32, adjacent_to_spess: bool, map: TurfGraphMap) -> Result<Option<u32>, Runtime> {
+fn update_adjacency_info(
+	id: u32,
+	adjacent_to_spess: bool,
+	map: &TurfGraphMap,
+) -> Result<Option<u32>, Runtime> {
 	let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
 	let ret = with_turf_gases_write(|mut arena| -> Result<Option<u32>, Runtime> {
-		if src_turf.get_number(byond_string!("blocks_air")).map_or(true, |blocks_air| {
-			blocks_air == 0.0
-		}) {
+		if src_turf
+			.get_number(byond_string!("blocks_air"))
+			.map_or(true, |blocks_air| blocks_air == 0.0)
+		{
 			if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
 				arena.update_adjacencies(id, adjacent_list, map)?;
 				Ok(None)
@@ -555,7 +573,6 @@ fn update_adjacency_info(id: u32, adjacent_to_spess: bool, map: TurfGraphMap) ->
 #[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn _hook_infos(arg0: Value) {
 	let adjacent_to_spess = arg0.as_number().unwrap_or(0.0) != 0.0;
-	let id = unsafe { src.raw.data.id };
 	with_dirty_turfs(|mut dirty_turfs| {
 		let e = dirty_turfs.entry(unsafe { src.raw.data.id }).or_default();
 		*e |= DIRTY_ADJACENT;

@@ -1,6 +1,6 @@
 [package]
 name = "auxmos"
-version = "1.1.1"
+version = "2.0.0"
 authors = ["Putnam <putnam3145@gmail.com>"]
 edition = "2021"
 
@@ -11,18 +11,14 @@ default = ["auxcleanup_gas_deletion", "turf_processing"]
 auxcleanup_gas_deletion = ["auxcleanup"]
 zas_hooks = []
 turf_processing = []
-equalization = ["turf_processing"]
-monstermos = ["equalization"]
-putnamos = ["equalization"]
-katmos = ["equalization"]
+fastmos = ["turf_processing"]
+katmos = ["fastmos"]
 reaction_hooks = []
 plasma_fire_hook = ["reaction_hooks"]
 trit_fire_hook = ["reaction_hooks"]
 fusion_hook = ["reaction_hooks"]
 generic_fire_hook = ["reaction_hooks"]
 all_reaction_hooks = ["fusion_hook", "trit_fire_hook", "plasma_fire_hook", "generic_fire_hook"]
-explosive_decompression = ["monstermos"]
-putnamos_decompression = ["putnamos"]
 
 [lib]
 crate-type = ["cdylib"]

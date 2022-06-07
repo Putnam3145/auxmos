@@ -99,6 +99,61 @@ fn _finish_process_turfs() {
 	}
 }
 
+fn rebuild_turf_graph() -> Result<(), Runtime> {
+	let mut deletions: HashSet<u32, FxBuildHasher> =
+		HashSet::with_capacity_and_hasher(500, FxBuildHasher::default());
+	with_dirty_turfs(|mut dirty_turfs| {
+		for (&t, _) in dirty_turfs
+			.iter()
+			.filter(|&(_, &flags)| flags & DIRTY_MIX_REF > 0)
+		{
+			if let Some(id) = register_turf(t)? {
+				deletions.insert(id);
+			}
+		}
+		let map = with_turf_gases_read(|arena| arena.turf_id_map());
+		for (t, flags) in dirty_turfs
+			.drain()
+			.filter(|&(_, flags)| flags & DIRTY_ADJACENT > 0)
+		{
+			if let Some(id) = update_adjacency_info(t, flags & DIRTY_ADJACENT_TO_SPACE > 0, &map)? {
+				deletions.insert(id);
+			}
+		}
+		Ok(())
+	})?;
+	with_turf_gases_write(|mut arena| {
+		arena.graph.retain_nodes(|graph, node_idx| {
+			graph.neighbors_undirected(node_idx).next().is_some()
+				&& graph
+					.node_weight(node_idx)
+					.map(|mix| !deletions.contains(&mix.id))
+					.unwrap_or(true)
+		});
+	});
+	Ok(())
+}
+
+pub(crate) fn rebuild_turf_graph_no_invalidate() -> Result<(), Runtime> {
+	with_dirty_turfs(|mut dirty_turfs| {
+		for (&t, _) in dirty_turfs
+			.iter()
+			.filter(|&(_, &flags)| flags & DIRTY_MIX_REF > 0)
+		{
+			register_turf(t)?;
+		}
+		let map = with_turf_gases_read(|arena| arena.turf_id_map());
+		for (t, flags) in dirty_turfs
+			.drain()
+			.filter(|&(_, flags)| flags & DIRTY_ADJACENT > 0)
+		{
+			update_adjacency_info(t, flags & DIRTY_ADJACENT_TO_SPACE > 0, &map)?;
+		}
+		Ok(())
+	})?;
+	Ok(())
+}
+
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
 fn _process_turf_notify() {
 	let sender = processing_callbacks_sender();
@@ -111,7 +166,7 @@ fn _process_turf_notify() {
 	let equalize_hard_turf_limit = src
 		.get_number(byond_string!("equalize_hard_turf_limit"))
 		.unwrap_or(2000.0) as usize;
-	let equalize_enabled = cfg!(feature = "equalization")
+	let equalize_enabled = cfg!(feature = "fastmos")
 		&& src
 			.get_number(byond_string!("equalize_enabled"))
 			.map_err(|_| {
@@ -149,26 +204,7 @@ fn _process_turf_notify() {
 		.get_number(byond_string!("planet_equalize_enabled"))
 		.unwrap_or(1.0)
 		!= 0.0;
-	let mut deletions: HashSet<u32, FxBuildHasher> = HashSet::with_capacity_and_hasher(500, FxBuildHasher::default());
-	with_dirty_turfs(|mut dirty_turfs| {
-		for (&t, &flags) in dirty_turfs.iter().filter(|&(_, &flags)| flags & DIRTY_MIX_REF > 0) {
-			if let Some(id) = register_turf(t)? {
-				deletions.insert(id);
-			}
-		}
-		let map = with_turf_gases_read(|arena| arena.turf_id_map());
-		for (t, flags) in dirty_turfs.drain().filter(|&(_, flags)| flags & DIRTY_ADJACENT > 0) {
-			if let Some(id) = update_adjacency_info(t, flags & DIRTY_ADJACENT_TO_SPACE > 0, map)? {
-				deletions.insert(id);
-			}
-		}
-		Ok(())
-	})?;
-	with_turf_gases_write(|mut arena| {
-		arena.graph.retain_nodes(|graph, node_idx| {
-			graph.node_weight(node_idx).map(|mix| !deletions.contains(&mix.id)).unwrap_or(true)
-		});
-	});
+	rebuild_turf_graph()?;
 	drop(sender.try_send(Box::new(SSairInfo {
 		fdm_max_steps,
 		equalize_turf_limit,
@@ -235,8 +271,7 @@ fn _process_turf_start() -> Result<(), String> {
 				}));
 				(low_pressure_turfs, high_pressure_turfs)
 			};
-			if !check_turfs_dirty()
-			{
+			if !check_turfs_dirty() {
 				let start_time = Instant::now();
 				let processed_turfs =
 					excited_group_processing(info.group_pressure_goal, &low_pressure_turfs);
@@ -341,16 +376,17 @@ fn _process_turf_start() -> Result<(), String> {
 
 // Compares with neighbors, returning early if any of them are valid.
 fn should_process(
-	edge: &Edge<(), usize>,
+	index: NodeIndex<usize>,
+	mixture: &TurfMixture,
 	all_mixtures: &[RwLock<Mixture>],
 	arena: &RwLockReadGuard<TurfGases>,
 ) -> bool {
-	arena.graph.node_weight(edge.source()).map(|mixture|
+	mixture.enabled()
+		&& arena.adjacent_infos(index).next().is_some()
 		&& all_mixtures
 			.get(mixture.mix)
 			.and_then(RwLock::try_read)
 			.map_or(false, |gas| {
-
 				for entry in arena.adjacent_mixes(index, all_mixtures) {
 					if let Some(mix) = entry.try_read() {
 						if gas.temperature_compare(&mix)
@@ -370,7 +406,7 @@ fn should_process(
 						gas.temperature_compare(planet_atmos)
 							|| gas.compare_with(planet_atmos, MINIMUM_MOLES_DELTA_TO_MOVE)
 					})
-			})).unwrap_or(false)
+			})
 }
 
 // Creates the combined gas mixture of all this mix's neighbors, as well as gathering some other pertinent info for future processing.
@@ -453,15 +489,13 @@ fn fdm(
 	let mut high_pressure_turfs: Vec<NodeIndex<usize>> = Vec::new();
 	let mut cur_count = 1;
 	with_turf_gases_read(|arena| {
-		let valid_only = arena.graph.filter_map(|n| Some(n), |edge| {
-
-		})
 		loop {
 			if cur_count > fdm_max_steps || check_turfs_dirty() {
 				break;
 			}
 			GasArena::with_all_mixtures(|all_mixtures| {
-				let turfs_to_save = arena.graph
+				let turfs_to_save = arena
+					.graph
 					/*
 						This directly yanks the internal node vec
 						of the graph as a slice to parallelize the process.
@@ -472,10 +506,12 @@ fn fdm(
 						some maximum due to the global turf mixture lock access,
 						but it's already blazingly fast on my i7, so it should be fine.
 					*/
-					.raw_edges()
+					.raw_nodes()
 					.par_iter()
-					.filter(|&edge| {
-						should_process(edge, all_mixtures, &arena)
+					.enumerate()
+					.map(|(index, node)| (NodeIndex::from(index), node.weight))
+					.filter(|(index, mixture)| {
+						should_process(*index, mixture, all_mixtures, &arena)
 					})
 					.filter_map(|(index, mixture)| {
 						process_cell(index, mixture, all_mixtures, &arena)
@@ -735,8 +771,8 @@ fn post_process() {
 				.graph
 				.raw_nodes()
 				.par_iter()
-				.filter_map(|node| node.weight)
-				.filter_map(|mixture| {
+				.filter_map(|node| {
+					let mixture = node.weight;
 					mixture
 						.enabled()
 						.then(|| {
@@ -869,6 +905,7 @@ fn _process_heat_start() -> Result<(), String> {
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * info.time_delta;
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * info.time_delta;
 			with_turf_gases_read(|arena| {
+				let map = arena.turf_id_map();
 				let temps_to_update = turf_temperatures()
 					.par_iter()
 					.map(|entry| {
@@ -884,8 +921,9 @@ fn _process_heat_start() -> Result<(), String> {
 						(t.thermal_conductivity > 0.0 && t.heat_capacity > 0.0 && adj > 0)
 							.then(|| {
 								let mut heat_delta = 0.0;
-								let is_temp_delta_with_air = arena
-									.get_from_turfid(&i)
+								let is_temp_delta_with_air = map
+									.get(&i)
+									.and_then(|&node_id| arena.get(node_id))
 									.filter(|m| m.enabled())
 									.and_then(|m| {
 										GasArena::with_all_mixtures(|all_mixtures| {
@@ -942,8 +980,9 @@ fn _process_heat_start() -> Result<(), String> {
 							return;
 						}
 						let t: &mut ThermalInfo = &mut maybe_t.unwrap();
-						t.temperature = arena
-							.get_from_turfid(&i)
+						t.temperature = map
+							.get(&i)
+							.and_then(|&node_id| arena.get(node_id))
 							.filter(|m| m.enabled())
 							.and_then(|m| {
 								GasArena::with_all_mixtures(|all_mixtures| {

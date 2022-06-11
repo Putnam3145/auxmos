@@ -17,8 +17,6 @@ use fxhash::FxBuildHasher;
 
 use auxcallback::byond_callback_sender;
 
-use parking_lot::RwLockReadGuard;
-
 type MixWithID = (NodeIndex<usize>, TurfMixture);
 
 type RefMixWithID<'a> = (&'a NodeIndex<usize>, &'a TurfMixture);
@@ -82,7 +80,7 @@ fn adjust_eq_movement(
 fn finalize_eq(
 	index: NodeIndex<usize>,
 	turf: &TurfMixture,
-	arena: &RwLockReadGuard<TurfGases>,
+	arena: &TurfGases,
 	info: &HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
 	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 	pressures: &mut Vec<(f32, u32, u32)>,
@@ -171,7 +169,7 @@ fn finalize_eq(
 
 fn finalize_eq_neighbors(
 	index: NodeIndex<usize>,
-	arena: &RwLockReadGuard<TurfGases>,
+	arena: &TurfGases,
 	transfer_dirs: &HashMap<Option<NodeIndex<usize>>, f32, FxBuildHasher>,
 	info: &HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
 	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
@@ -201,7 +199,7 @@ fn finalize_eq_neighbors(
 
 fn monstermos_fast_process(
 	cur_index: NodeIndex<usize>,
-	arena: &RwLockReadGuard<TurfGases>,
+	arena: &TurfGases,
 	info: &mut HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
 	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
@@ -242,7 +240,7 @@ fn monstermos_fast_process(
 
 fn give_to_takers(
 	giver_turfs: &[RefMixWithID],
-	arena: &RwLockReadGuard<TurfGases>,
+	arena: &TurfGases,
 	info: &mut HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
 	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
@@ -319,7 +317,7 @@ fn give_to_takers(
 
 fn take_from_givers(
 	taker_turfs: &[RefMixWithID],
-	arena: &RwLockReadGuard<TurfGases>,
+	arena: &TurfGases,
 	info: &mut HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
 	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
@@ -404,6 +402,7 @@ fn explosively_depressurize(
 		turfs.insert(initial_index);
 		while cur_queue_idx < turfs.len() {
 			let cur_index = turfs[cur_queue_idx];
+			let mut had_firelock = false;
 			cur_queue_idx += 1;
 			with_turf_gases_read(|arena| -> Result<(), Runtime> {
 				let cur_mixture = {
@@ -428,12 +427,12 @@ fn explosively_depressurize(
 					if cur_queue_idx > equalize_hard_turf_limit {
 						return Ok(());
 					}
-					for (adj_index, adj_mixture) in arena
-						.graph
-						.neighbors(cur_index)
-						.filter_map(|index| Some((index, arena.get(index)?)))
-					{
-						if turfs.insert(adj_index) {
+					for (flags, adj_index, adj_mixture) in
+						arena.graph.edges(cur_index).filter_map(|edge| {
+							Some((edge.weight(), edge.target(), arena.get(edge.target())?))
+						}) {
+						if turfs.insert(adj_index) && flags & ATMOS_ADJACENT_FIRELOCK != 0 {
+							had_firelock = true;
 							unsafe { Value::turf_by_id_unchecked(cur_mixture.id) }.call(
 								"consider_firelocks",
 								&[&unsafe { Value::turf_by_id_unchecked(adj_mixture.id) }],
@@ -443,7 +442,9 @@ fn explosively_depressurize(
 				}
 				Ok(())
 			})?;
-			super::processing::rebuild_turf_graph_no_invalidate()?; // consider_firelocks ought to dirtify it anyway
+			if had_firelock {
+				super::processing::rebuild_turf_graph_no_invalidate()?; // consider_firelocks ought to dirtify it anyway
+			}
 			if warned_about_planet_atmos {
 				break;
 			}
@@ -533,6 +534,15 @@ fn explosively_depressurize(
 			if cur_info.curr_transfer_dir.is_none() {
 				continue;
 			}
+			#[cfg(not(feature = "katmos_slow_decompression"))]
+			{
+				cur_mixture.clear_air();
+			}
+			#[cfg(feature = "katmos_slow_decompression")]
+			{
+				const DECOMP_REMOVE_RATIO: f32 = 4_f32;
+				cur_mixture.clear_vol((_average_moles / DECOMP_REMOVE_RATIO).abs());
+			}
 			let mut in_hpd = false;
 			for k in 1..=hpd.len() {
 				if let Ok(hpd_val) = hpd.get(k) {
@@ -582,16 +592,6 @@ fn explosively_depressurize(
 				)?;
 			}
 
-			#[cfg(not(feature = "katmos_slow_decompression"))]
-			{
-				cur_mixture.clear_air();
-			}
-			#[cfg(feature = "katmos_slow_decompression")]
-			{
-				const DECOMP_REMOVE_RATIO: f32 = 4_f32;
-				cur_mixture.clear_vol((_average_moles / DECOMP_REMOVE_RATIO).abs());
-			}
-
 			byond_turf.call("handle_decompression_floor_rip", &[&Value::from(sum)])?;
 		}
 		Ok(())
@@ -606,7 +606,7 @@ fn flood_fill_equalize_turfs(
 	index: NodeIndex<usize>,
 	equalize_hard_turf_limit: usize,
 	found_turfs: &mut HashSet<NodeIndex<usize>, FxBuildHasher>,
-	arena: &RwLockReadGuard<TurfGases>,
+	arena: &TurfGases,
 	contains_planet: &AtomicBool,
 ) -> Option<(
 	IndexMap<NodeIndex<usize>, TurfMixture, FxBuildHasher>,
@@ -659,7 +659,7 @@ fn flood_fill_equalize_turfs(
 
 fn process_planet_turfs(
 	planet_turfs: &IndexSet<NodeIndex<usize>, FxBuildHasher>,
-	arena: &RwLockReadGuard<TurfGases>,
+	arena: &TurfGases,
 	average_moles: f32,
 	did_firelocks: bool,
 	equalize_hard_turf_limit: usize,
@@ -700,10 +700,17 @@ fn process_planet_turfs(
 	while queue_idx < progression_order.len() {
 		let (&cur_index, &cur_mixture) = progression_order.get_index(queue_idx).unwrap();
 		queue_idx += 1;
-		for adj_index in arena.adjacent_node_ids(cur_index) {
+		for (flags, adj_index) in arena
+			.graph
+			.edges(cur_index)
+			.filter_map(|edge| Some((edge.weight(), edge.target())))
+		{
 			if let Some(mut adj_info) = info.get_mut(&adj_index) {
 				let adj_mixture_id = arena.get(adj_index).unwrap().id;
-				if queue_idx < equalize_hard_turf_limit && !did_firelocks {
+				if flags & ATMOS_ADJACENT_FIRELOCK != 0
+					&& queue_idx < equalize_hard_turf_limit
+					&& !did_firelocks
+				{
 					let cur_id = cur_mixture.id;
 					firelock_callbacks.push(Box::new(move || -> DMResult {
 						let this_turf = unsafe { Value::turf_by_id_unchecked(cur_id) };

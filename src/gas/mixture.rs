@@ -446,18 +446,25 @@ impl Mixture {
 			self.garbage_collect();
 		}
 	}
+	pub fn can_react_with_slice(&self, reactions: &[crate::reaction::Reaction]) -> bool {
+		reactions.iter().any(|r| r.check_conditions(self))
+	}
 	/// Checks if the proc can react with any reactions.
 	pub fn can_react(&self) -> bool {
-		with_reactions(|reactions| reactions.iter().any(|r| r.check_conditions(self)))
+		with_reactions(|reactions| self.can_react_with_slice(reactions))
+	}
+	pub fn all_reactable_with_slice(
+		&self,
+		reactions: &[crate::reaction::Reaction],
+	) -> TinyVec<[ReactionIdentifier; MAX_REACTION_TINYVEC_SIZE]> {
+		reactions
+			.iter()
+			.filter_map(|r| r.check_conditions(self).then(|| r.get_id()))
+			.collect()
 	}
 	/// Gets all of the reactions this mix should do.
 	pub fn all_reactable(&self) -> TinyVec<[ReactionIdentifier; MAX_REACTION_TINYVEC_SIZE]> {
-		with_reactions(|reactions| {
-			reactions
-				.iter()
-				.filter_map(|r| r.check_conditions(self).then(|| r.get_id()))
-				.collect()
-		})
+		with_reactions(|reactions| self.all_reactable_with_slice(reactions))
 	}
 	/// Returns a tuple with oxidation power and fuel amount of this gas mixture.
 	pub fn get_burnability(&self) -> (f32, f32) {

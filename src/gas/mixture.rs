@@ -300,12 +300,9 @@ impl Mixture {
 		if ratio >= 1.0 {
 			ratio = 1.0;
 		}
-		let orig_temp = self.temperature;
 		into.copy_from_mutable(self);
 		into.multiply(ratio);
 		self.multiply(1.0 - ratio);
-		self.temperature = orig_temp;
-		into.temperature = orig_temp;
 	}
 	/// As `remove_ratio_into`, but a raw number of moles instead of a ratio.
 	pub fn remove_into(&mut self, amount: f32, into: &mut Self) {
@@ -632,6 +629,20 @@ impl<'a> Mul<f32> for &'a Mixture {
 		ret
 	}
 }
+
+impl PartialEq for Mixture {
+	fn eq(&self, other: &Self) -> bool {
+		self.moles.len() == other.moles.len()
+			&& self.temperature == other.temperature
+			&& self
+				.moles
+				.iter()
+				.zip(other.moles.iter())
+				.all(|(a, b)| (a - b).abs() < GAS_MIN_MOLES)
+	}
+}
+
+impl Eq for Mixture {}
 
 #[cfg(test)]
 mod tests {

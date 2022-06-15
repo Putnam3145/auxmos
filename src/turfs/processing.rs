@@ -228,17 +228,6 @@ fn _process_turf_start() -> Result<(), String> {
 			TASKS_RUNNING.fetch_add(1, Ordering::Acquire);
 			let sender = byond_callback_sender();
 			let start_time = Instant::now();
-			let connected_parts: Vec<_> =
-				with_turf_gases_read(|arena| petgraph::algo::tarjan_scc(&arena.graph));
-			let should_check_planet_turfs = unsafe {
-				let timer = PLANET_RESET_TIMER.get_or_insert_with(Instant::now);
-				if timer.elapsed() > Duration::from_secs(5) {
-					*timer = Instant::now();
-					true
-				} else {
-					false
-				}
-			};
 			let (_, connected_parts) = rayon::join(planet_process, || {
 				let start_time = Instant::now();
 				let parts = with_turf_gases_read(|arena| petgraph::algo::tarjan_scc(&arena.graph));
@@ -329,7 +318,7 @@ fn _process_turf_start() -> Result<(), String> {
 					}
 					{
 						let start_time = Instant::now();
-						post_process(should_check_planet_turfs, nodes);
+						post_process(nodes);
 						let bench = start_time.elapsed().as_millis();
 						/*stats.push(Box::new(move || {
 							let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
@@ -415,7 +404,7 @@ fn planet_process() {
 							.flatten()
 						{
 							if comparison > 0.1 {
-								gas.multiply(1.0-GAS_DIFFUSION_CONSTANT);
+								gas.multiply(1.0 - GAS_DIFFUSION_CONSTANT);
 								gas.merge(&(planet_atmos * GAS_DIFFUSION_CONSTANT));
 							} else {
 								gas.copy_from_mutable(planet_atmos);
@@ -460,7 +449,6 @@ fn should_process(
 #[allow(clippy::type_complexity)]
 fn process_cell(
 	index: NodeIndex<usize>,
-	mixture: TurfMixture,
 	all_mixtures: &[RwLock<Mixture>],
 	arena: &TurfGases,
 ) -> Option<(NodeIndex<usize>, Mixture, TinyVec<[(TurfID, f32); 6]>, i32)> {
@@ -482,7 +470,9 @@ fn process_cell(
 		due to the pressure gradient.
 		Technically that's ρν², but, like, video games.
 	*/
-	for (&loc, entry) in arena.adjacent_mixes_with_adj_ids(index, all_mixtures) {
+	for (&loc, entry) in
+		arena.adjacent_mixes_with_adj_ids(index, all_mixtures, petgraph::Direction::Incoming)
+	{
 		match entry.try_read() {
 			Some(mix) => {
 				end_gas.merge(&mix);
@@ -549,9 +539,7 @@ fn fdm(
 					.filter(|(index, mixture)| {
 						should_process(*index, mixture, all_mixtures, &arena)
 					})
-					.filter_map(|(index, mixture)| {
-						process_cell(index, *mixture, all_mixtures, &arena)
-					})
+					.filter_map(|(index, _)| process_cell(index, all_mixtures, &arena))
 					.collect::<Vec<_>>();
 				/*
 					For the optimization-heads reading this: this is not an unnecessary collect().
@@ -728,31 +716,6 @@ fn excited_group_processing(
 	found_turfs.len()
 }
 
-static mut PLANET_RESET_TIMER: Option<Instant> = None;
-
-// If this turf has planetary atmos, and it's sufficiently similar, just sets the turf's atmos to the planetary atmos.
-fn remove_trace_planet_gases(
-	m: &TurfMixture,
-	planetary_atmos: &'static DashMap<u32, Mixture, FxBuildHasher>,
-	all_mixtures: &[RwLock<Mixture>],
-) {
-	if let Some(planet_atmos_entry) = m
-		.planetary_atmos
-		.and_then(|id| planetary_atmos.try_get(&id).try_unwrap())
-	{
-		let planet_atmos = planet_atmos_entry.value();
-		if all_mixtures
-			.get(m.mix)
-			.and_then(RwLock::try_read)
-			.map_or(false, |gas| !gas.compare_with(planet_atmos, 0.1))
-		{
-			if let Some(mut gas) = all_mixtures.get(m.mix).and_then(RwLock::try_write) {
-				gas.copy_from_mutable(planet_atmos);
-			}
-		}
-	}
-}
-
 static mut VISUALS_CACHE: Option<DashMap<usize, u64, FxBuildHasher>> = None;
 
 // Checks if the gas can react or can update visuals, returns None if not.
@@ -789,7 +752,7 @@ fn post_process_cell(
 
 // Goes through every turf, checks if it should reset to planet atmos, if it should
 // update visuals, if it should react, sends a callback if it should.
-fn post_process(should_check_planet_turfs: bool, nodes: &[NodeIndex<usize>]) {
+fn post_process(nodes: &[NodeIndex<usize>]) {
 	let vis = crate::gas::visibility_copies();
 	let (sender, receiver) = flume::unbounded();
 	let vis_cache = unsafe {

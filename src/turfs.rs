@@ -207,14 +207,13 @@ impl TurfGases {
 				let adj_val = adjacent_list.get(i)?;
 				//let adjacent_num = adjacent_list.get(&adj_val)?.as_number()? as u8;
 				if let Some(&adj_index) = map.get(&unsafe { adj_val.raw.data.id }) {
-					self.graph.add_edge(
-						this_index,
-						adj_index,
-						adjacent_list
-							.get(adj_val)
-							.and_then(|g| g.as_number())
-							.unwrap_or(0.0) as u8,
-					);
+					let flags = adjacent_list
+						.get(adj_val)
+						.and_then(|g| g.as_number())
+						.unwrap_or(0.0) as u8;
+					if flags & ATMOS_ADJACENT_ANY != 0 {
+						self.graph.add_edge(this_index, adj_index, flags);
+					}
 				}
 			}
 		};
@@ -280,9 +279,10 @@ impl TurfGases {
 		&'a self,
 		index: NodeIndex<usize>,
 		all_mixtures: &'a [parking_lot::RwLock<Mixture>],
+		dir: petgraph::Direction,
 	) -> impl Iterator<Item = (&'a TurfID, &'a parking_lot::RwLock<Mixture>)> {
 		self.graph
-			.neighbors(index)
+			.neighbors_directed(index, dir)
 			.filter_map(|neighbor| self.graph.node_weight(neighbor))
 			.filter_map(move |idx| Some((&idx.id, all_mixtures.get(idx.mix)?)))
 	}

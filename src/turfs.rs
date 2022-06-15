@@ -30,8 +30,12 @@ use std::mem::drop;
 
 use crate::callbacks::aux_callbacks_sender;
 
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef};
+use parking_lot::{const_rwlock, Mutex, RwLock};
+use petgraph::{
+	graph::{DiGraph, NodeIndex},
+	visit::EdgeRef,
+	Direction,
+};
 
 const NORTH: u8 = 1;
 const SOUTH: u8 = 2;
@@ -57,8 +61,6 @@ pub const NONE: u8 = 0;
 pub const SIMULATION_DIFFUSE: u8 = 1;
 pub const SIMULATION_ALL: u8 = 2;
 pub const SIMULATION_ANY: u8 = SIMULATION_DIFFUSE | SIMULATION_ALL;
-pub const SIMULATION_DISABLED: u8 = 4;
-pub const SIMULATION_FLAGS: u8 = SIMULATION_ANY | SIMULATION_DISABLED;
 
 type TurfID = u32;
 
@@ -69,18 +71,13 @@ struct TurfMixture {
 	pub id: TurfID,
 	pub flags: u8,
 	pub planetary_atmos: Option<u32>,
+	pub num_neighbors: u8,
 }
 
 #[allow(dead_code)]
 impl TurfMixture {
 	pub fn enabled(&self) -> bool {
-		let simul_flags = self.flags & SIMULATION_FLAGS;
-		simul_flags & SIMULATION_DISABLED == 0 && simul_flags & SIMULATION_ANY != 0
-	}
-
-	pub fn is_sleeping(&self) -> bool {
-		let simul_flags = self.flags & SIMULATION_FLAGS;
-		simul_flags & SIMULATION_DISABLED != 0
+		self.flags & SIMULATION_ANY != 0
 	}
 
 	pub fn is_immutable(&self) -> bool {
@@ -167,50 +164,57 @@ struct ThermalInfo {
 	pub adjacent_to_space: bool,
 }
 
+const ATMOS_ADJACENT_ANY: u8 = 1;
+const ATMOS_ADJACENT_FIRELOCK: u8 = 2;
+
+type TurfGraphMap = HashMap<TurfID, NodeIndex<usize>, FxBuildHasher>;
+
 //adjacency/turf infos goes here
-//It's a stable graph because we want to be able to remove turfs
-//without screwing with other turf's ids
 struct TurfGases {
-	graph: StableDiGraph<TurfMixture, (), usize>,
-	map: HashMap<TurfID, NodeIndex<usize>, FxBuildHasher>,
+	graph: DiGraph<TurfMixture, u8, usize>,
+	map: Mutex<Option<TurfGraphMap>>,
 }
 
 #[allow(unused)]
 impl TurfGases {
-	pub fn remove_turf(&mut self, idx: TurfID) {
-		if let Some(tmix) = self.map.remove(&idx) {
-			self.graph.remove_node(tmix);
-		}
+	pub fn insert_turf(&mut self, tmix: TurfMixture) {
+		self.graph.add_node(tmix);
 	}
-
-	pub fn insert_turf(&mut self, idx: TurfID, tmix: TurfMixture) {
-		self.map.insert(idx, self.graph.add_node(tmix));
+	pub fn invalidate(&mut self) {
+		*self.map.lock() = None;
 	}
-
-	pub fn disable_turf(&mut self, idx: TurfID) {
-		if let Some(&index) = self.map.get(&idx) {
-			if let Some(node) = self.graph.node_weight_mut(index) {
-				node.flags |= SIMULATION_DISABLED
-			}
-		}
+	pub fn turf_id_map(&self) -> TurfGraphMap {
+		self.map
+			.lock()
+			.get_or_insert_with(|| {
+				self.graph
+					.raw_nodes()
+					.par_iter()
+					.enumerate()
+					.map(|(i, n)| (n.weight.id, NodeIndex::from(i)))
+					.collect()
+			})
+			.clone()
 	}
-
-	pub fn enable_turf(&mut self, idx: TurfID) {
-		if let Some(&index) = self.map.get(&idx) {
-			if let Some(node) = self.graph.node_weight_mut(index) {
-				node.flags &= !SIMULATION_DISABLED
-			}
-		}
-	}
-
-	pub fn update_adjacencies(&mut self, idx: TurfID, adjacent_list: List) -> Result<(), Runtime> {
-		if let Some(&this_index) = self.map.get(&idx) {
-			self.remove_adjacencies(idx);
+	pub fn update_adjacencies(
+		&mut self,
+		idx: TurfID,
+		adjacent_list: List,
+		map: &TurfGraphMap,
+	) -> Result<(), Runtime> {
+		if let Some(&this_index) = map.get(&idx) {
+			self.remove_adjacencies(this_index);
 			for i in 1..=adjacent_list.len() {
 				let adj_val = adjacent_list.get(i)?;
 				//let adjacent_num = adjacent_list.get(&adj_val)?.as_number()? as u8;
-				if let Some(&adj_index) = self.map.get(&unsafe { adj_val.raw.data.id }) {
-					self.graph.add_edge(this_index, adj_index, ());
+				if let Some(&adj_index) = map.get(&unsafe { adj_val.raw.data.id }) {
+					let flags = adjacent_list
+						.get(adj_val)
+						.and_then(|g| g.as_number())
+						.unwrap_or(0.0) as u8;
+					if flags & ATMOS_ADJACENT_ANY != 0 {
+						self.graph.add_edge(this_index, adj_index, flags);
+					}
 				}
 			}
 		};
@@ -219,27 +223,15 @@ impl TurfGases {
 
 	//This isn't a useless collect(), we can't hold a mutable ref and an immutable ref at once on the graph
 	#[allow(clippy::needless_collect)]
-	pub fn remove_adjacencies(&mut self, idx: TurfID) {
-		if let Some(index) = self.map.get(&idx) {
-			let edges = self
-				.graph
-				.edges(*index)
-				.map(|edgeref| edgeref.id())
-				.collect::<Vec<_>>();
-			edges.into_iter().for_each(|edgeindex| {
-				self.graph.remove_edge(edgeindex);
-			});
-		}
-	}
-
-	pub fn get_from_turfid(&self, idx: &TurfID) -> Option<&TurfMixture> {
-		self.map
-			.get(idx)
-			.and_then(|index| self.graph.node_weight(*index))
-	}
-
-	pub fn get_nodeid(&self, idx: &TurfID) -> Option<NodeIndex<usize>> {
-		self.map.get(idx).copied()
+	pub fn remove_adjacencies(&mut self, index: NodeIndex<usize>) {
+		let edges = self
+			.graph
+			.edges(index)
+			.map(|edgeref| edgeref.id())
+			.collect::<Vec<_>>();
+		edges.into_iter().for_each(|edgeindex| {
+			self.graph.remove_edge(edgeindex);
+		});
 	}
 
 	pub fn get(&self, idx: NodeIndex<usize>) -> Option<&TurfMixture> {
@@ -288,16 +280,21 @@ impl TurfGases {
 		&'a self,
 		index: NodeIndex<usize>,
 		all_mixtures: &'a [parking_lot::RwLock<Mixture>],
+		dir: Direction,
 	) -> impl Iterator<Item = (&'a TurfID, &'a parking_lot::RwLock<Mixture>)> {
 		self.graph
-			.neighbors(index)
+			.neighbors_directed(index, dir)
 			.filter_map(|neighbor| self.graph.node_weight(neighbor))
 			.filter_map(move |idx| Some((&idx.id, all_mixtures.get(idx.mix)?)))
 	}
 
-	pub fn adjacent_infos(&self, index: NodeIndex<usize>) -> impl Iterator<Item = &TurfMixture> {
+	pub fn adjacent_infos(
+		&self,
+		index: NodeIndex<usize>,
+		dir: Direction,
+	) -> impl Iterator<Item = &TurfMixture> {
 		self.graph
-			.neighbors(index)
+			.neighbors_directed(index, dir)
 			.filter_map(|neighbor| self.graph.node_weight(neighbor))
 	}
 
@@ -321,49 +318,76 @@ impl TurfGases {
 	*/
 }
 
-static mut TURF_GASES: Option<RwLock<TurfGases>> = None;
+static TURF_GASES: RwLock<Option<TurfGases>> = const_rwlock(None);
 // Turfs with temperatures/heat capacities. This is distinct from the above.
 static mut TURF_TEMPERATURES: Option<DashMap<TurfID, ThermalInfo, FxBuildHasher>> = None;
 // We store planetary atmos by hash of the initial atmos string here for speed.
 static mut PLANETARY_ATMOS: Option<DashMap<u32, Mixture, FxBuildHasher>> = None;
+
+// Turfs need updating before the thread starts
+static DIRTY_TURFS: RwLock<Option<HashMap<TurfID, u8, FxBuildHasher>>> = const_rwlock(None);
+
+static DIRTY_MIX_REF: u8 = 1;
+static DIRTY_ADJACENT: u8 = 2;
+static DIRTY_ADJACENT_TO_SPACE: u8 = 4;
+
+static ANY_TURF_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[init(partial)]
 fn _initialize_turf_statics() -> Result<(), String> {
 	unsafe {
 		// 10x 255x255 zlevels
 		// double that for edges since each turf can have up to 6 edges but eehhhh
-		TURF_GASES = Some(RwLock::new(TurfGases {
-			map: HashMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
-			graph: StableDiGraph::with_capacity(650_250, 1_300_500),
-		}));
+		*TURF_GASES.write() = Some(TurfGases {
+			graph: DiGraph::with_capacity(650_250, 1_300_500),
+			map: Mutex::new(None),
+		});
 		TURF_TEMPERATURES = Some(Default::default());
 		PLANETARY_ATMOS = Some(Default::default());
+		*DIRTY_TURFS.write() = Some(Default::default());
 	};
 	Ok(())
 }
 
 #[shutdown]
 fn _shutdown_turfs() {
+	*DIRTY_TURFS.write() = None;
+	*TURF_GASES.write() = None;
 	unsafe {
-		TURF_GASES = None;
 		TURF_TEMPERATURES = None;
 		PLANETARY_ATMOS = None;
 	}
 }
 
+fn set_turfs_dirty(b: bool) {
+	ANY_TURF_DIRTY.store(b, std::sync::atomic::Ordering::Release);
+}
+
+fn check_turfs_dirty() -> bool {
+	ANY_TURF_DIRTY.load(std::sync::atomic::Ordering::Acquire)
+}
+
 // this would lead to undefined info if it were possible for something to put a None on it during operation, but nothing's going to do that
 fn with_turf_gases_read<T, F>(f: F) -> T
 where
-	F: FnOnce(RwLockReadGuard<TurfGases>) -> T,
+	F: FnOnce(&TurfGases) -> T,
 {
-	f(unsafe { TURF_GASES.as_ref().unwrap().read() })
+	f(TURF_GASES.read().as_ref().unwrap())
 }
 
 fn with_turf_gases_write<T, F>(f: F) -> T
 where
-	F: FnOnce(RwLockWriteGuard<TurfGases>) -> T,
+	F: FnOnce(&mut TurfGases) -> T,
 {
-	f(unsafe { TURF_GASES.as_ref().unwrap().write() })
+	f(TURF_GASES.write().as_mut().unwrap())
+}
+
+fn with_dirty_turfs<T, F>(f: F) -> T
+where
+	F: FnOnce(&mut HashMap<u32, u8, FxBuildHasher>) -> T,
+{
+	set_turfs_dirty(true);
+	f(DIRTY_TURFS.write().as_mut().unwrap())
 }
 
 fn planetary_atmos() -> &'static DashMap<u32, Mixture, FxBuildHasher> {
@@ -374,51 +398,53 @@ fn turf_temperatures() -> &'static DashMap<TurfID, ThermalInfo, FxBuildHasher> {
 	unsafe { TURF_TEMPERATURES.as_ref().unwrap() }
 }
 
-#[hook("/turf/proc/update_air_ref")]
-fn _hook_register_turf() {
-	let sender = aux_callbacks_sender(crate::callbacks::TURFS);
-	let id = unsafe { src.raw.data.id };
-	drop(sender.send(Box::new(move || {
-		let src = unsafe { Value::turf_by_id_unchecked(id) };
-		let flag = determine_turf_flag(&src);
-		if flag >= 0 {
-			let mut to_insert: TurfMixture = TurfMixture::default();
-			let air = src.get(byond_string!("air"))?;
-			to_insert.mix = air
-				.get_number(byond_string!("_extools_pointer_gasmixture"))
-				.map_err(|_| {
-					runtime!(
-						"Attempt to interpret non-number value as number {} {}:{}",
-						std::file!(),
-						std::line!(),
-						std::column!()
-					)
-				})?
-				.to_bits() as usize;
-			to_insert.flags = flag as u8;
-			to_insert.id = id;
+fn register_turf(id: u32) -> Result<Option<u32>, Runtime> {
+	let src = unsafe { Value::turf_by_id_unchecked(id) };
+	let flag = determine_turf_flag(&src);
+	if flag >= 0 {
+		let mut to_insert: TurfMixture = TurfMixture::default();
+		let air = src.get(byond_string!("air"))?;
+		to_insert.mix = air
+			.get_number(byond_string!("_extools_pointer_gasmixture"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})?
+			.to_bits() as usize;
+		to_insert.flags = flag as u8;
+		to_insert.id = id;
 
-			if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
-				if is_planet != 0.0 {
-					if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
-						to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
-						let mut entry = planetary_atmos()
-							.entry(to_insert.planetary_atmos.unwrap())
-							.or_insert_with(|| {
-								let mut gas = to_insert.get_gas_copy();
-								gas.mark_immutable();
-								gas
-							});
-						entry.mark_immutable();
-					}
+		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
+			if is_planet != 0.0 {
+				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
+					to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
+					let mut entry = planetary_atmos()
+						.entry(to_insert.planetary_atmos.unwrap())
+						.or_insert_with(|| {
+							let mut gas = to_insert.get_gas_copy();
+							gas.mark_immutable();
+							gas
+						});
+					entry.mark_immutable();
 				}
 			}
-			with_turf_gases_write(|mut arena| arena.insert_turf(id, to_insert));
-		} else {
-			with_turf_gases_write(|mut arena| arena.remove_turf(id));
 		}
-		Ok(Value::null())
-	})));
+		with_turf_gases_write(|arena| arena.insert_turf(to_insert));
+		Ok(None)
+	} else {
+		Ok(Some(id))
+	}
+}
+
+#[hook("/turf/proc/update_air_ref")]
+fn _hook_register_turf() {
+	with_dirty_turfs(|dirty_turfs| {
+		*dirty_turfs.entry(unsafe { src.raw.data.id }).or_default() |= DIRTY_MIX_REF;
+	});
 	Ok(Value::null())
 }
 
@@ -432,22 +458,19 @@ fn determine_turf_flag(src: &Value) -> i32 {
 	let path = src
 		.get_type()
 		.unwrap_or_else(|_| "TYPPENOTFOUND".to_string());
-	let is_open = path.as_str().starts_with("/turf/open");
-	let is_planet = src
+	if !path.as_str().starts_with("/turf/open") {
+		CLOSED_TURF
+	} else if src
 		.get_number(byond_string!("planetary_atmos"))
 		.unwrap_or(0.0)
-		> 0.0;
-	let is_space = path.as_str().starts_with("/turf/open/space");
-
-	let mut flag: i32 = CLOSED_TURF;
-	if is_space {
-		flag = SPACE_TURF
-	} else if is_planet && is_open {
-		flag = PLANET_TURF
-	} else if is_open {
-		flag = OPEN_TURF
+		> 0.0
+	{
+		PLANET_TURF
+	} else if path.as_str().starts_with("/turf/open/space") {
+		SPACE_TURF
+	} else {
+		OPEN_TURF
 	}
-	flag
 }
 
 #[hook("/turf/proc/__auxtools_update_turf_temp_info")]
@@ -521,85 +544,58 @@ fn _hook_turf_update_temp() {
 	Ok(Value::null())
 }
 
-/* will deadlock, don't recommend using this
-#[hook("/turf/proc/set_sleeping")]
-fn _hook_sleep() {
-	let arg = if let Some(arg_get) = args.get(0) {
-		// null is falsey in byond so
-		arg_get.as_number().map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?
-	} else {
-		0.0
-	};
-	let src_id = unsafe { src.raw.data.id };
-	if arg == 0.0 {
-		turf_gases().enable_turf(src_id);
-	} else {
-		turf_gases().disable_turf(src_id);
+fn update_adjacency_info(
+	id: u32,
+	adjacent_to_spess: bool,
+	map: &TurfGraphMap,
+) -> Result<(), Runtime> {
+	let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
+	with_turf_gases_write(|arena| -> DMResult<()> {
+		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
+			arena.update_adjacencies(id, adjacent_list, map)?;
+		} else {
+			if let Some(&idx) = map.get(&id) {
+				arena.remove_adjacencies(idx);
+			}
+		}
+		Ok(())
+	})?;
+	if let Ok(atmos_blocked_directions) =
+		src_turf.get_number(byond_string!("conductivity_blocked_directions"))
+	{
+		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);
+		turf_temperatures()
+			.entry(id)
+			.and_modify(|entry| {
+				entry.adjacency = adjacency;
+			})
+			.or_insert_with(|| ThermalInfo {
+				temperature: src_turf
+					.get_number(byond_string!("initial_temperature"))
+					.unwrap_or(TCMB),
+				thermal_conductivity: src_turf
+					.get_number(byond_string!("thermal_conductivity"))
+					.unwrap_or(0.0),
+				heat_capacity: src_turf
+					.get_number(byond_string!("heat_capacity"))
+					.unwrap_or(0.0),
+				adjacency,
+				adjacent_to_space: adjacent_to_spess,
+			});
 	}
-	Ok(Value::from(true))
+	Ok(())
 }
-*/
 
 #[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
-fn _hook_infos(arg0: Value, arg1: Value) {
-	let update_now = arg1.as_number().unwrap_or(0.0) != 0.0;
+fn _hook_infos(arg0: Value) {
 	let adjacent_to_spess = arg0.as_number().unwrap_or(0.0) != 0.0;
-	let id = unsafe { src.raw.data.id };
-	let sender = aux_callbacks_sender(crate::callbacks::ADJACENCIES);
-	let boxed_fn: Box<dyn Fn() -> DMResult + Send + Sync> = Box::new(move || {
-		let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
-		with_turf_gases_write(|mut arena| -> Result<(), Runtime> {
-			if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
-				arena.update_adjacencies(id, adjacent_list)?;
-			} else {
-				arena.remove_adjacencies(id);
-			}
-			if let Ok(blocks_air) = src_turf.get_number(byond_string!("blocks_air")) {
-				if blocks_air == 0.0 {
-					arena.enable_turf(id)
-				} else {
-					arena.disable_turf(id)
-				}
-			}
-			Ok(())
-		})?;
-		if let Ok(atmos_blocked_directions) =
-			src_turf.get_number(byond_string!("conductivity_blocked_directions"))
-		{
-			let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);
-			turf_temperatures()
-				.entry(id)
-				.and_modify(|entry| {
-					entry.adjacency = adjacency;
-				})
-				.or_insert_with(|| ThermalInfo {
-					temperature: src_turf
-						.get_number(byond_string!("initial_temperature"))
-						.unwrap_or(TCMB),
-					thermal_conductivity: src_turf
-						.get_number(byond_string!("thermal_conductivity"))
-						.unwrap_or(0.0),
-					heat_capacity: src_turf
-						.get_number(byond_string!("heat_capacity"))
-						.unwrap_or(0.0),
-					adjacency,
-					adjacent_to_space: adjacent_to_spess,
-				});
+	with_dirty_turfs(|dirty_turfs| {
+		let e = dirty_turfs.entry(unsafe { src.raw.data.id }).or_default();
+		*e |= DIRTY_ADJACENT;
+		if adjacent_to_spess {
+			*e |= DIRTY_ADJACENT_TO_SPACE;
 		}
-		Ok(Value::null())
 	});
-	if update_now {
-		boxed_fn()?;
-	} else {
-		drop(sender.send(boxed_fn));
-	}
 	Ok(Value::null())
 }
 

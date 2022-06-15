@@ -6,11 +6,12 @@ type CallbackChannel = (flume::Sender<DeferredFunc>, flume::Receiver<DeferredFun
 
 static mut CALLBACK_CHANNELS: Option<[CallbackChannel; 3]> = None;
 
-pub(crate) const TURFS: usize = 0;
+//pub(crate) const TURFS: usize = 0;
 
 pub(crate) const TEMPERATURE: usize = 1;
 
-pub(crate) const ADJACENCIES: usize = 2;
+//pub(crate) const ADJACENCIES: usize = 2;
+// might just deprecate totally at some point?? TEMPERATURE probably shouldn't exist?? make the graph more general, allow pathfinding n' stuff??
 
 #[init(partial)]
 fn _start_aux_callbacks() -> Result<(), String> {

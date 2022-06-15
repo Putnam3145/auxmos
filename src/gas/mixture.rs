@@ -300,12 +300,9 @@ impl Mixture {
 		if ratio >= 1.0 {
 			ratio = 1.0;
 		}
-		let orig_temp = self.temperature;
 		into.copy_from_mutable(self);
 		into.multiply(ratio);
 		self.multiply(1.0 - ratio);
-		self.temperature = orig_temp;
-		into.temperature = orig_temp;
 	}
 	/// As `remove_ratio_into`, but a raw number of moles instead of a ratio.
 	pub fn remove_into(&mut self, amount: f32, into: &mut Self) {
@@ -446,18 +443,25 @@ impl Mixture {
 			self.garbage_collect();
 		}
 	}
+	pub fn can_react_with_slice(&self, reactions: &[crate::reaction::Reaction]) -> bool {
+		reactions.iter().any(|r| r.check_conditions(self))
+	}
 	/// Checks if the proc can react with any reactions.
 	pub fn can_react(&self) -> bool {
-		with_reactions(|reactions| reactions.iter().any(|r| r.check_conditions(self)))
+		with_reactions(|reactions| self.can_react_with_slice(reactions))
+	}
+	pub fn all_reactable_with_slice(
+		&self,
+		reactions: &[crate::reaction::Reaction],
+	) -> TinyVec<[ReactionIdentifier; MAX_REACTION_TINYVEC_SIZE]> {
+		reactions
+			.iter()
+			.filter_map(|r| r.check_conditions(self).then(|| r.get_id()))
+			.collect()
 	}
 	/// Gets all of the reactions this mix should do.
 	pub fn all_reactable(&self) -> TinyVec<[ReactionIdentifier; MAX_REACTION_TINYVEC_SIZE]> {
-		with_reactions(|reactions| {
-			reactions
-				.iter()
-				.filter_map(|r| r.check_conditions(self).then(|| r.get_id()))
-				.collect()
-		})
+		with_reactions(|reactions| self.all_reactable_with_slice(reactions))
 	}
 	/// Returns a tuple with oxidation power and fuel amount of this gas mixture.
 	pub fn get_burnability(&self) -> (f32, f32) {
@@ -625,6 +629,20 @@ impl<'a> Mul<f32> for &'a Mixture {
 		ret
 	}
 }
+
+impl PartialEq for Mixture {
+	fn eq(&self, other: &Self) -> bool {
+		self.moles.len() == other.moles.len()
+			&& self.temperature == other.temperature
+			&& self
+				.moles
+				.iter()
+				.zip(other.moles.iter())
+				.all(|(a, b)| (a - b).abs() < GAS_MIN_MOLES)
+	}
+}
+
+impl Eq for Mixture {}
 
 #[cfg(test)]
 mod tests {

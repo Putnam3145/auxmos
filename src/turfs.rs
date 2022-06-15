@@ -34,6 +34,7 @@ use parking_lot::{const_rwlock, Mutex, RwLock};
 use petgraph::{
 	graph::{DiGraph, NodeIndex},
 	visit::EdgeRef,
+	Direction,
 };
 
 const NORTH: u8 = 1;
@@ -188,7 +189,7 @@ impl TurfGases {
 			.get_or_insert_with(|| {
 				self.graph
 					.raw_nodes()
-					.iter()
+					.par_iter()
 					.enumerate()
 					.map(|(i, n)| (n.weight.id, NodeIndex::from(i)))
 					.collect()
@@ -279,7 +280,7 @@ impl TurfGases {
 		&'a self,
 		index: NodeIndex<usize>,
 		all_mixtures: &'a [parking_lot::RwLock<Mixture>],
-		dir: petgraph::Direction,
+		dir: Direction,
 	) -> impl Iterator<Item = (&'a TurfID, &'a parking_lot::RwLock<Mixture>)> {
 		self.graph
 			.neighbors_directed(index, dir)
@@ -287,9 +288,13 @@ impl TurfGases {
 			.filter_map(move |idx| Some((&idx.id, all_mixtures.get(idx.mix)?)))
 	}
 
-	pub fn adjacent_infos(&self, index: NodeIndex<usize>) -> impl Iterator<Item = &TurfMixture> {
+	pub fn adjacent_infos(
+		&self,
+		index: NodeIndex<usize>,
+		dir: Direction,
+	) -> impl Iterator<Item = &TurfMixture> {
 		self.graph
-			.neighbors(index)
+			.neighbors_directed(index, dir)
 			.filter_map(|neighbor| self.graph.node_weight(neighbor))
 	}
 

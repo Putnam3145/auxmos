@@ -90,8 +90,6 @@ fn _finish_process_turfs() {
 			)
 		})?;
 	let processing_callbacks_unfinished = process_callbacks_for_millis(arg_limit as u64);
-	process_aux_callbacks(crate::callbacks::TURFS);
-	process_aux_callbacks(crate::callbacks::ADJACENCIES);
 	if processing_callbacks_unfinished {
 		Ok(Value::from(true))
 	} else {
@@ -424,7 +422,6 @@ fn should_process(
 	arena: &TurfGases,
 ) -> bool {
 	mixture.enabled()
-		&& arena.adjacent_infos(index).next().is_some()
 		&& all_mixtures
 			.get(mixture.mix)
 			.and_then(RwLock::try_read)

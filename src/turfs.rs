@@ -453,22 +453,19 @@ fn determine_turf_flag(src: &Value) -> i32 {
 	let path = src
 		.get_type()
 		.unwrap_or_else(|_| "TYPPENOTFOUND".to_string());
-	let is_open = path.as_str().starts_with("/turf/open");
-	let is_planet = src
+	if !path.as_str().starts_with("/turf/open") {
+		CLOSED_TURF
+	} else if src
 		.get_number(byond_string!("planetary_atmos"))
 		.unwrap_or(0.0)
-		> 0.0;
-	let is_space = path.as_str().starts_with("/turf/open/space");
-
-	let mut flag: i32 = CLOSED_TURF;
-	if is_space {
-		flag = SPACE_TURF
-	} else if is_planet && is_open {
-		flag = PLANET_TURF
-	} else if is_open {
-		flag = OPEN_TURF
+		> 0.0
+	{
+		PLANET_TURF
+	} else if path.as_str().starts_with("/turf/open/space") {
+		SPACE_TURF
+	} else {
+		OPEN_TURF
 	}
-	flag
 }
 
 #[hook("/turf/proc/__auxtools_update_turf_temp_info")]

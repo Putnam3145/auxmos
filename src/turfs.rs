@@ -75,7 +75,7 @@ bitflags! {
 
 impl Default for Directions {
 	fn default() -> Self {
-		Directions::NONE
+		Self::NONE
 	}
 }
 

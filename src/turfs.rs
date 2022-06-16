@@ -40,7 +40,6 @@ use petgraph::{
 };
 
 bitflags! {
-
 	#[derive(Default)]
 	pub struct Directions: u8 {
 		const NORTH = 0b1;

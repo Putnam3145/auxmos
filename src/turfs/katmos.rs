@@ -431,7 +431,9 @@ fn explosively_depressurize(
 						arena.graph.edges(cur_index).filter_map(|edge| {
 							Some((edge.weight(), edge.target(), arena.get(edge.target())?))
 						}) {
-						if turfs.insert(adj_index) && flags & ATMOS_ADJACENT_FIRELOCK != 0 {
+						if turfs.insert(adj_index)
+							&& flags.contains(AdjacentFlags::ATMOS_ADJACENT_FIRELOCK)
+						{
 							had_firelock = true;
 							unsafe { Value::turf_by_id_unchecked(cur_mixture.id) }.call(
 								"consider_firelocks",
@@ -707,7 +709,7 @@ fn process_planet_turfs(
 		{
 			if let Some(mut adj_info) = info.get_mut(&adj_index) {
 				let adj_mixture_id = arena.get(adj_index).unwrap().id;
-				if flags & ATMOS_ADJACENT_FIRELOCK != 0
+				if flags.contains(AdjacentFlags::ATMOS_ADJACENT_FIRELOCK)
 					&& queue_idx < equalize_hard_turf_limit
 					&& !did_firelocks
 				{

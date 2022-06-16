@@ -103,7 +103,7 @@ fn rebuild_turf_graph() -> Result<(), Runtime> {
 	with_dirty_turfs(|dirty_turfs| {
 		for (&t, _) in dirty_turfs
 			.iter()
-			.filter(|&(_, &flags)| flags & DIRTY_MIX_REF > 0)
+			.filter(|&(_, &flags)| flags.contains(DirtyFlags::DIRTY_MIX_REF))
 		{
 			if let Some(id) = register_turf(t)? {
 				deletions.insert(id);
@@ -112,9 +112,9 @@ fn rebuild_turf_graph() -> Result<(), Runtime> {
 		let map = with_turf_gases_read(|arena| arena.turf_id_map());
 		for (t, flags) in dirty_turfs
 			.drain()
-			.filter(|&(_, flags)| flags & DIRTY_ADJACENT > 0)
+			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
 		{
-			update_adjacency_info(t, flags & DIRTY_ADJACENT_TO_SPACE > 0, &map)?
+			update_adjacency_info(t, flags.contains(DirtyFlags::DIRTY_ADJACENT_TO_SPACE), &map)?
 		}
 		Ok(())
 	})?;
@@ -134,16 +134,16 @@ pub(crate) fn rebuild_turf_graph_no_invalidate() -> Result<(), Runtime> {
 	with_dirty_turfs(|dirty_turfs| {
 		for (&t, _) in dirty_turfs
 			.iter()
-			.filter(|&(_, &flags)| flags & DIRTY_MIX_REF > 0)
+			.filter(|&(_, &flags)| flags.contains(DirtyFlags::DIRTY_MIX_REF))
 		{
 			register_turf(t)?;
 		}
 		let map = with_turf_gases_read(|arena| arena.turf_id_map());
 		for (t, flags) in dirty_turfs
 			.drain()
-			.filter(|&(_, flags)| flags & DIRTY_ADJACENT > 0)
+			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
 		{
-			update_adjacency_info(t, flags & DIRTY_ADJACENT_TO_SPACE > 0, &map)?;
+			update_adjacency_info(t, flags.contains(DirtyFlags::DIRTY_ADJACENT_TO_SPACE), &map)?;
 		}
 		Ok(())
 	})?;
@@ -914,7 +914,7 @@ fn _process_heat_start() -> Result<(), String> {
 							If it has no thermal conductivity or low thermal capacity,
 							then it's not gonna interact, or at least shouldn't.
 						*/
-						(t.thermal_conductivity > 0.0 && t.heat_capacity > 0.0 && adj > 0)
+						(t.thermal_conductivity > 0.0 && t.heat_capacity > 0.0 && !adj.is_empty())
 							.then(|| {
 								let mut heat_delta = 0.0;
 								let is_temp_delta_with_air = map

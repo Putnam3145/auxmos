@@ -101,7 +101,7 @@ struct TurfMixture {
 #[allow(dead_code)]
 impl TurfMixture {
 	pub fn enabled(&self) -> bool {
-		self.flags.contains(SimulationFlags::SIMULATION_ANY)
+		self.flags.intersects(SimulationFlags::SIMULATION_ANY)
 	}
 
 	pub fn is_immutable(&self) -> bool {

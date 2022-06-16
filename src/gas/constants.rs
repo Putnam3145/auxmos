@@ -1,3 +1,5 @@
+use bitflags::bitflags;
+
 /// kPa*L/(K*mol)
 pub const R_IDEAL_GAS_EQUATION: f32 = 8.31;
 /// kPa
@@ -119,10 +121,14 @@ pub const MOLES_GAS_VISIBLE_STEP: f32 = 0.25;
 // ReactionIdentifier is 12 bytes, so this can be pretty generous.
 pub(crate) const MAX_REACTION_TINYVEC_SIZE: usize = 32;
 
-/// return values for reactions (bitflags)
-pub const NO_REACTION: i32 = 0;
-pub const REACTING: i32 = 1;
-pub const STOP_REACTIONS: i32 = 2;
+bitflags! {
+	/// return values for reactions (bitflags)
+	pub struct ReactionReturn: u32 {
+		const NO_REACTION = 0b0;
+		const REACTING = 0b1;
+		const STOP_REACTIONS = 0b10;
+	}
+}
 
 pub const GAS_O2: &str = "o2";
 pub const GAS_N2: &str = "n2";

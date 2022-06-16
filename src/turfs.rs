@@ -30,6 +30,8 @@ use std::mem::drop;
 
 use crate::callbacks::aux_callbacks_sender;
 
+use bitflags::bitflags;
+
 use parking_lot::{const_rwlock, Mutex, RwLock};
 use petgraph::{
 	graph::{DiGraph, NodeIndex},
@@ -37,30 +39,52 @@ use petgraph::{
 	Direction,
 };
 
-const NORTH: u8 = 1;
-const SOUTH: u8 = 2;
-const EAST: u8 = 4;
-const WEST: u8 = 8;
-const UP: u8 = 16;
-const DOWN: u8 = 32;
+bitflags! {
+	#[derive(Default)]
+	pub struct Directions: u8 {
+		const NORTH = 0b1;
+		const SOUTH = 0b10;
+		const EAST	= 0b100;
+		const WEST	= 0b1000;
+		const UP 	= 0b10000;
+		const DOWN 	= 0b100000;
+		const ALL_CARDINALS = Self::NORTH.bits | Self::SOUTH.bits | Self::EAST.bits | Self::WEST.bits;
+		const ALL_CARDINALS_MULTIZ = Self::NORTH.bits | Self::SOUTH.bits | Self::EAST.bits | Self::WEST.bits | Self::UP.bits | Self::DOWN.bits;
+	}
 
-#[allow(unused)]
-const fn adj_flag_to_idx(adj_flag: u8) -> usize {
-	match adj_flag {
-		NORTH => 0,
-		SOUTH => 1,
-		EAST => 2,
-		WEST => 3,
-		UP => 4,
-		DOWN => 5,
-		_ => 6,
+	#[derive(Default)]
+	pub struct SimulationFlags: u8 {
+		const SIMULATION_DIFFUSE = 0b1;
+		const SIMULATION_ALL = 0b10;
+		const SIMULATION_ANY = Self::SIMULATION_DIFFUSE.bits | Self::SIMULATION_ALL.bits;
+	}
+
+	#[derive(Default)]
+	pub struct AdjacentFlags: u8 {
+		const ATMOS_ADJACENT_ANY = 0b1;
+		const ATMOS_ADJACENT_FIRELOCK = 0b10;
+	}
+
+	#[derive(Default)]
+	pub struct DirtyFlags: u8 {
+		const DIRTY_MIX_REF = 0b1;
+		const DIRTY_ADJACENT = 0b10;
+		const DIRTY_ADJACENT_TO_SPACE = 0b100;
 	}
 }
 
-pub const NONE: u8 = 0;
-pub const SIMULATION_DIFFUSE: u8 = 1;
-pub const SIMULATION_ALL: u8 = 2;
-pub const SIMULATION_ANY: u8 = SIMULATION_DIFFUSE | SIMULATION_ALL;
+#[allow(unused)]
+const fn adj_flag_to_idx(adj_flag: Directions) -> usize {
+	match adj_flag {
+		Directions::NORTH => 0,
+		Directions::SOUTH => 1,
+		Directions::EAST => 2,
+		Directions::WEST => 3,
+		Directions::UP => 4,
+		Directions::DOWN => 5,
+		_ => 6,
+	}
+}
 
 type TurfID = u32;
 
@@ -69,7 +93,7 @@ type TurfID = u32;
 struct TurfMixture {
 	pub mix: usize,
 	pub id: TurfID,
-	pub flags: u8,
+	pub flags: SimulationFlags,
 	pub planetary_atmos: Option<u32>,
 	pub num_neighbors: u8,
 }
@@ -77,7 +101,7 @@ struct TurfMixture {
 #[allow(dead_code)]
 impl TurfMixture {
 	pub fn enabled(&self) -> bool {
-		self.flags & SIMULATION_ANY != 0
+		self.flags.intersects(SimulationFlags::SIMULATION_ANY)
 	}
 
 	pub fn is_immutable(&self) -> bool {
@@ -160,18 +184,15 @@ struct ThermalInfo {
 	pub temperature: f32,
 	pub thermal_conductivity: f32,
 	pub heat_capacity: f32,
-	pub adjacency: u8,
+	pub adjacency: Directions,
 	pub adjacent_to_space: bool,
 }
-
-const ATMOS_ADJACENT_ANY: u8 = 1;
-const ATMOS_ADJACENT_FIRELOCK: u8 = 2;
 
 type TurfGraphMap = HashMap<TurfID, NodeIndex<usize>, FxBuildHasher>;
 
 //adjacency/turf infos goes here
 struct TurfGases {
-	graph: DiGraph<TurfMixture, u8, usize>,
+	graph: DiGraph<TurfMixture, AdjacentFlags, usize>,
 	map: Mutex<Option<TurfGraphMap>>,
 }
 
@@ -208,11 +229,13 @@ impl TurfGases {
 				let adj_val = adjacent_list.get(i)?;
 				//let adjacent_num = adjacent_list.get(&adj_val)?.as_number()? as u8;
 				if let Some(&adj_index) = map.get(&unsafe { adj_val.raw.data.id }) {
-					let flags = adjacent_list
-						.get(adj_val)
-						.and_then(|g| g.as_number())
-						.unwrap_or(0.0) as u8;
-					if flags & ATMOS_ADJACENT_ANY != 0 {
+					let flags = AdjacentFlags::from_bits_truncate(
+						adjacent_list
+							.get(adj_val)
+							.and_then(|g| g.as_number())
+							.unwrap_or(0.0) as u8,
+					);
+					if flags.contains(AdjacentFlags::ATMOS_ADJACENT_ANY) {
 						self.graph.add_edge(this_index, adj_index, flags);
 					}
 				}
@@ -325,11 +348,7 @@ static mut TURF_TEMPERATURES: Option<DashMap<TurfID, ThermalInfo, FxBuildHasher>
 static mut PLANETARY_ATMOS: Option<DashMap<u32, Mixture, FxBuildHasher>> = None;
 
 // Turfs need updating before the thread starts
-static DIRTY_TURFS: RwLock<Option<HashMap<TurfID, u8, FxBuildHasher>>> = const_rwlock(None);
-
-static DIRTY_MIX_REF: u8 = 1;
-static DIRTY_ADJACENT: u8 = 2;
-static DIRTY_ADJACENT_TO_SPACE: u8 = 4;
+static DIRTY_TURFS: RwLock<Option<HashMap<TurfID, DirtyFlags, FxBuildHasher>>> = const_rwlock(None);
 
 static ANY_TURF_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -384,7 +403,7 @@ where
 
 fn with_dirty_turfs<T, F>(f: F) -> T
 where
-	F: FnOnce(&mut HashMap<u32, u8, FxBuildHasher>) -> T,
+	F: FnOnce(&mut HashMap<u32, DirtyFlags, FxBuildHasher>) -> T,
 {
 	set_turfs_dirty(true);
 	f(DIRTY_TURFS.write().as_mut().unwrap())
@@ -415,7 +434,7 @@ fn register_turf(id: u32) -> Result<Option<u32>, Runtime> {
 				)
 			})?
 			.to_bits() as usize;
-		to_insert.flags = flag as u8;
+		to_insert.flags = SimulationFlags::from_bits_truncate(flag as u8);
 		to_insert.id = id;
 
 		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
@@ -443,7 +462,10 @@ fn register_turf(id: u32) -> Result<Option<u32>, Runtime> {
 #[hook("/turf/proc/update_air_ref")]
 fn _hook_register_turf() {
 	with_dirty_turfs(|dirty_turfs| {
-		*dirty_turfs.entry(unsafe { src.raw.data.id }).or_default() |= DIRTY_MIX_REF;
+		dirty_turfs
+			.entry(unsafe { src.raw.data.id })
+			.or_default()
+			.insert(DirtyFlags::DIRTY_MIX_REF);
 	});
 	Ok(Value::null())
 }
@@ -489,7 +511,7 @@ fn _hook_turf_update_temp() {
 			temperature: 293.15,
 			thermal_conductivity: 0.0,
 			heat_capacity: 0.0,
-			adjacency: NORTH | SOUTH | WEST | EAST,
+			adjacency: Directions::ALL_CARDINALS,
 			adjacent_to_space: false,
 		};
 		to_insert.thermal_conductivity = src
@@ -512,7 +534,7 @@ fn _hook_turf_update_temp() {
 					std::column!()
 				)
 			})?;
-		to_insert.adjacency = NORTH | SOUTH | WEST | EAST;
+		to_insert.adjacency = Directions::ALL_CARDINALS;
 		to_insert.adjacent_to_space = args[0].as_number().map_err(|_| {
 			runtime!(
 				"Attempt to interpret non-number value as number {} {}:{}",
@@ -563,7 +585,8 @@ fn update_adjacency_info(
 	if let Ok(atmos_blocked_directions) =
 		src_turf.get_number(byond_string!("conductivity_blocked_directions"))
 	{
-		let adjacency = NORTH | SOUTH | WEST | EAST & !(atmos_blocked_directions as u8);
+		let adjacency = Directions::ALL_CARDINALS
+			& !(Directions::from_bits_truncate(atmos_blocked_directions as u8));
 		turf_temperatures()
 			.entry(id)
 			.and_modify(|entry| {
@@ -591,9 +614,9 @@ fn _hook_infos(arg0: Value) {
 	let adjacent_to_spess = arg0.as_number().unwrap_or(0.0) != 0.0;
 	with_dirty_turfs(|dirty_turfs| {
 		let e = dirty_turfs.entry(unsafe { src.raw.data.id }).or_default();
-		*e |= DIRTY_ADJACENT;
+		e.insert(DirtyFlags::DIRTY_ADJACENT);
 		if adjacent_to_spess {
-			*e |= DIRTY_ADJACENT_TO_SPACE;
+			e.insert(DirtyFlags::DIRTY_ADJACENT_TO_SPACE);
 		}
 	});
 	Ok(Value::null())
@@ -678,7 +701,7 @@ fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {
 
 #[derive(Clone, Copy)]
 struct AdjacentTileIDs {
-	adj: u8,
+	adj: Directions,
 	i: TurfID,
 	max_x: i32,
 	max_y: i32,
@@ -694,8 +717,8 @@ impl Iterator for AdjacentTileIDs {
 				return None;
 			}
 			self.count += 1;
-			let bit = 1 << (self.count - 1);
-			if self.adj & bit == bit {
+			let bit = Directions::from_bits_truncate(1 << (self.count - 1));
+			if self.adj.contains(bit) {
 				return Some((
 					self.count - 1,
 					adjacent_tile_id(self.count - 1, self.i, self.max_x, self.max_y),
@@ -705,7 +728,7 @@ impl Iterator for AdjacentTileIDs {
 	}
 
 	fn size_hint(&self) -> (usize, Option<usize>) {
-		(0, Some(self.adj.count_ones() as usize))
+		(0, Some(self.adj.bits().count_ones() as usize))
 	}
 }
 
@@ -713,7 +736,7 @@ use std::iter::FusedIterator;
 
 impl FusedIterator for AdjacentTileIDs {}
 
-fn adjacent_tile_ids(adj: u8, i: TurfID, max_x: i32, max_y: i32) -> AdjacentTileIDs {
+fn adjacent_tile_ids(adj: Directions, i: TurfID, max_x: i32, max_y: i32) -> AdjacentTileIDs {
 	AdjacentTileIDs {
 		adj,
 		i,

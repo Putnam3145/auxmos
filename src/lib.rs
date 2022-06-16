@@ -18,7 +18,7 @@ use gas::{
 
 use reaction::react_by_id;
 
-use gas::constants::{GAS_MIN_MOLES, MINIMUM_MOLES_DELTA_TO_MOVE, STOP_REACTIONS};
+use gas::constants::{ReactionReturn, GAS_MIN_MOLES, MINIMUM_MOLES_DELTA_TO_MOVE};
 
 /// Args: (ms). Runs callbacks until time limit is reached. If time limit is omitted, runs all callbacks.
 #[hook("/proc/process_atmos_callbacks")]
@@ -448,17 +448,19 @@ fn _compare_hook(other: Value) {
 /// Args: (holder). Runs all reactions on this gas mixture. Holder is used by the reactions, and can be any arbitrary datum or null.
 #[hook("/datum/gas_mixture/proc/react")]
 fn _react_hook(holder: Value) {
-	let mut ret: i32 = 0;
+	let mut ret = ReactionReturn::NO_REACTION;
 	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
 	for reaction in reactions {
-		ret |= react_by_id(&reaction, src, holder)?
-			.as_number()
-			.unwrap_or_default() as i32;
-		if ret & STOP_REACTIONS == STOP_REACTIONS {
-			return Ok(Value::from(ret as f32));
+		ret |= ReactionReturn::from_bits_truncate(
+			react_by_id(&reaction, src, holder)?
+				.as_number()
+				.unwrap_or_default() as u32,
+		);
+		if ret.contains(ReactionReturn::STOP_REACTIONS) {
+			return Ok(Value::from(ret.bits() as f32));
 		}
 	}
-	Ok(Value::from(ret as f32))
+	Ok(Value::from(ret.bits() as f32))
 }
 
 /// Args: (heat). Adds a given amount of heat to the mixture, i.e. in joules taking into account capacity.

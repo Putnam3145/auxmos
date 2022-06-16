@@ -40,8 +40,9 @@ use petgraph::{
 };
 
 bitflags! {
+
+	#[derive(Default)]
 	pub struct Directions: u8 {
-		const NONE = 0b0;
 		const NORTH = 0b1;
 		const SOUTH = 0b10;
 		const EAST	= 0b100;
@@ -52,48 +53,24 @@ bitflags! {
 		const ALL_CARDINALS_MULTIZ = Self::NORTH.bits | Self::SOUTH.bits | Self::EAST.bits | Self::WEST.bits | Self::UP.bits | Self::DOWN.bits;
 	}
 
+	#[derive(Default)]
 	pub struct SimulationFlags: u8 {
-		const NONE = 0b0;
 		const SIMULATION_DIFFUSE = 0b1;
 		const SIMULATION_ALL = 0b10;
 		const SIMULATION_ANY = Self::SIMULATION_DIFFUSE.bits | Self::SIMULATION_ALL.bits;
 	}
 
+	#[derive(Default)]
 	pub struct AdjacentFlags: u8 {
-		const NONE = 0b0;
 		const ATMOS_ADJACENT_ANY = 0b1;
 		const ATMOS_ADJACENT_FIRELOCK = 0b10;
 	}
 
+	#[derive(Default)]
 	pub struct DirtyFlags: u8 {
-		const NONE = 0b0;
 		const DIRTY_MIX_REF = 0b1;
 		const DIRTY_ADJACENT = 0b10;
 		const DIRTY_ADJACENT_TO_SPACE = 0b100;
-	}
-}
-
-impl Default for Directions {
-	fn default() -> Self {
-		Self::NONE
-	}
-}
-
-impl Default for SimulationFlags {
-	fn default() -> Self {
-		Self::NONE
-	}
-}
-
-impl Default for AdjacentFlags {
-	fn default() -> Self {
-		Self::NONE
-	}
-}
-
-impl Default for DirtyFlags {
-	fn default() -> Self {
-		Self::NONE
 	}
 }
 

@@ -27,6 +27,7 @@ use rayon::prelude::*;
 
 use std::collections::HashMap;
 use std::mem::drop;
+use std::sync::atomic::AtomicU64;
 
 use crate::callbacks::aux_callbacks_sender;
 
@@ -89,13 +90,13 @@ const fn adj_flag_to_idx(adj_flag: Directions) -> usize {
 type TurfID = u32;
 
 // TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
-#[derive(Clone, Copy, Default, Hash, Eq, PartialEq)]
+#[derive(Default)]
 struct TurfMixture {
 	pub mix: usize,
 	pub id: TurfID,
 	pub flags: SimulationFlags,
 	pub planetary_atmos: Option<u32>,
-	pub num_neighbors: u8,
+	pub vis_hash: AtomicU64,
 }
 
 #[allow(dead_code)]

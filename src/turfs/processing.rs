@@ -379,7 +379,7 @@ fn planet_process() {
 				.par_iter()
 				.filter_map(|node| {
 					Some((
-						node.weight,
+						&node.weight,
 						node.weight
 							.planetary_atmos
 							.and_then(|id| planetary_atmos().try_get(&id).try_unwrap())?,
@@ -656,10 +656,10 @@ fn excited_group_processing(
 				if maybe_initial_mix_ref.is_none() {
 					continue;
 				}
-				*maybe_initial_mix_ref.unwrap()
+				maybe_initial_mix_ref.unwrap()
 			};
 			let mut border_turfs: VecDeque<NodeIndex<usize>> = VecDeque::with_capacity(40);
-			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
+			let mut turfs: Vec<&TurfMixture> = Vec::with_capacity(200);
 			let mut min_pressure = initial_mix_ref.return_pressure();
 			let mut max_pressure = min_pressure;
 			let mut fully_mixed = Mixture::new();
@@ -671,7 +671,7 @@ fn excited_group_processing(
 						break;
 					}
 					if let Some(idx) = border_turfs.pop_front() {
-						let tmix = *arena.get(idx).unwrap();
+						let tmix = arena.get(idx).unwrap();
 						if let Some(lock) = all_mixtures.get(tmix.mix) {
 							let mix = lock.read();
 							let pressure = mix.return_pressure();
@@ -713,34 +713,20 @@ fn excited_group_processing(
 	found_turfs.len()
 }
 
-static mut VISUALS_CACHE: Option<DashMap<usize, u64, FxBuildHasher>> = None;
-
 // Checks if the gas can react or can update visuals, returns None if not.
 fn post_process_cell(
 	mixture: &TurfMixture,
 	vis: &[Option<f32>],
 	all_mixtures: &[RwLock<Mixture>],
 	reactions: &[crate::reaction::Reaction],
-	vis_cache: &DashMap<usize, u64, FxBuildHasher>,
-	updates: &flume::Sender<(usize, u64)>,
 ) -> Option<(TurfID, bool, bool)> {
 	all_mixtures
 		.get(mixture.mix)
 		.and_then(RwLock::try_read)
 		.and_then(|gas| {
-			let should_update_visuals = match gas.vis_hash_changed(
+			let should_update_visuals = gas.vis_hash_changed(
 				vis,
-				vis_cache
-					.get(&mixture.mix)
-					.map(|r| r.value().clone())
-					.unwrap_or(0),
-			) {
-				Some(hash) => {
-					let _ = updates.send((mixture.mix, hash));
-					true
-				}
-				None => false,
-			};
+				&mixture.vis_hash);
 			let reactable = gas.can_react_with_slice(reactions);
 			(should_update_visuals || reactable)
 				.then(|| (mixture.id, should_update_visuals, reactable))
@@ -751,10 +737,6 @@ fn post_process_cell(
 // update visuals, if it should react, sends a callback if it should.
 fn post_process(nodes: &[NodeIndex<usize>]) {
 	let vis = crate::gas::visibility_copies();
-	let (sender, receiver) = flume::unbounded();
-	let vis_cache = unsafe {
-		VISUALS_CACHE.get_or_insert_with(|| DashMap::with_hasher(FxBuildHasher::default()))
-	};
 	let processables = with_turf_gases_read(|arena| {
 		if nodes.len() > 10 {
 			let reactions = crate::gas::types::with_reactions(|reactions| reactions.to_vec());
@@ -768,8 +750,6 @@ fn post_process(nodes: &[NodeIndex<usize>]) {
 							&vis,
 							all_mixtures,
 							&reactions,
-							vis_cache,
-							&sender.clone(),
 						)
 					})
 					.collect::<Vec<_>>()
@@ -786,8 +766,6 @@ fn post_process(nodes: &[NodeIndex<usize>]) {
 								&vis,
 								all_mixtures,
 								&reactions,
-								vis_cache,
-								&sender.clone(),
 							)
 						})
 						.collect::<Vec<_>>()
@@ -815,9 +793,6 @@ fn post_process(nodes: &[NodeIndex<usize>]) {
 			Ok(Value::null())
 		})));
 	});
-	for (k, v) in receiver.drain() {
-		vis_cache.insert(k, v);
-	}
 }
 
 static HEAT_PROCESS_TIME: AtomicU64 = AtomicU64::new(1_000_000);
@@ -1027,6 +1002,5 @@ fn _process_heat_start() -> Result<(), String> {
 
 #[shutdown]
 fn reset_auxmos_processing() {
-	unsafe { VISUALS_CACHE = None };
 	HEAT_PROCESS_TIME.store(1_000_000, Ordering::Relaxed);
 }

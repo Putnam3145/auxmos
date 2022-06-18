@@ -4,7 +4,7 @@ use itertools::{
 	Itertools,
 };
 
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use atomic_float::AtomicF32;
 
@@ -565,10 +565,15 @@ impl Mixture {
 		}
 		hasher.finish()
 	}
-	/// Compares the current vis hash to the provided one; returns `Some(new_hash)` if they're different, otherwise None.
-	pub fn vis_hash_changed(&self, gas_visibility: &[Option<f32>], prev_hash: u64) -> Option<u64> {
+	/// Compares the current vis hash to the provided one; returns true if they are
+	pub fn vis_hash_changed(
+		&self,
+		gas_visibility: &[Option<f32>],
+		hash_holder: &AtomicU64,
+	) -> bool {
 		let cur_hash = self.vis_hash(gas_visibility);
-		(cur_hash != prev_hash).then(|| cur_hash)
+		let prev_hash = hash_holder.swap(cur_hash, Relaxed);
+		cur_hash != prev_hash
 	}
 	// Removes all redundant zeroes from the gas mixture.
 	pub fn garbage_collect(&mut self) {

@@ -174,13 +174,7 @@ fn finalize_eq_neighbors(
 	for adj_index in arena.adjacent_node_ids(index) {
 		let amount = *transfer_dirs.get(&Some(adj_index)).unwrap_or(&0.0);
 		if amount < 0.0 {
-			finalize_eq(
-				adj_index,
-				arena,
-				info,
-				eq_movement_graph,
-				pressures,
-			);
+			finalize_eq(adj_index, arena, info, eq_movement_graph, pressures);
 		}
 	}
 }
@@ -478,9 +472,7 @@ fn explosively_depressurize(
 				if let Some(adj_mixture) = arena.get(adj_index) {
 					let adj_orig = info.entry(adj_index).or_default();
 					let mut adj_info = adj_orig.get();
-					if !adj_mixture.is_immutable()
-						&& progression_order.insert(adj_index)
-					{
+					if !adj_mixture.is_immutable() && progression_order.insert(adj_index) {
 						adj_info.curr_transfer_dir = Some(cur_index);
 						adj_info.curr_transfer_amount = 0.0;
 						let cur_target_turf =
@@ -605,8 +597,7 @@ fn flood_fill_equalize_turfs(
 	f64,
 )> {
 	let mut turfs: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
-	let mut border_turfs: std::collections::VecDeque<NodeIndex<usize>> =
-		Default::default();
+	let mut border_turfs: std::collections::VecDeque<NodeIndex<usize>> = Default::default();
 	let mut planet_turfs: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 	let sender = byond_callback_sender();
 	let mut total_moles = 0.0_f64;
@@ -676,8 +667,7 @@ fn process_planet_turfs(
 	let planet_sum = maybe_planet_sum.unwrap().value().total_moles();
 	let target_delta = planet_sum - average_moles;
 
-	let mut progression_order: IndexSet<NodeIndex<usize>, FxBuildHasher> =
-		Default::default();
+	let mut progression_order: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 
 	for &cur_index in planet_turfs {
 		progression_order.insert(cur_index);
@@ -712,10 +702,7 @@ fn process_planet_turfs(
 						Ok(Value::null())
 					}));
 				}
-				if arena
-					.get(adj_index)
-					.map_or(false, |terf| terf.enabled())
-				{
+				if arena.get(adj_index).map_or(false, |terf| terf.enabled()) {
 					if !progression_order.insert(adj_index) {
 						continue;
 					}
@@ -889,13 +876,7 @@ pub(crate) fn equalize(
 		turfs.into_par_iter().for_each(|(turf, info, mut graph)| {
 			let mut pressures: Vec<(f32, u32, u32)> = Vec::new();
 			turf.iter().for_each(|&cur_index| {
-				finalize_eq(
-					cur_index,
-					&arena,
-					&info,
-					&mut graph,
-					&mut pressures,
-				);
+				finalize_eq(cur_index, &arena, &info, &mut graph, &mut pressures);
 			});
 
 			pressures.par_chunks(20).for_each(|chunk| {

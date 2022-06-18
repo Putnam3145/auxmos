@@ -724,9 +724,7 @@ fn post_process_cell(
 		.get(mixture.mix)
 		.and_then(RwLock::try_read)
 		.and_then(|gas| {
-			let should_update_visuals = gas.vis_hash_changed(
-				vis,
-				&mixture.vis_hash);
+			let should_update_visuals = gas.vis_hash_changed(vis, &mixture.vis_hash);
 			let reactable = gas.can_react_with_slice(reactions);
 			(should_update_visuals || reactable)
 				.then(|| (mixture.id, should_update_visuals, reactable))
@@ -745,12 +743,7 @@ fn post_process(nodes: &[NodeIndex<usize>]) {
 					.par_iter()
 					.filter_map(|&node| {
 						let mixture = arena.get(node)?;
-						post_process_cell(
-							&mixture,
-							&vis,
-							all_mixtures,
-							&reactions,
-						)
+						post_process_cell(&mixture, &vis, all_mixtures, &reactions)
 					})
 					.collect::<Vec<_>>()
 			})
@@ -761,12 +754,7 @@ fn post_process(nodes: &[NodeIndex<usize>]) {
 						.par_iter()
 						.filter_map(|&node| {
 							let mixture = arena.get(node)?;
-							post_process_cell(
-								&mixture,
-								&vis,
-								all_mixtures,
-								&reactions,
-							)
+							post_process_cell(&mixture, &vis, all_mixtures, &reactions)
 						})
 						.collect::<Vec<_>>()
 				})

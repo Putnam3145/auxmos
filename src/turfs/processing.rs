@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque, BTreeSet};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 
 use auxtools::*;
 
@@ -90,9 +90,9 @@ fn _finish_process_turfs() {
 			)
 		})?;
 	let processing_callbacks_unfinished = process_callbacks_for_millis(arg_limit as u64);
-    if TASKS_RUNNING.load(Ordering::Relaxed) == 0 {
-        rebuild_turf_graph()?;
-    }
+	if TASKS_RUNNING.load(Ordering::Relaxed) == 0 {
+		rebuild_turf_graph()?;
+	}
 	if processing_callbacks_unfinished {
 		Ok(Value::from(true))
 	} else {
@@ -321,7 +321,7 @@ fn _process_turf_start() -> Result<(), String> {
 					Ok(Value::null())
 				})));
 			}
-    		{
+			{
 				//let it gooooo
 				rayon::spawn(|| planet_process());
 			}
@@ -464,10 +464,7 @@ fn process_cell(
 fn fdm(
 	fdm_max_steps: i32,
 	equalize_enabled: bool,
-) -> (
-	BTreeSet<NodeIndex<usize>>,
-	BTreeSet<NodeIndex<usize>>,
-) {
+) -> (BTreeSet<NodeIndex<usize>>, BTreeSet<NodeIndex<usize>>) {
 	/*
 		This is the replacement system for LINDA. LINDA requires a lot of bookkeeping,
 		which, when coefficient-wise operations are this fast, is all just unnecessary overhead.
@@ -495,7 +492,7 @@ fn fdm(
 						some maximum due to the global turf mixture lock access,
 						but it's already blazingly fast on my i7, so it should be fine.
 					*/
-                    .par_values()
+					.par_values()
 					.map(|&idx| (idx, arena.get(idx).unwrap()))
 					.filter(|(index, mixture)| should_process(*index, mixture, all_mixtures, arena))
 					.filter_map(|(index, _)| process_cell(index, all_mixtures, arena))
@@ -696,7 +693,7 @@ fn post_process() {
 			GasArena::with_all_mixtures(|all_mixtures| {
 				arena
 					.map
-                    .par_values()
+					.par_values()
 					.filter_map(|&node_index| {
 						let mix = arena.get(node_index).unwrap();
 						mix.enabled().then(|| mix)

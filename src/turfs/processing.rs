@@ -224,7 +224,7 @@ fn _process_turf_start() -> Result<(), String> {
 				}));
 				(low_pressure_turfs, high_pressure_turfs)
 			};
-			if !check_turfs_dirty() {
+			{
 				let start_time = Instant::now();
 				let processed_turfs =
 					excited_group_processing(info.group_pressure_goal, &low_pressure_turfs);
@@ -253,7 +253,7 @@ fn _process_turf_start() -> Result<(), String> {
 					Ok(Value::null())
 				}));
 			}
-			if info.equalize_enabled && !check_turfs_dirty() {
+			if info.equalize_enabled {
 				let start_time = Instant::now();
 				let processed_turfs = {
 					#[cfg(feature = "fastmos")]
@@ -476,7 +476,7 @@ fn fdm(
 	let mut cur_count = 1;
 	with_turf_gases_read(|arena| {
 		loop {
-			if cur_count > fdm_max_steps {
+			if cur_count > fdm_max_steps || check_turfs_dirty() {
 				break;
 			}
 			GasArena::with_all_mixtures(|all_mixtures| {
@@ -620,7 +620,7 @@ fn excited_group_processing(
 			found_turfs.insert(initial_turf);
 			GasArena::with_all_mixtures(|all_mixtures| {
 				loop {
-					if turfs.len() >= 2500 {
+					if turfs.len() >= 2500 || check_turfs_dirty() {
 						break;
 					}
 					if let Some(idx) = border_turfs.pop_front() {

@@ -779,6 +779,10 @@ pub(crate) fn equalize(
 			})
 			.collect::<Vec<_>>();
 
+		if check_turfs_dirty() {
+			return
+		}
+
 		let did_firelocks = {
 			if contains_planet.load(Ordering::Acquire) {
 				PLANET_TURF_CYCLE.fetch_xor(true, Ordering::Relaxed)
@@ -856,6 +860,10 @@ pub(crate) fn equalize(
 				(turfs, graph)
 			})
 			.collect::<Vec<_>>();
+
+		if check_turfs_dirty() {
+			return
+		}
 
 		turfs.into_par_iter().for_each(|(turf, mut graph)| {
 			let mut pressures: Vec<(f32, u32, u32)> = Vec::new();

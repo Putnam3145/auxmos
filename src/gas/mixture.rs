@@ -50,6 +50,13 @@ impl GasCache {
 	}
 }
 
+pub fn visibility_step(gas_amt: f32) -> u32 {
+	(gas_amt / MOLES_GAS_VISIBLE_STEP)
+		.ceil()
+		.min(FACTOR_GAS_VISIBLE_MAX)
+		.max(1.0) as u32
+}
+
 /// The data structure representing a Space Station 13 gas mixture.
 /// Unlike Monstermos, this doesn't have the archive built-in; instead,
 /// the archive is a feature of the turf grid, only existing during
@@ -556,11 +563,13 @@ impl Mixture {
 	pub fn vis_hash(&self, gas_visibility: &[Option<f32>]) -> u64 {
 		use std::hash::Hasher;
 		let mut hasher: ahash::AHasher = ahash::AHasher::default();
-		for (i, gas) in self.enumerate() {
-			if let Some(amt) = unsafe { gas_visibility.get_unchecked(i) }.filter(|&amt| gas >= amt)
+		for (i, gas_amt) in self.enumerate() {
+			if unsafe { gas_visibility.get_unchecked(i) }
+				.filter(|&amt| gas_amt > amt)
+				.is_some()
 			{
 				hasher.write_usize(i);
-				hasher.write_usize((FACTOR_GAS_VISIBLE_MAX).min((gas / amt).ceil()) as usize);
+				hasher.write_usize(visibility_step(gas_amt) as usize)
 			}
 		}
 		hasher.finish()
@@ -572,8 +581,9 @@ impl Mixture {
 		hash_holder: &AtomicU64,
 	) -> bool {
 		let cur_hash = self.vis_hash(gas_visibility);
-		let prev_hash = hash_holder.swap(cur_hash, Relaxed);
-		cur_hash != prev_hash
+		hash_holder.fetch_update(Relaxed, Relaxed, |item| {
+            (item != cur_hash).then(|| cur_hash)
+        }).is_ok()
 	}
 	// Removes all redundant zeroes from the gas mixture.
 	pub fn garbage_collect(&mut self) {

@@ -33,12 +33,10 @@ use crate::callbacks::aux_callbacks_sender;
 
 use bitflags::bitflags;
 
-use parking_lot::{const_rwlock, Mutex, RwLock};
-use petgraph::{
-	graph::{DiGraph, NodeIndex},
-	visit::EdgeRef,
-	Direction,
-};
+use parking_lot::{const_rwlock, RwLock};
+use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef, Direction};
+
+use indexmap::IndexMap;
 
 bitflags! {
 	#[derive(Default)]
@@ -189,47 +187,49 @@ struct ThermalInfo {
 	pub adjacent_to_space: bool,
 }
 
-type TurfGraphMap = HashMap<TurfID, NodeIndex<usize>, FxBuildHasher>;
+type TurfGraphMap = IndexMap<TurfID, NodeIndex<usize>, FxBuildHasher>;
 
 //adjacency/turf infos goes here
 struct TurfGases {
-	graph: DiGraph<TurfMixture, AdjacentFlags, usize>,
-	map: Mutex<Option<TurfGraphMap>>,
+	graph: StableDiGraph<TurfMixture, AdjacentFlags, usize>,
+	map: TurfGraphMap,
 }
 
 #[allow(unused)]
 impl TurfGases {
 	pub fn insert_turf(&mut self, tmix: TurfMixture) {
-		self.graph.add_node(tmix);
+		self.map.insert(tmix.id, self.graph.add_node(tmix));
 	}
+	pub fn remove_turf(&mut self, id: TurfID) {
+		if let Some(index) = self.map.remove(&id) {
+			self.graph.remove_node(index);
+		}
+	}
+	/*
 	pub fn invalidate(&mut self) {
 		*self.map.lock() = None;
 	}
+	*/
+	/*
 	pub fn turf_id_map(&self) -> TurfGraphMap {
 		self.map
 			.lock()
 			.get_or_insert_with(|| {
-				self.graph
-					.raw_nodes()
-					.par_iter()
+				self.graph.
 					.enumerate()
 					.map(|(i, n)| (n.weight.id, NodeIndex::from(i)))
 					.collect()
 			})
 			.clone()
 	}
-	pub fn update_adjacencies(
-		&mut self,
-		idx: TurfID,
-		adjacent_list: List,
-		map: &TurfGraphMap,
-	) -> Result<(), Runtime> {
-		if let Some(&this_index) = map.get(&idx) {
+	*/
+	pub fn update_adjacencies(&mut self, idx: TurfID, adjacent_list: List) -> Result<(), Runtime> {
+		if let Some(&this_index) = self.map.get(&idx) {
 			self.remove_adjacencies(this_index);
 			for i in 1..=adjacent_list.len() {
 				let adj_val = adjacent_list.get(i)?;
 				//let adjacent_num = adjacent_list.get(&adj_val)?.as_number()? as u8;
-				if let Some(&adj_index) = map.get(&unsafe { adj_val.raw.data.id }) {
+				if let Some(&adj_index) = self.map.get(&unsafe { adj_val.raw.data.id }) {
 					let flags = AdjacentFlags::from_bits_truncate(
 						adjacent_list
 							.get(adj_val)
@@ -359,8 +359,8 @@ fn _initialize_turf_statics() -> Result<(), String> {
 		// 10x 255x255 zlevels
 		// double that for edges since each turf can have up to 6 edges but eehhhh
 		*TURF_GASES.write() = Some(TurfGases {
-			graph: DiGraph::with_capacity(650_250, 1_300_500),
-			map: Mutex::new(None),
+			graph: StableDiGraph::with_capacity(650_250, 1_300_500),
+			map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
 		});
 		TURF_TEMPERATURES = Some(Default::default());
 		PLANETARY_ATMOS = Some(Default::default());
@@ -380,11 +380,11 @@ fn _shutdown_turfs() {
 }
 
 fn set_turfs_dirty(b: bool) {
-	ANY_TURF_DIRTY.store(b, std::sync::atomic::Ordering::Release);
+	ANY_TURF_DIRTY.store(b, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn check_turfs_dirty() -> bool {
-	ANY_TURF_DIRTY.load(std::sync::atomic::Ordering::Acquire)
+	ANY_TURF_DIRTY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 // this would lead to undefined info if it were possible for something to put a None on it during operation, but nothing's going to do that
@@ -567,19 +567,13 @@ fn _hook_turf_update_temp() {
 	Ok(Value::null())
 }
 
-fn update_adjacency_info(
-	id: u32,
-	adjacent_to_spess: bool,
-	map: &TurfGraphMap,
-) -> Result<(), Runtime> {
+fn update_adjacency_info(id: u32, adjacent_to_spess: bool) -> Result<(), Runtime> {
 	let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
 	with_turf_gases_write(|arena| -> DMResult<()> {
 		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
-			arena.update_adjacencies(id, adjacent_list, map)?;
-		} else {
-			if let Some(&idx) = map.get(&id) {
-				arena.remove_adjacencies(idx);
-			}
+			arena.update_adjacencies(id, adjacent_list)?;
+		} else if let Some(&idx) = arena.map.get(&id) {
+			arena.remove_adjacencies(idx);
 		}
 		Ok(())
 	})?;
@@ -667,12 +661,9 @@ pub fn update_visuals(src: Value) -> DMResult {
 						if moles > amt {
 							let this_overlay_list =
 								gas_overlays.get(gas::gas_idx_to_id(idx)?)?.as_list()?;
-							if let Ok(this_gas_overlay) = this_overlay_list.get(
-								(moles / MOLES_GAS_VISIBLE_STEP)
-									.ceil()
-									.min(FACTOR_GAS_VISIBLE_MAX)
-									.max(1.0) as u32,
-							) {
+							if let Ok(this_gas_overlay) =
+								this_overlay_list.get(gas::mixture::visibility_step(moles))
+							{
 								overlay_types.append(this_gas_overlay);
 							}
 						}

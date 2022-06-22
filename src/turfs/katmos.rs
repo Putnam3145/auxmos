@@ -76,7 +76,6 @@ fn adjust_eq_movement(
 fn finalize_eq(
 	index: NodeIndex<usize>,
 	arena: &TurfGases,
-	info: &HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
 	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 	pressures: &mut Vec<(f32, u32, u32)>,
 ) {
@@ -99,14 +98,7 @@ fn finalize_eq(
 	if let Some(&planet_transfer_amount) = transfer_dirs.get(&None) {
 		if planet_transfer_amount > 0.0 {
 			if turf.total_moles() < planet_transfer_amount {
-				finalize_eq_neighbors(
-					index,
-					arena,
-					&transfer_dirs,
-					info,
-					eq_movement_graph,
-					pressures,
-				);
+				finalize_eq_neighbors(index, arena, &transfer_dirs, eq_movement_graph, pressures);
 			}
 			drop(GasArena::with_gas_mixture_mut(turf.mix, |gas| {
 				gas.add(-planet_transfer_amount);
@@ -133,14 +125,7 @@ fn finalize_eq(
 		let amount = *transfer_dirs.get(&Some(adj_index)).unwrap_or(&0.0);
 		if amount > 0.0 {
 			if turf.total_moles() < amount {
-				finalize_eq_neighbors(
-					index,
-					arena,
-					&transfer_dirs,
-					info,
-					eq_movement_graph,
-					pressures,
-				);
+				finalize_eq_neighbors(index, arena, &transfer_dirs, eq_movement_graph, pressures);
 			}
 			if let Some(adj_tmix) = arena.get(adj_index) {
 				if let Some(amt) = eq_movement_graph.edge_weight_mut(Some(adj_index), Some(index)) {
@@ -167,14 +152,13 @@ fn finalize_eq_neighbors(
 	index: NodeIndex<usize>,
 	arena: &TurfGases,
 	transfer_dirs: &HashMap<Option<NodeIndex<usize>>, f32, FxBuildHasher>,
-	info: &HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
 	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 	pressures: &mut Vec<(f32, u32, u32)>,
 ) {
 	for adj_index in arena.adjacent_node_ids(index) {
 		let amount = *transfer_dirs.get(&Some(adj_index)).unwrap_or(&0.0);
 		if amount < 0.0 {
-			finalize_eq(adj_index, arena, info, eq_movement_graph, pressures);
+			finalize_eq(adj_index, arena, eq_movement_graph, pressures);
 		}
 	}
 }
@@ -427,7 +411,7 @@ fn explosively_depressurize(
 				Ok(())
 			})?;
 			if had_firelock {
-				super::processing::rebuild_turf_graph_no_invalidate()?; // consider_firelocks ought to dirtify it anyway
+				super::processing::rebuild_turf_graph()?; // consider_firelocks ought to dirtify it anyway
 			}
 			if warned_about_planet_atmos {
 				break;
@@ -684,7 +668,7 @@ fn process_planet_turfs(
 		for (flags, adj_index) in arena
 			.graph
 			.edges(cur_index)
-			.filter_map(|edge| Some((edge.weight(), edge.target())))
+			.map(|edge| (edge.weight(), edge.target()))
 		{
 			if let Some(mut adj_info) = info.get_mut(&adj_index) {
 				let adj_mixture_id = arena.get(adj_index).unwrap().id;
@@ -753,7 +737,7 @@ static PLANET_TURF_CYCLE: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn equalize(
 	equalize_hard_turf_limit: usize,
-	high_pressure_turfs: &[NodeIndex<usize>],
+	high_pressure_turfs: &std::collections::BTreeSet<NodeIndex<usize>>,
 ) -> usize {
 	let turfs_processed: AtomicUsize = AtomicUsize::new(0);
 	let mut found_turfs: HashSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
@@ -789,7 +773,7 @@ pub(crate) fn equalize(
 					cur_index,
 					equalize_hard_turf_limit,
 					&mut found_turfs,
-					&arena,
+					arena,
 					&contains_planet,
 				)
 			})
@@ -831,7 +815,7 @@ pub(crate) fn equalize(
 				let log_n = ((turfs.len() as f32).log2().floor()) as usize;
 				if giver_turfs.len() > log_n && taker_turfs.len() > log_n {
 					for &cur_index in &turfs {
-						monstermos_fast_process(cur_index, &arena, &mut info, &mut graph);
+						monstermos_fast_process(cur_index, arena, &mut info, &mut graph);
 					}
 
 					giver_turfs.clear();
@@ -851,9 +835,9 @@ pub(crate) fn equalize(
 				// alright this is the part that can become O(n^2).
 				if giver_turfs.len() < taker_turfs.len() {
 					// as an optimization, we choose one of two methods based on which list is smaller.
-					give_to_takers(&giver_turfs, &arena, &mut info, &mut graph);
+					give_to_takers(&giver_turfs, arena, &mut info, &mut graph);
 				} else {
-					take_from_givers(&taker_turfs, &arena, &mut info, &mut graph);
+					take_from_givers(&taker_turfs, arena, &mut info, &mut graph);
 				}
 				if planet_turfs.is_empty() {
 					turfs_processed.fetch_add(turfs.len(), Ordering::Relaxed);
@@ -861,7 +845,7 @@ pub(crate) fn equalize(
 					turfs_processed.fetch_add(turfs.len() + planet_turfs.len(), Ordering::Relaxed);
 					process_planet_turfs(
 						&planet_turfs,
-						&arena,
+						arena,
 						average_moles,
 						did_firelocks,
 						equalize_hard_turf_limit,
@@ -869,20 +853,20 @@ pub(crate) fn equalize(
 						&mut graph,
 					);
 				}
-				(turfs, info, graph)
+				(turfs, graph)
 			})
 			.collect::<Vec<_>>();
 
-		turfs.into_par_iter().for_each(|(turf, info, mut graph)| {
+		turfs.into_par_iter().for_each(|(turf, mut graph)| {
 			let mut pressures: Vec<(f32, u32, u32)> = Vec::new();
 			turf.iter().for_each(|&cur_index| {
-				finalize_eq(cur_index, &arena, &info, &mut graph, &mut pressures);
+				finalize_eq(cur_index, arena, &mut graph, &mut pressures);
 			});
 
-			pressures.par_chunks(20).for_each(|chunk| {
+			pressures.par_chunks(10).for_each(|chunk| {
 				let sender = byond_callback_sender();
 				//fuck all this copying, but it's pretty much the only way
-				let actual_chunk = chunk.iter().copied().collect::<Vec<_>>();
+				let actual_chunk = chunk.to_vec();
 				drop(sender.try_send(Box::new(move || {
 					for &(amt, cur_turf, adj_turf) in actual_chunk.iter() {
 						let real_amount = Value::from(amt);

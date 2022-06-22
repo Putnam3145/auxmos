@@ -43,7 +43,7 @@ fn is_registered_mix(i: u32) -> bool {
 fn register_mix(v: &Value) {
 	unsafe {
 		REGISTERED_GAS_MIXES
-			.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default()))
+			.get_or_insert_with(|| Default::default())
 			.insert(v.raw.data.id);
 	}
 }
@@ -51,7 +51,7 @@ fn register_mix(v: &Value) {
 fn unregister_mix(i: u32) {
 	unsafe {
 		REGISTERED_GAS_MIXES
-			.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default()))
+			.get_or_insert_with(|| Default::default())
 			.remove(&i);
 	}
 }
@@ -69,7 +69,7 @@ fn _shut_down_gases() {
 	NEXT_GAS_IDS.write().as_mut().unwrap().clear();
 	unsafe {
 		REGISTERED_GAS_MIXES
-			.get_or_insert_with(|| HashSet::with_hasher(FxBuildHasher::default()))
+			.get_or_insert_with(|| Default::default())
 			.clear();
 	}
 }

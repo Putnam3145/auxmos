@@ -780,7 +780,7 @@ pub(crate) fn equalize(
 			.collect::<Vec<_>>();
 
 		if check_turfs_dirty() {
-			return
+			return;
 		}
 
 		let did_firelocks = {
@@ -862,7 +862,7 @@ pub(crate) fn equalize(
 			.collect::<Vec<_>>();
 
 		if check_turfs_dirty() {
-			return
+			return;
 		}
 
 		turfs.into_par_iter().for_each(|(turf, mut graph)| {

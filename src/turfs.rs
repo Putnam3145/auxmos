@@ -25,7 +25,6 @@ use rayon;
 
 use rayon::prelude::*;
 
-use std::collections::HashMap;
 use std::mem::drop;
 use std::sync::atomic::AtomicU64;
 
@@ -33,7 +32,7 @@ use crate::callbacks::aux_callbacks_sender;
 
 use bitflags::bitflags;
 
-use parking_lot::{const_rwlock, RwLock};
+use parking_lot::{const_mutex, const_rwlock, Mutex, RwLock};
 use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef, Direction};
 
 use indexmap::IndexMap;
@@ -349,7 +348,7 @@ static mut TURF_TEMPERATURES: Option<DashMap<TurfID, ThermalInfo, FxBuildHasher>
 static mut PLANETARY_ATMOS: Option<DashMap<u32, Mixture, FxBuildHasher>> = None;
 
 // Turfs need updating before the thread starts
-static DIRTY_TURFS: RwLock<Option<HashMap<TurfID, DirtyFlags, FxBuildHasher>>> = const_rwlock(None);
+static DIRTY_TURFS: Mutex<Option<IndexMap<TurfID, DirtyFlags, FxBuildHasher>>> = const_mutex(None);
 
 static ANY_TURF_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -364,14 +363,14 @@ fn _initialize_turf_statics() -> Result<(), String> {
 		});
 		TURF_TEMPERATURES = Some(Default::default());
 		PLANETARY_ATMOS = Some(Default::default());
-		*DIRTY_TURFS.write() = Some(Default::default());
+		*DIRTY_TURFS.lock() = Some(Default::default());
 	};
 	Ok(())
 }
 
 #[shutdown]
 fn _shutdown_turfs() {
-	*DIRTY_TURFS.write() = None;
+	*DIRTY_TURFS.lock() = None;
 	*TURF_GASES.write() = None;
 	unsafe {
 		TURF_TEMPERATURES = None;
@@ -387,7 +386,6 @@ fn check_turfs_dirty() -> bool {
 	ANY_TURF_DIRTY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-// this would lead to undefined info if it were possible for something to put a None on it during operation, but nothing's going to do that
 fn with_turf_gases_read<T, F>(f: F) -> T
 where
 	F: FnOnce(&TurfGases) -> T,
@@ -404,10 +402,10 @@ where
 
 fn with_dirty_turfs<T, F>(f: F) -> T
 where
-	F: FnOnce(&mut HashMap<u32, DirtyFlags, FxBuildHasher>) -> T,
+	F: FnOnce(&mut IndexMap<u32, DirtyFlags, FxBuildHasher>) -> T,
 {
 	set_turfs_dirty(true);
-	f(DIRTY_TURFS.write().as_mut().unwrap())
+	f(DIRTY_TURFS.lock().as_mut().unwrap())
 }
 
 fn planetary_atmos() -> &'static DashMap<u32, Mixture, FxBuildHasher> {

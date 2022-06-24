@@ -42,8 +42,6 @@ struct SSairInfo {
 	equalize_hard_turf_limit: usize,
 	equalize_enabled: bool,
 	group_pressure_goal: f32,
-	max_x: i32,
-	max_y: i32,
 	planet_enabled: bool,
 }
 
@@ -109,7 +107,7 @@ pub(crate) fn rebuild_turf_graph() -> Result<(), Runtime> {
 			register_turf(t)?;
 		}
 		for (t, flags) in dirty_turfs
-			.drain()
+			.drain(..)
 			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
 		{
 			update_adjacency_info(t, flags.contains(DirtyFlags::DIRTY_ADJACENT_TO_SPACE))?
@@ -145,26 +143,6 @@ fn _process_turf_notify() {
 	let group_pressure_goal = src
 		.get_number(byond_string!("excited_group_pressure_goal"))
 		.unwrap_or(0.5);
-	let max_x = auxtools::Value::world()
-		.get_number(byond_string!("maxx"))
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})? as i32;
-	let max_y = auxtools::Value::world()
-		.get_number(byond_string!("maxy"))
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})? as i32;
 	let planet_enabled: bool = src
 		.get_number(byond_string!("planet_equalize_enabled"))
 		.unwrap_or(1.0)
@@ -175,8 +153,6 @@ fn _process_turf_notify() {
 		equalize_hard_turf_limit,
 		equalize_enabled,
 		group_pressure_goal,
-		max_x,
-		max_y,
 		planet_enabled,
 	})));
 	Ok(Value::null())

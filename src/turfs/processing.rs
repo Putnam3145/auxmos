@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 
 use auxtools::*;
 
@@ -42,8 +42,6 @@ struct SSairInfo {
 	equalize_hard_turf_limit: usize,
 	equalize_enabled: bool,
 	group_pressure_goal: f32,
-	max_x: i32,
-	max_y: i32,
 	planet_enabled: bool,
 }
 
@@ -90,6 +88,9 @@ fn _finish_process_turfs() {
 			)
 		})?;
 	let processing_callbacks_unfinished = process_callbacks_for_millis(arg_limit as u64);
+	if TASKS_RUNNING.load(Ordering::Relaxed) == 0 {
+		rebuild_turf_graph()?;
+	}
 	if processing_callbacks_unfinished {
 		Ok(Value::from(true))
 	} else {
@@ -97,40 +98,7 @@ fn _finish_process_turfs() {
 	}
 }
 
-fn rebuild_turf_graph() -> Result<(), Runtime> {
-	let mut deletions: HashSet<u32, FxBuildHasher> =
-		HashSet::with_capacity_and_hasher(500, FxBuildHasher::default());
-	with_dirty_turfs(|dirty_turfs| {
-		for (&t, _) in dirty_turfs
-			.iter()
-			.filter(|&(_, &flags)| flags.contains(DirtyFlags::DIRTY_MIX_REF))
-		{
-			if let Some(id) = register_turf(t)? {
-				deletions.insert(id);
-			}
-		}
-		let map = with_turf_gases_read(|arena| arena.turf_id_map());
-		for (t, flags) in dirty_turfs
-			.drain()
-			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
-		{
-			update_adjacency_info(t, flags.contains(DirtyFlags::DIRTY_ADJACENT_TO_SPACE), &map)?
-		}
-		Ok(())
-	})?;
-	with_turf_gases_write(|arena| {
-		arena.graph.retain_nodes(|graph, node_idx| {
-			graph
-				.node_weight(node_idx)
-				.map(|mix| !deletions.contains(&mix.id))
-				.unwrap_or(true)
-		});
-		arena.invalidate();
-	});
-	Ok(())
-}
-
-pub(crate) fn rebuild_turf_graph_no_invalidate() -> Result<(), Runtime> {
+pub(crate) fn rebuild_turf_graph() -> Result<(), Runtime> {
 	with_dirty_turfs(|dirty_turfs| {
 		for (&t, _) in dirty_turfs
 			.iter()
@@ -138,12 +106,11 @@ pub(crate) fn rebuild_turf_graph_no_invalidate() -> Result<(), Runtime> {
 		{
 			register_turf(t)?;
 		}
-		let map = with_turf_gases_read(|arena| arena.turf_id_map());
 		for (t, flags) in dirty_turfs
-			.drain()
+			.drain(..)
 			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
 		{
-			update_adjacency_info(t, flags.contains(DirtyFlags::DIRTY_ADJACENT_TO_SPACE), &map)?;
+			update_adjacency_info(t, flags.contains(DirtyFlags::DIRTY_ADJACENT_TO_SPACE))?
 		}
 		Ok(())
 	})?;
@@ -176,39 +143,16 @@ fn _process_turf_notify() {
 	let group_pressure_goal = src
 		.get_number(byond_string!("excited_group_pressure_goal"))
 		.unwrap_or(0.5);
-	let max_x = auxtools::Value::world()
-		.get_number(byond_string!("maxx"))
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})? as i32;
-	let max_y = auxtools::Value::world()
-		.get_number(byond_string!("maxy"))
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})? as i32;
 	let planet_enabled: bool = src
 		.get_number(byond_string!("planet_equalize_enabled"))
 		.unwrap_or(1.0)
 		!= 0.0;
-	rebuild_turf_graph()?;
 	drop(sender.try_send(Box::new(SSairInfo {
 		fdm_max_steps,
 		equalize_turf_limit,
 		equalize_hard_turf_limit,
 		equalize_enabled,
 		group_pressure_goal,
-		max_x,
-		max_y,
 		planet_enabled,
 	})));
 	Ok(Value::null())
@@ -225,145 +169,138 @@ fn _process_turf_start() -> Result<(), String> {
 			set_turfs_dirty(false);
 			TASKS_RUNNING.fetch_add(1, Ordering::Acquire);
 			let sender = byond_callback_sender();
-			let start_time = Instant::now();
-			let (_, connected_parts) = rayon::join(planet_process, || {
+			let mut stats: Vec<Box<dyn Fn() -> DMResult + Send + Sync>> = Default::default();
+			let (low_pressure_turfs, high_pressure_turfs) = {
 				let start_time = Instant::now();
-				let parts = with_turf_gases_read(|arena| petgraph::algo::tarjan_scc(&arena.graph));
+				let (low_pressure_turfs, high_pressure_turfs) =
+					fdm(info.fdm_max_steps, info.equalize_enabled);
 				let bench = start_time.elapsed().as_millis();
-				parts
-			});
-			connected_parts
-				.par_iter()
-				.filter(|v| v.len() > 1)
-				.for_each(|nodes_vec| {
-					let nodes = nodes_vec.as_slice();
-					let (low_pressure_turfs, high_pressure_turfs) = {
-						let start_time = Instant::now();
-						let (low_pressure_turfs, high_pressure_turfs) =
-							fdm(nodes, info.fdm_max_steps, info.equalize_enabled);
-						let bench = start_time.elapsed().as_millis();
-						let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
-						(low_pressure_turfs, high_pressure_turfs)
-					};
-					if !check_turfs_dirty() {
-						let start_time = Instant::now();
-						let processed_turfs =
-							excited_group_processing(info.group_pressure_goal, &low_pressure_turfs);
-						let bench = start_time.elapsed().as_millis();
-						/*stats.push(Box::new(move || -> DMResult {
-							let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-							let prev_cost =
-								ssair
-									.get_number(byond_string!("cost_groups"))
-									.map_err(|_| {
-										runtime!(
-											"Attempt to interpret non-number value as number {} {}:{}",
-											std::file!(),
-											std::line!(),
-											std::column!()
-										)
-									})?;
-							ssair.set(
-								byond_string!("cost_groups"),
-								Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
-							)?;
-							ssair.set(
-								byond_string!("num_group_turfs_processed"),
-								Value::from(processed_turfs as f32),
-							)?;
-							Ok(Value::null())
-						}));*/
-					}
-					if info.equalize_enabled && !check_turfs_dirty() {
-						let start_time = Instant::now();
-						let processed_turfs = {
-							#[cfg(feature = "fastmos")]
-							{
-								super::katmos::equalize(
-									info.equalize_hard_turf_limit,
-									&high_pressure_turfs,
+				let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
+				stats.push(Box::new(move || -> DMResult {
+					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
+					let prev_cost =
+						ssair.get_number(byond_string!("cost_turfs")).map_err(|_| {
+							runtime!(
+								"Attempt to interpret non-number value as number {} {}:{}",
+								std::file!(),
+								std::line!(),
+								std::column!()
+							)
+						})?;
+					ssair.set(
+						byond_string!("cost_turfs"),
+						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+					)?;
+					ssair.set(byond_string!("low_pressure_turfs"), Value::from(lpt as f32))?;
+					ssair.set(
+						byond_string!("high_pressure_turfs"),
+						Value::from(hpt as f32),
+					)?;
+					Ok(Value::null())
+				}));
+				(low_pressure_turfs, high_pressure_turfs)
+			};
+			{
+				let start_time = Instant::now();
+				let processed_turfs =
+					excited_group_processing(info.group_pressure_goal, &low_pressure_turfs);
+				let bench = start_time.elapsed().as_millis();
+				stats.push(Box::new(move || -> DMResult {
+					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
+					let prev_cost =
+						ssair
+							.get_number(byond_string!("cost_groups"))
+							.map_err(|_| {
+								runtime!(
+									"Attempt to interpret non-number value as number {} {}:{}",
+									std::file!(),
+									std::line!(),
+									std::column!()
 								)
-							}
-							#[cfg(not(feature = "fastmos"))]
-							{
-								0
-							}
-						};
-						let bench = start_time.elapsed().as_millis();
-						/*stats.push(Box::new(move || {
-							let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-							let prev_cost =
-								ssair
-									.get_number(byond_string!("cost_equalize"))
-									.map_err(|_| {
-										runtime!(
-											"Attempt to interpret non-number value as number {} {}:{}",
-											std::file!(),
-											std::line!(),
-											std::column!()
-										)
-									})?;
-							ssair.set(
-								byond_string!("cost_equalize"),
-								Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
-							)?;
-							ssair.set(
-								byond_string!("num_equalize_processed"),
-								Value::from(processed_turfs as f32),
-							)?;
-							Ok(Value::null())
-						}));*/
-					}
+							})?;
+					ssair.set(
+						byond_string!("cost_groups"),
+						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+					)?;
+					ssair.set(
+						byond_string!("num_group_turfs_processed"),
+						Value::from(processed_turfs as f32),
+					)?;
+					Ok(Value::null())
+				}));
+			}
+			if info.equalize_enabled {
+				let start_time = Instant::now();
+				let processed_turfs = {
+					#[cfg(feature = "fastmos")]
 					{
-						let start_time = Instant::now();
-						post_process(nodes);
-						let bench = start_time.elapsed().as_millis();
-						/*stats.push(Box::new(move || {
-							let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-							let prev_cost = ssair
-								.get_number(byond_string!("cost_post_process"))
-								.map_err(|_| {
-									runtime!(
-										"Attempt to interpret non-number value as number {} {}:{}",
-										std::file!(),
-										std::line!(),
-										std::column!()
-									)
-								})?;
-							ssair.set(
-								byond_string!("cost_post_process"),
-								Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
-							)?;
-							Ok(Value::null())
-						}));*/
+						super::katmos::equalize(info.equalize_hard_turf_limit, &high_pressure_turfs)
 					}
-				});
-			/*			{
-							drop(sender.try_send(Box::new(move || {
-								for callback in stats.iter() {
-									callback()?;
-								}
-								Ok(Value::null())
-							})));
-						}
-			*/
-			let bench = start_time.elapsed().as_millis();
-			sender.try_send(Box::new(move || -> DMResult {
-				let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-				let prev_cost = ssair.get_number(byond_string!("cost_turfs")).map_err(|_| {
-					runtime!(
-						"Attempt to interpret non-number value as number {} {}:{}",
-						std::file!(),
-						std::line!(),
-						std::column!()
-					)
-				})?;
-				ssair.set(
-					byond_string!("cost_turfs"),
-					Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
-				)?;
-				Ok(Value::null())
-			}));
+					#[cfg(not(feature = "fastmos"))]
+					{
+						0
+					}
+				};
+				let bench = start_time.elapsed().as_millis();
+				stats.push(Box::new(move || {
+					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
+					let prev_cost =
+						ssair
+							.get_number(byond_string!("cost_equalize"))
+							.map_err(|_| {
+								runtime!(
+									"Attempt to interpret non-number value as number {} {}:{}",
+									std::file!(),
+									std::line!(),
+									std::column!()
+								)
+							})?;
+					ssair.set(
+						byond_string!("cost_equalize"),
+						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+					)?;
+					ssair.set(
+						byond_string!("num_equalize_processed"),
+						Value::from(processed_turfs as f32),
+					)?;
+					Ok(Value::null())
+				}));
+			}
+			{
+				let start_time = Instant::now();
+				post_process();
+				let bench = start_time.elapsed().as_millis();
+				stats.push(Box::new(move || {
+					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
+					let prev_cost = ssair
+						.get_number(byond_string!("cost_post_process"))
+						.map_err(|_| {
+							runtime!(
+								"Attempt to interpret non-number value as number {} {}:{}",
+								std::file!(),
+								std::line!(),
+								std::column!()
+							)
+						})?;
+					ssair.set(
+						byond_string!("cost_post_process"),
+						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+					)?;
+					Ok(Value::null())
+				}));
+			}
+			{
+				drop(sender.try_send(Box::new(move || {
+					for callback in stats.iter() {
+						callback()?;
+					}
+					Ok(Value::null())
+				})));
+			}
+			{
+				//let it gooooo
+				rayon::spawn(|| planet_process());
+			}
 			TASKS_RUNNING.fetch_sub(1, Ordering::Release);
 		});
 	});
@@ -374,14 +311,13 @@ fn planet_process() {
 	with_turf_gases_read(|arena| {
 		GasArena::with_all_mixtures(|all_mixtures| {
 			arena
-				.graph
-				.raw_nodes()
-				.par_iter()
-				.filter_map(|node| {
+				.map
+				.par_values()
+				.filter_map(|&node_idx| {
+					let mix = arena.get(node_idx)?;
 					Some((
-						node.weight,
-						node.weight
-							.planetary_atmos
+						mix,
+						mix.planetary_atmos
 							.and_then(|id| planetary_atmos().try_get(&id).try_unwrap())?,
 					))
 				})
@@ -422,6 +358,7 @@ fn should_process(
 	arena: &TurfGases,
 ) -> bool {
 	mixture.enabled()
+		&& arena.adjacent_node_ids(index).next().is_some()
 		&& all_mixtures
 			.get(mixture.mix)
 			.and_then(RwLock::try_read)
@@ -501,18 +438,17 @@ fn process_cell(
 
 // Solving the heat equation using a Finite Difference Method, an iterative stencil loop.
 fn fdm(
-	nodes: &[NodeIndex<usize>],
 	fdm_max_steps: i32,
 	equalize_enabled: bool,
-) -> (Vec<NodeIndex<usize>>, Vec<NodeIndex<usize>>) {
+) -> (BTreeSet<NodeIndex<usize>>, BTreeSet<NodeIndex<usize>>) {
 	/*
 		This is the replacement system for LINDA. LINDA requires a lot of bookkeeping,
 		which, when coefficient-wise operations are this fast, is all just unnecessary overhead.
 		This is a much simpler FDM system, basically like LINDA but without its most important feature,
 		sleeping turfs, which is why I've renamed it to fdm.
 	*/
-	let mut low_pressure_turfs: Vec<NodeIndex<usize>> = Vec::new();
-	let mut high_pressure_turfs: Vec<NodeIndex<usize>> = Vec::new();
+	let mut low_pressure_turfs: BTreeSet<NodeIndex<usize>> = Default::default();
+	let mut high_pressure_turfs: BTreeSet<NodeIndex<usize>> = Default::default();
 	let mut cur_count = 1;
 	with_turf_gases_read(|arena| {
 		loop {
@@ -520,7 +456,8 @@ fn fdm(
 				break;
 			}
 			GasArena::with_all_mixtures(|all_mixtures| {
-				let turfs_to_save = nodes
+				let turfs_to_save = arena
+					.map
 					/*
 						This directly yanks the internal node vec
 						of the graph as a slice to parallelize the process.
@@ -531,12 +468,10 @@ fn fdm(
 						some maximum due to the global turf mixture lock access,
 						but it's already blazingly fast on my i7, so it should be fine.
 					*/
-					.par_iter()
-					.filter_map(|&index| Some((index, arena.graph.node_weight(index)?)))
-					.filter(|(index, mixture)| {
-						should_process(*index, mixture, all_mixtures, &arena)
-					})
-					.filter_map(|(index, _)| process_cell(index, all_mixtures, &arena))
+					.par_values()
+					.map(|&idx| (idx, arena.get(idx).unwrap()))
+					.filter(|(index, mixture)| should_process(*index, mixture, all_mixtures, arena))
+					.filter_map(|(index, _)| process_cell(index, all_mixtures, arena))
 					.collect::<Vec<_>>();
 				/*
 					For the optimization-heads reading this: this is not an unnecessary collect().
@@ -643,23 +578,17 @@ fn fdm(
 // Finds small differences in turf pressures and equalizes them.
 fn excited_group_processing(
 	pressure_goal: f32,
-	low_pressure_turfs: &Vec<NodeIndex<usize>>,
+	low_pressure_turfs: &BTreeSet<NodeIndex<usize>>,
 ) -> usize {
 	let mut found_turfs: HashSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 	with_turf_gases_read(|arena| {
-		for &initial_turf in low_pressure_turfs {
+		for &initial_turf in low_pressure_turfs.iter() {
 			if found_turfs.contains(&initial_turf) {
 				continue;
 			}
-			let initial_mix_ref = {
-				let maybe_initial_mix_ref = arena.get(initial_turf);
-				if maybe_initial_mix_ref.is_none() {
-					continue;
-				}
-				*maybe_initial_mix_ref.unwrap()
-			};
+			let initial_mix_ref = arena.get(initial_turf).unwrap();
 			let mut border_turfs: VecDeque<NodeIndex<usize>> = VecDeque::with_capacity(40);
-			let mut turfs: Vec<TurfMixture> = Vec::with_capacity(200);
+			let mut turfs: Vec<&TurfMixture> = Vec::with_capacity(200);
 			let mut min_pressure = initial_mix_ref.return_pressure();
 			let mut max_pressure = min_pressure;
 			let mut fully_mixed = Mixture::new();
@@ -667,11 +596,11 @@ fn excited_group_processing(
 			found_turfs.insert(initial_turf);
 			GasArena::with_all_mixtures(|all_mixtures| {
 				loop {
-					if turfs.len() >= 2500 {
+					if turfs.len() >= 2500 || check_turfs_dirty() {
 						break;
 					}
 					if let Some(idx) = border_turfs.pop_front() {
-						let tmix = *arena.get(idx).unwrap();
+						let tmix = arena.get(idx).unwrap();
 						if let Some(lock) = all_mixtures.get(tmix.mix) {
 							let mix = lock.read();
 							let pressure = mix.return_pressure();
@@ -713,34 +642,18 @@ fn excited_group_processing(
 	found_turfs.len()
 }
 
-static mut VISUALS_CACHE: Option<DashMap<usize, u64, FxBuildHasher>> = None;
-
 // Checks if the gas can react or can update visuals, returns None if not.
 fn post_process_cell(
 	mixture: &TurfMixture,
 	vis: &[Option<f32>],
 	all_mixtures: &[RwLock<Mixture>],
 	reactions: &[crate::reaction::Reaction],
-	vis_cache: &DashMap<usize, u64, FxBuildHasher>,
-	updates: &flume::Sender<(usize, u64)>,
 ) -> Option<(TurfID, bool, bool)> {
 	all_mixtures
 		.get(mixture.mix)
 		.and_then(RwLock::try_read)
 		.and_then(|gas| {
-			let should_update_visuals = match gas.vis_hash_changed(
-				vis,
-				vis_cache
-					.get(&mixture.mix)
-					.map(|r| r.value().clone())
-					.unwrap_or(0),
-			) {
-				Some(hash) => {
-					let _ = updates.send((mixture.mix, hash));
-					true
-				}
-				None => false,
-			};
+			let should_update_visuals = gas.vis_hash_changed(vis, &mixture.vis_hash);
 			let reactable = gas.can_react_with_slice(reactions);
 			(should_update_visuals || reactable)
 				.then(|| (mixture.id, should_update_visuals, reactable))
@@ -749,51 +662,22 @@ fn post_process_cell(
 
 // Goes through every turf, checks if it should reset to planet atmos, if it should
 // update visuals, if it should react, sends a callback if it should.
-fn post_process(nodes: &[NodeIndex<usize>]) {
+fn post_process() {
 	let vis = crate::gas::visibility_copies();
-	let (sender, receiver) = flume::unbounded();
-	let vis_cache = unsafe {
-		VISUALS_CACHE.get_or_insert_with(|| DashMap::with_hasher(FxBuildHasher::default()))
-	};
 	let processables = with_turf_gases_read(|arena| {
-		if nodes.len() > 10 {
-			let reactions = crate::gas::types::with_reactions(|reactions| reactions.to_vec());
+		crate::gas::types::with_reactions(|reactions| {
 			GasArena::with_all_mixtures(|all_mixtures| {
-				nodes
-					.par_iter()
-					.filter_map(|&node| {
-						let mixture = arena.get(node)?;
-						post_process_cell(
-							&mixture,
-							&vis,
-							all_mixtures,
-							&reactions,
-							vis_cache,
-							&sender.clone(),
-						)
+				arena
+					.map
+					.par_values()
+					.filter_map(|&node_index| {
+						let mix = arena.get(node_index).unwrap();
+						mix.enabled().then(|| mix)
 					})
+					.filter_map(|mixture| post_process_cell(mixture, &vis, all_mixtures, reactions))
 					.collect::<Vec<_>>()
 			})
-		} else {
-			crate::gas::types::with_reactions(|reactions| {
-				GasArena::with_all_mixtures(|all_mixtures| {
-					nodes
-						.par_iter()
-						.filter_map(|&node| {
-							let mixture = arena.get(node)?;
-							post_process_cell(
-								&mixture,
-								&vis,
-								all_mixtures,
-								&reactions,
-								vis_cache,
-								&sender.clone(),
-							)
-						})
-						.collect::<Vec<_>>()
-				})
-			})
-		}
+		})
 	});
 	processables.into_par_iter().chunks(30).for_each(|chunk| {
 		let sender = byond_callback_sender();
@@ -815,9 +699,6 @@ fn post_process(nodes: &[NodeIndex<usize>]) {
 			Ok(Value::null())
 		})));
 	});
-	for (k, v) in receiver.drain() {
-		vis_cache.insert(k, v);
-	}
 }
 
 static HEAT_PROCESS_TIME: AtomicU64 = AtomicU64::new(1_000_000);
@@ -901,7 +782,6 @@ fn _process_heat_start() -> Result<(), String> {
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * info.time_delta;
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * info.time_delta;
 			with_turf_gases_read(|arena| {
-				let map = arena.turf_id_map();
 				let temps_to_update = turf_temperatures()
 					.par_iter()
 					.map(|entry| {
@@ -917,7 +797,8 @@ fn _process_heat_start() -> Result<(), String> {
 						(t.thermal_conductivity > 0.0 && t.heat_capacity > 0.0 && !adj.is_empty())
 							.then(|| {
 								let mut heat_delta = 0.0;
-								let is_temp_delta_with_air = map
+								let is_temp_delta_with_air = arena
+									.map
 									.get(&i)
 									.and_then(|&node_id| arena.get(node_id))
 									.filter(|m| m.enabled())
@@ -976,7 +857,8 @@ fn _process_heat_start() -> Result<(), String> {
 							return;
 						}
 						let t: &mut ThermalInfo = &mut maybe_t.unwrap();
-						t.temperature = map
+						t.temperature = arena
+							.map
 							.get(&i)
 							.and_then(|&node_id| arena.get(node_id))
 							.filter(|m| m.enabled())
@@ -1027,6 +909,5 @@ fn _process_heat_start() -> Result<(), String> {
 
 #[shutdown]
 fn reset_auxmos_processing() {
-	unsafe { VISUALS_CACHE = None };
 	HEAT_PROCESS_TIME.store(1_000_000, Ordering::Relaxed);
 }

@@ -4,7 +4,7 @@ use itertools::{
 	Itertools,
 };
 
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use atomic_float::AtomicF32;
 
@@ -48,6 +48,13 @@ impl GasCache {
 	pub fn set(&self, v: f32) {
 		self.0.store(v, Relaxed);
 	}
+}
+
+pub fn visibility_step(gas_amt: f32) -> u32 {
+	(gas_amt / MOLES_GAS_VISIBLE_STEP)
+		.ceil()
+		.min(FACTOR_GAS_VISIBLE_MAX)
+		.max(1.0) as u32
 }
 
 /// The data structure representing a Space Station 13 gas mixture.
@@ -556,19 +563,29 @@ impl Mixture {
 	pub fn vis_hash(&self, gas_visibility: &[Option<f32>]) -> u64 {
 		use std::hash::Hasher;
 		let mut hasher: ahash::AHasher = ahash::AHasher::default();
-		for (i, gas) in self.enumerate() {
-			if let Some(amt) = unsafe { gas_visibility.get_unchecked(i) }.filter(|&amt| gas >= amt)
+		for (i, gas_amt) in self.enumerate() {
+			if unsafe { gas_visibility.get_unchecked(i) }
+				.filter(|&amt| gas_amt > amt)
+				.is_some()
 			{
 				hasher.write_usize(i);
-				hasher.write_usize((FACTOR_GAS_VISIBLE_MAX).min((gas / amt).ceil()) as usize);
+				hasher.write_usize(visibility_step(gas_amt) as usize)
 			}
 		}
 		hasher.finish()
 	}
-	/// Compares the current vis hash to the provided one; returns `Some(new_hash)` if they're different, otherwise None.
-	pub fn vis_hash_changed(&self, gas_visibility: &[Option<f32>], prev_hash: u64) -> Option<u64> {
+	/// Compares the current vis hash to the provided one; returns true if they are
+	pub fn vis_hash_changed(
+		&self,
+		gas_visibility: &[Option<f32>],
+		hash_holder: &AtomicU64,
+	) -> bool {
 		let cur_hash = self.vis_hash(gas_visibility);
-		(cur_hash != prev_hash).then(|| cur_hash)
+		hash_holder
+			.fetch_update(Relaxed, Relaxed, |item| {
+				(item != cur_hash).then(|| cur_hash)
+			})
+			.is_ok()
 	}
 	// Removes all redundant zeroes from the gas mixture.
 	pub fn garbage_collect(&mut self) {

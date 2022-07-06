@@ -578,13 +578,13 @@ fn flood_fill_equalize_turfs(
 ) -> Option<(
 	IndexSet<NodeIndex<usize>, FxBuildHasher>,
 	IndexSet<NodeIndex<usize>, FxBuildHasher>,
-	f64,
+	f32,
 )> {
 	let mut turfs: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 	let mut border_turfs: std::collections::VecDeque<NodeIndex<usize>> = Default::default();
 	let mut planet_turfs: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 	let sender = byond_callback_sender();
-	let mut total_moles = 0.0_f64;
+	let mut total_moles = 0.0_f32;
 	border_turfs.push_back(index);
 	found_turfs.insert(index);
 	let mut ignore_zone = false;
@@ -596,7 +596,7 @@ fn flood_fill_equalize_turfs(
 			planet_turfs.insert(cur_index);
 			continue;
 		}
-		total_moles += cur_turf.total_moles() as f64;
+		total_moles += cur_turf.total_moles();
 
 		for adj_index in arena.adjacent_node_ids(cur_index) {
 			if found_turfs.insert(adj_index) {
@@ -796,8 +796,15 @@ pub(crate) fn equalize(
 			.into_par_iter()
 			.map(|(turfs, planet_turfs, total_moles)| {
 				let mut graph: DiGraphMap<Option<NodeIndex<usize>>, f32> = Default::default();
-				let average_moles =
-					(total_moles / (turfs.len() - planet_turfs.len()) as f64) as f32;
+				let average_moles = {
+					let tlen = turfs.len();
+					let plen = planet_turfs.len();
+					if plen >= tlen {
+						0.0
+					} else {
+						(total_moles / (turfs.len() - planet_turfs.len()) as f32) as f32
+					}
+				};
 
 				let mut info = turfs
 					.par_iter()

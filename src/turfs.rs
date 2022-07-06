@@ -370,6 +370,7 @@ fn _initialize_turf_statics() -> Result<(), String> {
 
 #[shutdown]
 fn _shutdown_turfs() {
+	processing::wait_for_tasks();
 	*DIRTY_TURFS.lock() = None;
 	*TURF_GASES.write() = None;
 	unsafe {

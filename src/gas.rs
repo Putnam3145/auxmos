@@ -65,6 +65,7 @@ fn _init_gas_mixtures() -> Result<(), String> {
 
 #[shutdown]
 fn _shut_down_gases() {
+	crate::turfs::processing::wait_for_tasks();
 	GAS_MIXTURES.write().as_mut().unwrap().clear();
 	NEXT_GAS_IDS.write().as_mut().unwrap().clear();
 	unsafe {

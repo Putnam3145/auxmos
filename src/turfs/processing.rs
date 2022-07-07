@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
 
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::{Once, RwLock};
 
@@ -32,7 +32,12 @@ static INIT_TURF: Once = Once::new();
 static INIT_HEAT: Once = Once::new();
 
 //thread status
-static TASKS_RUNNING: AtomicU8 = AtomicU8::new(0);
+static TASKS: RwLock<()> = const_rwlock(());
+
+//block until threads are done
+pub fn wait_for_tasks() {
+	drop(TASKS.write())
+}
 
 #[derive(Copy, Clone)]
 #[allow(unused)]
@@ -70,7 +75,7 @@ fn heat_processing_callbacks_sender() -> flume::Sender<SSheatInfo> {
 
 #[hook("/datum/controller/subsystem/air/proc/thread_running")]
 fn _thread_running_hook() {
-	Ok(Value::from(TASKS_RUNNING.load(Ordering::Relaxed) != 0))
+	Ok(Value::from(TASKS.try_write().is_none()))
 }
 
 #[hook("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
@@ -88,7 +93,7 @@ fn _finish_process_turfs() {
 			)
 		})?;
 	let processing_callbacks_unfinished = process_callbacks_for_millis(arg_limit as u64);
-	if TASKS_RUNNING.load(Ordering::Relaxed) == 0 {
+	if TASKS.try_write().is_some() {
 		rebuild_turf_graph()?;
 	}
 	if processing_callbacks_unfinished {
@@ -167,7 +172,7 @@ fn _process_turf_start() -> Result<(), String> {
 			//this will block until process_turfs is called
 			let info = with_processing_callback_receiver(|receiver| receiver.recv().unwrap());
 			set_turfs_dirty(false);
-			TASKS_RUNNING.fetch_add(1, Ordering::Acquire);
+			let task_lock = TASKS.read();
 			let sender = byond_callback_sender();
 			let mut stats: Vec<Box<dyn Fn() -> DMResult + Send + Sync>> = Default::default();
 			let (low_pressure_turfs, high_pressure_turfs) = {
@@ -301,7 +306,7 @@ fn _process_turf_start() -> Result<(), String> {
 				//let it gooooo
 				rayon::spawn(|| planet_process());
 			}
-			TASKS_RUNNING.fetch_sub(1, Ordering::Release);
+			drop(task_lock);
 		});
 	});
 	Ok(())
@@ -776,7 +781,7 @@ fn _process_heat_start() -> Result<(), String> {
 		rayon::spawn(|| loop {
 			//this will block until process_turf_heat is called
 			let info = with_heat_processing_callback_receiver(|receiver| receiver.recv().unwrap());
-			TASKS_RUNNING.fetch_add(1, Ordering::Acquire);
+			let task_lock = TASKS.read();
 			let start_time = Instant::now();
 			let sender = byond_callback_sender();
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * info.time_delta;
@@ -901,7 +906,7 @@ fn _process_heat_start() -> Result<(), String> {
 			let old_bench = HEAT_PROCESS_TIME.load(Ordering::Acquire);
 			// We display this as part of the MC atmospherics stuff.
 			HEAT_PROCESS_TIME.store((old_bench * 3 + (bench * 7) as u64) / 10, Ordering::Release);
-			TASKS_RUNNING.fetch_sub(1, Ordering::Release);
+			drop(task_lock);
 		});
 	});
 	Ok(())

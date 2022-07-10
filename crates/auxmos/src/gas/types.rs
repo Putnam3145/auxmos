@@ -296,7 +296,7 @@ fn _hook_init() {
 		_hook_register_gas(
 			&Value::null(),
 			&Value::null(),
-			&mut vec![data.get(data.get(i)?)?],
+			vec![data.get(data.get(i)?)?],
 		)?;
 	}
 	*REACTION_INFO.write() = Some(get_reaction_info());

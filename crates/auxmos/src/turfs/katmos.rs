@@ -358,7 +358,7 @@ fn take_from_givers(
 fn explosively_depressurize(
 	initial_index: NodeIndex<usize>,
 	equalize_hard_turf_limit: usize,
-) -> DMResult {
+) -> Result<(), Runtime> {
 	//1st floodfill
 	let (space_turfs, warned_about_planet_atmos) = {
 		let mut cur_queue_idx = 0;
@@ -421,7 +421,7 @@ fn explosively_depressurize(
 	};
 
 	if warned_about_planet_atmos || space_turfs.is_empty() {
-		return Ok(Value::null()); // planet atmos > space
+		return Ok(()); // planet atmos > space
 	}
 
 	with_turf_gases_read(move |arena| {
@@ -564,7 +564,7 @@ fn explosively_depressurize(
 		Ok(())
 	})?;
 
-	Ok(Value::null())
+	Ok(())
 }
 
 // Clippy go away, this type is only used once
@@ -699,7 +699,7 @@ fn process_planet_turfs(
 		for callback in firelock_callbacks.iter() {
 			callback()?;
 		}
-		Ok(Value::null())
+		Ok(())
 	})));
 	if !did_firelocks {
 		return;
@@ -895,7 +895,7 @@ pub(crate) fn equalize(
 								.call(&[&Value::from_string(e.message.as_str())?])?;
 						}
 					}
-					Ok(Value::null())
+					Ok(())
 				})))
 			});
 		});

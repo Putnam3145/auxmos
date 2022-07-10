@@ -1,7 +1,7 @@
 #[cfg(feature = "reaction_hooks")]
 pub mod hooks;
 
-use auxtools::{byond_string, inventory, runtime, shutdown, DMResult, Value};
+use auxtools::{byond_string, runtime, shutdown, DMResult, Value};
 
 use std::cell::RefCell;
 

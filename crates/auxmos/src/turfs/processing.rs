@@ -172,14 +172,14 @@ fn _process_turf_start() -> Result<(), String> {
 			set_turfs_dirty(false);
 			let task_lock = TASKS.read();
 			let sender = byond_callback_sender();
-			let mut stats: Vec<Box<dyn Fn() -> DMResult + Send + Sync>> = Default::default();
+			let mut stats: Vec<Box<dyn Fn() -> Result<(), Runtime> + Send + Sync>> = Default::default();
 			let (low_pressure_turfs, high_pressure_turfs) = {
 				let start_time = Instant::now();
 				let (low_pressure_turfs, high_pressure_turfs) =
 					fdm(info.fdm_max_steps, info.equalize_enabled);
 				let bench = start_time.elapsed().as_millis();
 				let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
-				stats.push(Box::new(move || -> DMResult {
+				stats.push(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
 					let prev_cost =
 						ssair.get_number(byond_string!("cost_turfs")).map_err(|_| {
@@ -199,7 +199,7 @@ fn _process_turf_start() -> Result<(), String> {
 						byond_string!("high_pressure_turfs"),
 						Value::from(hpt as f32),
 					)?;
-					Ok(Value::null())
+					Ok(())
 				}));
 				(low_pressure_turfs, high_pressure_turfs)
 			};
@@ -208,7 +208,7 @@ fn _process_turf_start() -> Result<(), String> {
 				let processed_turfs =
 					excited_group_processing(info.group_pressure_goal, &low_pressure_turfs);
 				let bench = start_time.elapsed().as_millis();
-				stats.push(Box::new(move || -> DMResult {
+				stats.push(Box::new(move || {
 					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
 					let prev_cost =
 						ssair
@@ -229,7 +229,7 @@ fn _process_turf_start() -> Result<(), String> {
 						byond_string!("num_group_turfs_processed"),
 						Value::from(processed_turfs as f32),
 					)?;
-					Ok(Value::null())
+					Ok(())
 				}));
 			}
 			if info.equalize_enabled {
@@ -266,7 +266,7 @@ fn _process_turf_start() -> Result<(), String> {
 						byond_string!("num_equalize_processed"),
 						Value::from(processed_turfs as f32),
 					)?;
-					Ok(Value::null())
+					Ok(())
 				}));
 			}
 			{
@@ -289,7 +289,7 @@ fn _process_turf_start() -> Result<(), String> {
 						byond_string!("cost_post_process"),
 						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
 					)?;
-					Ok(Value::null())
+					Ok(())
 				}));
 			}
 			{
@@ -297,7 +297,7 @@ fn _process_turf_start() -> Result<(), String> {
 					for callback in stats.iter() {
 						callback()?;
 					}
-					Ok(Value::null())
+					Ok(())
 				})));
 			}
 			{
@@ -567,7 +567,7 @@ fn fdm(
 										}
 									}
 								}
-								Ok(Value::null())
+								Ok(())
 							})));
 						});
 				}
@@ -699,7 +699,7 @@ fn post_process() {
 					update_visuals(turf)?;
 				}
 			}
-			Ok(Value::null())
+			Ok(())
 		})));
 	});
 }
@@ -877,7 +877,7 @@ fn _process_heat_start() -> Result<(), String> {
 							drop(sender.try_send(Box::new(move || {
 								let turf = unsafe { Value::turf_by_id_unchecked(i) };
 								turf.set(byond_string!("to_be_destroyed"), 1.0)?;
-								Ok(Value::null())
+								Ok(())
 							})));
 						}
 					});

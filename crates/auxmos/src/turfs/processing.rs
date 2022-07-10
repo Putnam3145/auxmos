@@ -172,7 +172,8 @@ fn _process_turf_start() -> Result<(), String> {
 			set_turfs_dirty(false);
 			let task_lock = TASKS.read();
 			let sender = byond_callback_sender();
-			let mut stats: Vec<Box<dyn Fn() -> Result<(), Runtime> + Send + Sync>> = Default::default();
+			let mut stats: Vec<Box<dyn Fn() -> Result<(), Runtime> + Send + Sync>> =
+				Default::default();
 			let (low_pressure_turfs, high_pressure_turfs) = {
 				let start_time = Instant::now();
 				let (low_pressure_turfs, high_pressure_turfs) =

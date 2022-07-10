@@ -3,34 +3,34 @@ use auxtools::*;
 use std::time::{Duration, Instant};
 
 use std::sync::{
-    atomic::{AtomicBool, Ordering::Relaxed},
-    Arc,
+	atomic::{AtomicBool, Ordering::Relaxed},
+	Arc,
 };
 
 enum Timer {
-    Fast(Arc<AtomicBool>),
-    Slow(Instant, Duration)
+	Fast(Arc<AtomicBool>),
+	Slow(Instant, Duration),
 }
 
 impl Timer {
-    fn new(time: Duration) -> Self {
-        let done = Arc::new(AtomicBool::new(false));
-        let thread_done = Arc::clone(&done);
-        let builder = std::thread::Builder::new();
-        match builder.spawn(move || {
-            std::thread::sleep(time);
-            thread_done.store(true, Relaxed);
-        }) {
-            Ok(_) => Self::Fast(done),
-            Err(_) => Self::Slow(Instant::now(), time)
-        }
-    }
-    fn check(&self) -> bool {
-        match self {
-            Self::Fast(done) => done.load(Relaxed),
-            Self::Slow(time, duration) => time.elapsed() >= *duration
-        }
-    }
+	fn new(time: Duration) -> Self {
+		let done = Arc::new(AtomicBool::new(false));
+		let thread_done = Arc::clone(&done);
+		let builder = std::thread::Builder::new();
+		match builder.spawn(move || {
+			std::thread::sleep(time);
+			thread_done.store(true, Relaxed);
+		}) {
+			Ok(_) => Self::Fast(done),
+			Err(_) => Self::Slow(Instant::now(), time),
+		}
+	}
+	fn check(&self) -> bool {
+		match self {
+			Self::Fast(done) => done.load(Relaxed),
+			Self::Slow(time, duration) => time.elapsed() >= *duration,
+		}
+	}
 }
 
 type DeferredFunc = Box<dyn Fn() -> Result<(), Runtime> + Send + Sync>;
@@ -41,59 +41,59 @@ static mut CALLBACK_CHANNEL: Option<CallbackChannel> = None;
 
 #[init(partial)]
 fn _start_callbacks() -> Result<(), String> {
-    unsafe {
-        CALLBACK_CHANNEL = Some(flume::bounded(100000));
-    }
-    Ok(())
+	unsafe {
+		CALLBACK_CHANNEL = Some(flume::bounded(100000));
+	}
+	Ok(())
 }
 
 #[shutdown]
 fn _clean_callbacks() {
-    unsafe { CALLBACK_CHANNEL = None }
+	unsafe { CALLBACK_CHANNEL = None }
 }
 
 fn with_callback_receiver<T>(f: impl Fn(&flume::Receiver<DeferredFunc>) -> T) -> T {
-    f(unsafe { &CALLBACK_CHANNEL.as_ref().unwrap().1 })
+	f(unsafe { &CALLBACK_CHANNEL.as_ref().unwrap().1 })
 }
 
 /// This gives you a copy of the callback sender. Send to it with try_send or send, then later it'll be processed
 /// if one of the process_callbacks functions is called for any reason.
 pub fn byond_callback_sender() -> flume::Sender<DeferredFunc> {
-    unsafe { CALLBACK_CHANNEL.as_ref().unwrap().0.clone() }
+	unsafe { CALLBACK_CHANNEL.as_ref().unwrap().0.clone() }
 }
 
 /// Goes through every single outstanding callback and calls them.
 pub fn process_callbacks() {
-    let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
-    with_callback_receiver(|receiver| {
-        for callback in receiver.try_iter() {
-            if let Err(e) = callback() {
-                let _ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
-            }
-        }
-    })
+	let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
+	with_callback_receiver(|receiver| {
+		for callback in receiver.try_iter() {
+			if let Err(e) = callback() {
+				let _ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
+			}
+		}
+	})
 }
 
 /// Goes through every single outstanding callback and calls them, until a given time limit is reached.
 pub fn process_callbacks_for(duration: Duration) -> bool {
-    let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
-    let timer = Timer::new(duration);
-    with_callback_receiver(|receiver| {
-        for callback in receiver.try_iter() {
-            if let Err(e) = callback() {
-                let _ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
-            }
-            if timer.check() {
-                return true;
-            }
-        }
-        false
-    })
+	let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
+	let timer = Timer::new(duration);
+	with_callback_receiver(|receiver| {
+		for callback in receiver.try_iter() {
+			if let Err(e) = callback() {
+				let _ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
+			}
+			if timer.check() {
+				return true;
+			}
+		}
+		false
+	})
 }
 
 /// Goes through every single outstanding callback and calls them, until a given time limit in milliseconds is reached.
 pub fn process_callbacks_for_millis(millis: u64) -> bool {
-    process_callbacks_for(Duration::from_millis(millis))
+	process_callbacks_for(Duration::from_millis(millis))
 }
 
 /// This function is to be called from byond, preferably once a tick.
@@ -109,14 +109,14 @@ pub fn process_callbacks_for_millis(millis: u64) -> bool {
 /// ```
 
 pub fn callback_processing_hook(args: &mut Vec<Value>) -> DMResult {
-    match args.len() {
-        0 => {
-            process_callbacks();
-            Ok(Value::null())
-        }
-        _ => {
-            let arg_limit = args.get(0).unwrap().as_number()? as u64;
-            Ok(Value::from(process_callbacks_for_millis(arg_limit)))
-        }
-    }
+	match args.len() {
+		0 => {
+			process_callbacks();
+			Ok(Value::null())
+		}
+		_ => {
+			let arg_limit = args.get(0).unwrap().as_number()? as u64;
+			Ok(Value::from(process_callbacks_for_millis(arg_limit)))
+		}
+	}
 }

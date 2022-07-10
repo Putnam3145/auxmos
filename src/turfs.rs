@@ -182,7 +182,6 @@ struct ThermalInfo {
 	pub temperature: f32,
 	pub thermal_conductivity: f32,
 	pub heat_capacity: f32,
-	pub adjacency: Directions,
 	pub adjacent_to_space: bool,
 }
 
@@ -259,6 +258,10 @@ impl TurfGases {
 
 	pub fn get(&self, idx: NodeIndex<usize>) -> Option<&TurfMixture> {
 		self.graph.node_weight(idx)
+	}
+
+	pub fn get_id(&self, idx: &TurfID) -> Option<&NodeIndex<usize>> {
+		self.map.get(idx)
 	}
 
 	pub fn adjacent_node_ids<'a>(
@@ -511,7 +514,6 @@ fn _hook_turf_update_temp() {
 			temperature: 293.15,
 			thermal_conductivity: 0.0,
 			heat_capacity: 0.0,
-			adjacency: Directions::ALL_CARDINALS,
 			adjacent_to_space: false,
 		};
 		to_insert.thermal_conductivity = src
@@ -534,15 +536,6 @@ fn _hook_turf_update_temp() {
 					std::column!()
 				)
 			})?;
-		to_insert.adjacency = Directions::ALL_CARDINALS;
-		to_insert.adjacent_to_space = args[0].as_number().map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})? != 0.0;
 		to_insert.temperature = src
 			.get_number(byond_string!("initial_temperature"))
 			.map_err(|_| {
@@ -568,7 +561,7 @@ fn _hook_turf_update_temp() {
 
 fn update_adjacency_info(id: u32, adjacent_to_spess: bool) -> Result<(), Runtime> {
 	let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
-	with_turf_gases_write(|arena| -> DMResult<()> {
+	with_turf_gases_write(|arena| -> Result<(), Runtime> {
 		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
 			arena.update_adjacencies(id, adjacent_list)?;
 		} else if let Some(&idx) = arena.map.get(&id) {
@@ -576,36 +569,26 @@ fn update_adjacency_info(id: u32, adjacent_to_spess: bool) -> Result<(), Runtime
 		}
 		Ok(())
 	})?;
-	if let Ok(atmos_blocked_directions) =
-		src_turf.get_number(byond_string!("conductivity_blocked_directions"))
-	{
-		let adjacency = Directions::ALL_CARDINALS
-			& !(Directions::from_bits_truncate(atmos_blocked_directions as u8));
-		turf_temperatures()
-			.entry(id)
-			.and_modify(|entry| {
-				entry.adjacency = adjacency;
-			})
-			.or_insert_with(|| ThermalInfo {
-				temperature: src_turf
-					.get_number(byond_string!("initial_temperature"))
-					.unwrap_or(TCMB),
-				thermal_conductivity: src_turf
-					.get_number(byond_string!("thermal_conductivity"))
-					.unwrap_or(0.0),
-				heat_capacity: src_turf
-					.get_number(byond_string!("heat_capacity"))
-					.unwrap_or(0.0),
-				adjacency,
-				adjacent_to_space: adjacent_to_spess,
-			});
-	}
+	turf_temperatures()
+		.entry(id)
+		.or_insert_with(|| ThermalInfo {
+			temperature: src_turf
+				.get_number(byond_string!("initial_temperature"))
+				.unwrap_or(TCMB),
+			thermal_conductivity: src_turf
+				.get_number(byond_string!("thermal_conductivity"))
+				.unwrap_or(0.0),
+			heat_capacity: src_turf
+				.get_number(byond_string!("heat_capacity"))
+				.unwrap_or(0.0),
+			adjacent_to_space: adjacent_to_spess,
+		});
 	Ok(())
 }
 
 #[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
-fn _hook_infos(arg0: Value) {
-	let adjacent_to_spess = arg0.as_number().unwrap_or(0.0) != 0.0;
+fn _hook_infos() {
+	let adjacent_to_spess = src.get_type()?.as_str().starts_with("/turf/open/space");
 	with_dirty_turfs(|dirty_turfs| {
 		let e = dirty_turfs.entry(unsafe { src.raw.data.id }).or_default();
 		e.insert(DirtyFlags::DIRTY_ADJACENT);
@@ -675,7 +658,7 @@ pub fn update_visuals(src: Value) -> DMResult {
 		}
 	}
 }
-
+/*
 fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {
 	let z_size = max_x * max_y;
 	let i = i as i32;
@@ -736,3 +719,4 @@ fn adjacent_tile_ids(adj: Directions, i: TurfID, max_x: i32, max_y: i32) -> Adja
 		count: 0,
 	}
 }
+*/

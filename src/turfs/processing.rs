@@ -53,8 +53,6 @@ struct SSairInfo {
 #[derive(Copy, Clone)]
 struct SSheatInfo {
 	time_delta: f64,
-	max_x: i32,
-	max_y: i32,
 }
 
 fn with_processing_callback_receiver<T>(f: impl Fn(&flume::Receiver<Box<SSairInfo>>) -> T) -> T {
@@ -745,32 +743,8 @@ fn _process_heat_notify() {
 			std::column!()
 		)
 	})? / 10.0) as f64;
-	let max_x = auxtools::Value::world()
-		.get_number(byond_string!("maxx"))
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})? as i32;
-	let max_y = auxtools::Value::world()
-		.get_number(byond_string!("maxy"))
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})? as i32;
 	process_aux_callbacks(crate::callbacks::TEMPERATURE);
-	let _ = sender.try_send(SSheatInfo {
-		time_delta,
-		max_x,
-		max_y,
-	});
+	let _ = sender.try_send(SSheatInfo { time_delta });
 	Ok(Value::null())
 }
 
@@ -794,63 +768,70 @@ fn _process_heat_start() -> Result<(), String> {
 						(i, t)
 					})
 					.filter_map(|(i, t)| {
-						let adj = t.adjacency;
 						/*
-							If it has no thermal conductivity or low thermal capacity,
+							If it has no thermal conductivity, low thermal capacity or has no adjacencies,
 							then it's not gonna interact, or at least shouldn't.
 						*/
-						(t.thermal_conductivity > 0.0 && t.heat_capacity > 0.0 && !adj.is_empty())
-							.then(|| {
-								let mut heat_delta = 0.0;
-								let is_temp_delta_with_air = arena
-									.map
-									.get(&i)
-									.and_then(|&node_id| arena.get(node_id))
-									.filter(|m| m.enabled())
-									.and_then(|m| {
-										GasArena::with_all_mixtures(|all_mixtures| {
-											all_mixtures.get(m.mix).and_then(RwLock::try_read).map(
-												|gas| (t.temperature - gas.get_temperature() > 1.0),
-											)
-										})
+						(t.thermal_conductivity > 0.0
+							&& t.heat_capacity > 0.0 && arena
+							.adjacent_turf_ids(*arena.get_id(&i)?)
+							.next()
+							.is_some())
+						.then(|| {
+							let mut heat_delta = 0.0;
+							let is_temp_delta_with_air = arena
+								.map
+								.get(&i)
+								.and_then(|&node_id| arena.get(node_id))
+								.filter(|m| m.enabled())
+								.and_then(|m| {
+									GasArena::with_all_mixtures(|all_mixtures| {
+										all_mixtures.get(m.mix).and_then(RwLock::try_read).map(
+											|gas| (t.temperature - gas.get_temperature() > 1.0),
+										)
 									})
-									.unwrap_or(false);
+								})
+								.unwrap_or(false);
 
-								for (_, loc) in adjacent_tile_ids(adj, i, info.max_x, info.max_y) {
-									heat_delta += turf_temperatures()
-										.try_get(&loc)
-										.try_unwrap()
-										.map_or(0.0, |other| {
-											/*
-												The horrible line below is essentially
-												sharing between solids--making it the minimum of both
-												conductivities makes this consistent, funnily enough.
-											*/
-											t.thermal_conductivity.min(other.thermal_conductivity)
-												* (other.temperature - t.temperature) * (t
-												.heat_capacity
-												* other.heat_capacity
-												/ (t.heat_capacity + other.heat_capacity))
-										});
-								}
-								if t.adjacent_to_space {
-									/*
-										Straight up the standard blackbody radiation
-										equation. All these are f64s because
-										f32::MAX^4 < f64::MAX, and t.temperature
-										is ordinarily an f32, meaning that
-										this will never go into infinities.
-									*/
-									let blackbody_radiation: f64 = (emissivity_constant
-										* (f64::from(t.temperature).powi(4)))
-										- radiation_from_space_tick;
-									heat_delta -= blackbody_radiation as f32;
-								}
-								let temp_delta = heat_delta / t.heat_capacity;
-								(is_temp_delta_with_air || temp_delta.abs() > 0.01)
-									.then(|| (i, t.temperature + temp_delta))
-							})
-							.flatten()
+							let mut spess_adjacents = false;
+
+							for loc in arena.adjacent_turf_ids(*arena.get_id(&i).unwrap()) {
+								heat_delta += turf_temperatures()
+									.try_get(&loc)
+									.try_unwrap()
+									.map_or(0.0, |other| {
+										/*
+											The horrible line below is essentially
+											sharing between solids--making it the minimum of both
+											conductivities makes this consistent, funnily enough.
+										*/
+										if other.adjacent_to_space {
+											spess_adjacents = true;
+										}
+										t.thermal_conductivity.min(other.thermal_conductivity)
+											* (other.temperature - t.temperature) * (t.heat_capacity
+											* other.heat_capacity
+											/ (t.heat_capacity + other.heat_capacity))
+									});
+							}
+							if t.adjacent_to_space || spess_adjacents {
+								/*
+									Straight up the standard blackbody radiation
+									equation. All these are f64s because
+									f32::MAX^4 < f64::MAX, and t.temperature
+									is ordinarily an f32, meaning that
+									this will never go into infinities.
+								*/
+								let blackbody_radiation: f64 = (emissivity_constant
+									* (f64::from(t.temperature).powi(4)))
+									- radiation_from_space_tick;
+								heat_delta -= blackbody_radiation as f32;
+							}
+							let temp_delta = heat_delta / t.heat_capacity;
+							(is_temp_delta_with_air || temp_delta.abs() > 0.01)
+								.then(|| (i, t.temperature + temp_delta))
+						})
+						.flatten()
 					})
 					.collect::<Vec<_>>();
 				temps_to_update

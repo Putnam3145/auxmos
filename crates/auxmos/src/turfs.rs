@@ -55,6 +55,7 @@ bitflags! {
 		const SIMULATION_ANY = Self::SIMULATION_DIFFUSE.bits | Self::SIMULATION_ALL.bits;
 	}
 
+	//TODO: Do adjacency for heat as well
 	#[derive(Default)]
 	pub struct AdjacentFlags: u8 {
 		const ATMOS_ADJACENT_ANY = 0b1;

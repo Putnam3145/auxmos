@@ -107,11 +107,11 @@ pub(crate) fn rebuild_turf_graph() -> Result<(), Runtime> {
 		{
 			register_turf(t)?;
 		}
-		for (t, flags) in dirty_turfs
+		for (t, _) in dirty_turfs
 			.drain(..)
 			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
 		{
-			update_adjacency_info(t, flags.contains(DirtyFlags::DIRTY_ADJACENT_TO_SPACE))?
+			update_adjacency_info(t)?;
 		}
 		Ok(())
 	})?;

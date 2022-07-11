@@ -578,7 +578,7 @@ fn _hook_turf_update_temp() {
 }
 */
 
-fn update_adjacency_info(id: u32, adjacent_to_spess: bool) -> Result<(), Runtime> {
+fn update_adjacency_info(id: u32) -> Result<(), Runtime> {
 	let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
 	with_turf_gases_write(|arena| -> Result<(), Runtime> {
 		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {

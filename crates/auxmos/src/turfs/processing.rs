@@ -236,7 +236,11 @@ fn _process_turf_start() -> Result<(), String> {
 				let processed_turfs = {
 					#[cfg(feature = "fastmos")]
 					{
-						super::katmos::equalize(info.equalize_hard_turf_limit, &high_pressure_turfs)
+						super::katmos::equalize(
+							info.equalize_hard_turf_limit,
+							&high_pressure_turfs,
+							info.planet_enabled,
+						)
 					}
 					#[cfg(not(feature = "fastmos"))]
 					{

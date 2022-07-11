@@ -738,6 +738,7 @@ static PLANET_TURF_CYCLE: AtomicBool = AtomicBool::new(false);
 pub(crate) fn equalize(
 	equalize_hard_turf_limit: usize,
 	high_pressure_turfs: &std::collections::BTreeSet<NodeIndex<usize>>,
+	planet_enabled: bool,
 ) -> usize {
 	let turfs_processed: AtomicUsize = AtomicUsize::new(0);
 	let mut found_turfs: HashSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
@@ -850,9 +851,8 @@ pub(crate) fn equalize(
 				} else {
 					take_from_givers(&taker_turfs, arena, &mut info, &mut graph);
 				}
-				if planet_turfs.is_empty() {
-					turfs_processed.fetch_add(turfs.len(), Ordering::Relaxed);
-				} else {
+
+				if !planet_turfs.is_empty() && planet_enabled {
 					turfs_processed.fetch_add(turfs.len() + planet_turfs.len(), Ordering::Relaxed);
 					process_planet_turfs(
 						&planet_turfs,
@@ -863,7 +863,10 @@ pub(crate) fn equalize(
 						&mut info,
 						&mut graph,
 					);
+				} else {
+					turfs_processed.fetch_add(turfs.len(), Ordering::Relaxed);
 				}
+
 				(turfs, graph)
 			})
 			.collect::<Vec<_>>();

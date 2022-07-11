@@ -583,9 +583,7 @@ fn update_adjacency_info(id: u32, adjacent_to_spess: bool) -> Result<(), Runtime
 		entry.thermal_conductivity = src_turf
 			.get_number(byond_string!("thermal_conductivity"))
 			.unwrap();
-		entry.heat_capacity = src_turf
-			.get_number(byond_string!("heat_capacity"))
-			.unwrap();
+		entry.heat_capacity = src_turf.get_number(byond_string!("heat_capacity")).unwrap();
 		entry.adjacent_to_space = adjacent_to_spess;
 	} else {
 		turf_temperatures().remove(&id);

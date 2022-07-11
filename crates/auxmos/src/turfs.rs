@@ -28,8 +28,6 @@ use rayon::prelude::*;
 use std::mem::drop;
 use std::sync::atomic::AtomicU64;
 
-use crate::callbacks::aux_callbacks_sender;
-
 use bitflags::bitflags;
 
 use parking_lot::{const_mutex, const_rwlock, Mutex, RwLock};
@@ -497,7 +495,7 @@ fn determine_turf_flag(src: &Value) -> i32 {
 		OPEN_TURF
 	}
 }
-
+/*
 #[hook("/turf/proc/__auxtools_update_turf_temp_info")]
 fn _hook_turf_update_temp() {
 	let sender = aux_callbacks_sender(crate::callbacks::TEMPERATURE);
@@ -546,18 +544,14 @@ fn _hook_turf_update_temp() {
 					std::column!()
 				)
 			})?;
-		drop(sender.send(Box::new(move || {
-			turf_temperatures().insert(id, to_insert);
-			Ok(Value::null())
-		})));
+		to_insert.adjacent_to_space = src.get_type()?.as_str().starts_with("/turf/open/space");
+		turf_temperatures().insert(id, to_insert);
 	} else {
-		drop(sender.send(Box::new(move || {
-			turf_temperatures().remove(&id);
-			Ok(Value::null())
-		})));
+		turf_temperatures().remove(&id);
 	}
 	Ok(Value::null())
 }
+*/
 
 fn update_adjacency_info(id: u32, adjacent_to_spess: bool) -> Result<(), Runtime> {
 	let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
@@ -569,33 +563,46 @@ fn update_adjacency_info(id: u32, adjacent_to_spess: bool) -> Result<(), Runtime
 		}
 		Ok(())
 	})?;
-	turf_temperatures()
-		.entry(id)
-		.or_insert_with(|| ThermalInfo {
-			temperature: src_turf
-				.get_number(byond_string!("initial_temperature"))
-				.unwrap_or(TCMB),
-			thermal_conductivity: src_turf
-				.get_number(byond_string!("thermal_conductivity"))
-				.unwrap_or(0.0),
-			heat_capacity: src_turf
-				.get_number(byond_string!("heat_capacity"))
-				.unwrap_or(0.0),
-			adjacent_to_space: adjacent_to_spess,
-		});
+	if src_turf
+		.get_number(byond_string!("thermal_conductivity"))
+		.unwrap_or_default()
+		> 0.0 && src_turf
+		.get_number(byond_string!("heat_capacity"))
+		.unwrap_or_default()
+		> 0.0
+	{
+		//temperature musn't change on turf updates, everything else must though
+		let mut entry = turf_temperatures()
+			.entry(id)
+			.or_insert_with(|| ThermalInfo {
+				temperature: src_turf
+					.get_number(byond_string!("initial_temperature"))
+					.unwrap_or(TCMB),
+				..Default::default()
+			});
+		entry.thermal_conductivity = src_turf
+			.get_number(byond_string!("thermal_conductivity"))
+			.unwrap();
+		entry.heat_capacity = src_turf
+			.get_number(byond_string!("heat_capacity"))
+			.unwrap();
+		entry.adjacent_to_space = adjacent_to_spess;
+	} else {
+		turf_temperatures().remove(&id);
+	}
 	Ok(())
 }
 
 #[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn _hook_infos() {
-	let adjacent_to_spess = src.get_type()?.as_str().starts_with("/turf/open/space");
-	with_dirty_turfs(|dirty_turfs| {
+	with_dirty_turfs(|dirty_turfs| -> Result<(), Runtime> {
 		let e = dirty_turfs.entry(unsafe { src.raw.data.id }).or_default();
 		e.insert(DirtyFlags::DIRTY_ADJACENT);
-		if adjacent_to_spess {
+		if src.get_type()?.as_str().starts_with("/turf/open/space") {
 			e.insert(DirtyFlags::DIRTY_ADJACENT_TO_SPACE);
 		}
-	});
+		Ok(())
+	})?;
 	Ok(Value::null())
 }
 

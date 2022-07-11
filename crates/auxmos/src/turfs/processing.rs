@@ -14,8 +14,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::{Once, RwLock};
 
-use crate::callbacks::process_aux_callbacks;
-
 use tinyvec::TinyVec;
 
 lazy_static::lazy_static! {
@@ -744,7 +742,6 @@ fn _process_heat_notify() {
 			std::column!()
 		)
 	})? / 10.0) as f64;
-	process_aux_callbacks(crate::callbacks::TEMPERATURE);
 	let _ = sender.try_send(SSheatInfo { time_delta });
 	Ok(Value::null())
 }

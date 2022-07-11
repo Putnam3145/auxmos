@@ -5,8 +5,6 @@ pub mod turfs;
 
 pub mod reaction;
 
-pub mod callbacks;
-
 use auxtools::{byond_string, hook, inventory, runtime, List, Value};
 
 use auxcleanup::{datum_del, DelDatumFunc};

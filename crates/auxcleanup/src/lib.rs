@@ -18,7 +18,7 @@ fn del_hooking_init() -> Result<(), String> {
 			.find(signature!(
 				"55 8b ec 8b 4d 08 3b 0d ?? ?? ?? ?? 73 55 a1 ?? ?? ?? ?? 8b 04 88 85 c0 74 49 8b 50 ?? 81 fa 00 00 00 70"
 			))
-			.ok_or_else(|| "Couldn't find DEL_DATUM")?;
+			.ok_or("Couldn't find DEL_DATUM")?;
 
 		unsafe {
 			DEL_DATUM = ptr as *const c_void;
@@ -30,7 +30,7 @@ fn del_hooking_init() -> Result<(), String> {
 			.find(signature!(
 				"55 89 e5 53 83 ec 44 8b 45 08 3b 05 ?? ?? ?? ?? 73 2c 8b 15 ?? ?? ?? ?? 8b 0c 82 85 c9 74 1f 8b 51 ?? 81 fa 00 00 00 70"
 			))
-			.ok_or_else(|| "Couldn't find DEL_DATUM")?;
+			.ok_or("Couldn't find DEL_DATUM")?;
 
 		unsafe {
 			DEL_DATUM = ptr as *const c_void;

@@ -305,7 +305,7 @@ fn _process_turf_start() -> Result<(), String> {
 			}
 			{
 				//let it gooooo
-				rayon::spawn(|| planet_process());
+				rayon::spawn(planet_process);
 			}
 			drop(task_lock);
 		});

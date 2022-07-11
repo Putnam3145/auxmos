@@ -491,7 +491,7 @@ fn explosively_depressurize(
 				std::line!(),
 				std::column!()
 			)),
-			|opt| Ok(opt),
+			Ok,
 		)?;
 
 		for &cur_index in progression_order.iter().rev() {

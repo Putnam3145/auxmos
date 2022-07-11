@@ -779,13 +779,14 @@ fn _process_heat_start() -> Result<(), String> {
 							.is_some())
 						.then(|| {
 							let mut heat_delta = 0.0;
+							let cur_temp = tmix.temperature.load(Ordering::Relaxed);
 							let is_temp_delta_with_air = tmix
 								.enabled()
 								.then(|| {
 									GasArena::with_all_mixtures(|all_mixtures| {
 										all_mixtures.get(tmix.mix).and_then(RwLock::try_read).map(
 											|gas| {
-												tmix.temperature.load(Ordering::Relaxed)
+												cur_temp
 													- gas.get_temperature() > 1.0
 											},
 										)
@@ -803,7 +804,7 @@ fn _process_heat_start() -> Result<(), String> {
 									*/
 									tmix.thermal_conductivity.min(other.thermal_conductivity)
 										* (other.temperature.load(Ordering::Relaxed)
-											- tmix.temperature.load(Ordering::Relaxed))
+											- cur_temp)
 										* (tmix.heat_capacity * other.heat_capacity
 											/ (tmix.heat_capacity + other.heat_capacity))
 								});
@@ -817,7 +818,7 @@ fn _process_heat_start() -> Result<(), String> {
 									this will never go into infinities.
 								*/
 								let blackbody_radiation: f64 = (emissivity_constant
-									* (f64::from(tmix.temperature.load(Ordering::Relaxed))
+									* (f64::from(cur_temp)
 										.powi(4)))
 									- radiation_from_space_tick;
 								heat_delta -= blackbody_radiation as f32;
@@ -826,7 +827,7 @@ fn _process_heat_start() -> Result<(), String> {
 							(is_temp_delta_with_air || temp_delta.abs() > 0.01).then(|| {
 								(
 									id,
-									tmix.temperature.load(Ordering::Relaxed) + temp_delta,
+									cur_temp + temp_delta,
 									node_index,
 								)
 							})
@@ -842,14 +843,10 @@ fn _process_heat_start() -> Result<(), String> {
 						}
 						let t = maybe_t.unwrap();
 						t.temperature.store(
-							arena
-								.map
-								.get(&i)
-								.and_then(|&node_id| arena.get(node_id))
-								.filter(|m| m.enabled())
-								.and_then(|m| {
+								t.enabled()
+								.then(|| {
 									GasArena::with_all_mixtures(|all_mixtures| {
-										all_mixtures.get(m.mix).map(|entry| {
+										all_mixtures.get(t.mix).map(|entry| {
 											let gas: &mut Mixture = &mut entry.write();
 											gas.temperature_share_non_gas(
 												/*
@@ -866,12 +863,13 @@ fn _process_heat_start() -> Result<(), String> {
 										})
 									})
 								})
+								.flatten()
 								.unwrap_or(new_temp),
-							Ordering::Relaxed,
+							Ordering::Release,
 						);
 						let _ = t.temperature.fetch_update(
-							Ordering::Relaxed,
-							Ordering::Relaxed,
+							Ordering::Release,
+							Ordering::Acquire,
 							|item| {
 								if !item.is_normal() {
 									Some(2.7)
@@ -880,9 +878,10 @@ fn _process_heat_start() -> Result<(), String> {
 								}
 							},
 						);
-						if t.temperature.load(Ordering::Relaxed)
+						let cur_temp = t.temperature.load(Ordering::Acquire);
+						if cur_temp
 							> MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
-							&& t.temperature.load(Ordering::Relaxed) > t.heat_capacity
+							&& cur_temp > t.heat_capacity
 						{
 							// not what heat capacity means but whatever
 							drop(sender.try_send(Box::new(move || {
@@ -896,9 +895,10 @@ fn _process_heat_start() -> Result<(), String> {
 			});
 			//Alright, now how much time did that take?
 			let bench = start_time.elapsed().as_nanos();
-			let old_bench = HEAT_PROCESS_TIME.load(Ordering::Acquire);
 			// We display this as part of the MC atmospherics stuff.
-			HEAT_PROCESS_TIME.store((old_bench * 3 + (bench * 7) as u64) / 10, Ordering::Release);
+			let _ = HEAT_PROCESS_TIME.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |item| {
+				Some((item * 3 + (bench * 7) as u64) / 10)
+			});
 			drop(task_lock);
 		});
 	});

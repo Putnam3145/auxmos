@@ -25,8 +25,9 @@ use rayon;
 
 use rayon::prelude::*;
 
+use atomic_float::AtomicF32;
 use std::mem::drop;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bitflags::bitflags;
 
@@ -93,6 +94,12 @@ struct TurfMixture {
 	pub flags: SimulationFlags,
 	pub planetary_atmos: Option<u32>,
 	pub vis_hash: AtomicU64,
+
+	pub thermal_conductivity: f32,
+	pub heat_capacity: f32,
+	pub adjacent_to_space: bool,
+
+	pub temperature: AtomicF32,
 }
 
 #[allow(dead_code)]
@@ -173,15 +180,6 @@ impl TurfMixture {
 		});
 		ret
 	}
-}
-
-// all non-space turfs get these, not just ones with air--a lot of gas logic relies on all TurfMixtures having a valid mix
-#[derive(Clone, Copy, Default)]
-struct ThermalInfo {
-	pub temperature: f32,
-	pub thermal_conductivity: f32,
-	pub heat_capacity: f32,
-	pub adjacent_to_space: bool,
 }
 
 type TurfGraphMap = IndexMap<TurfID, NodeIndex<usize>, FxBuildHasher>;
@@ -343,8 +341,6 @@ impl TurfGases {
 }
 
 static TURF_GASES: RwLock<Option<TurfGases>> = const_rwlock(None);
-// Turfs with temperatures/heat capacities. This is distinct from the above.
-static mut TURF_TEMPERATURES: Option<DashMap<TurfID, ThermalInfo, FxBuildHasher>> = None;
 // We store planetary atmos by hash of the initial atmos string here for speed.
 static mut PLANETARY_ATMOS: Option<DashMap<u32, Mixture, FxBuildHasher>> = None;
 
@@ -362,7 +358,6 @@ fn _initialize_turf_statics() -> Result<(), String> {
 			graph: StableDiGraph::with_capacity(650_250, 1_300_500),
 			map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
 		});
-		TURF_TEMPERATURES = Some(Default::default());
 		PLANETARY_ATMOS = Some(Default::default());
 		*DIRTY_TURFS.lock() = Some(Default::default());
 	};
@@ -375,7 +370,6 @@ fn _shutdown_turfs() {
 	*DIRTY_TURFS.lock() = None;
 	*TURF_GASES.write() = None;
 	unsafe {
-		TURF_TEMPERATURES = None;
 		PLANETARY_ATMOS = None;
 	}
 }
@@ -414,10 +408,6 @@ fn planetary_atmos() -> &'static DashMap<u32, Mixture, FxBuildHasher> {
 	unsafe { PLANETARY_ATMOS.as_ref().unwrap() }
 }
 
-fn turf_temperatures() -> &'static DashMap<TurfID, ThermalInfo, FxBuildHasher> {
-	unsafe { TURF_TEMPERATURES.as_ref().unwrap() }
-}
-
 fn register_turf(id: u32) -> Result<(), Runtime> {
 	let src = unsafe { Value::turf_by_id_unchecked(id) };
 	let flag = determine_turf_flag(&src);
@@ -437,6 +427,17 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 			.to_bits() as usize;
 		to_insert.flags = SimulationFlags::from_bits_truncate(flag as u8);
 		to_insert.id = id;
+		to_insert.thermal_conductivity = src
+			.get_number(byond_string!("thermal_conductivity"))
+			.unwrap_or(0.0);
+		to_insert.heat_capacity = src
+			.get_number(byond_string!("heat_capacity"))
+			.unwrap_or(0.0);
+		to_insert.adjacent_to_space = false;
+		to_insert.temperature = AtomicF32::new(
+			src.get_number(byond_string!("initial_temperature"))
+				.unwrap_or(TCMB),
+		);
 
 		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
 			if is_planet != 0.0 {
@@ -456,31 +457,6 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 		with_turf_gases_write(|arena| arena.insert_turf(to_insert));
 	} else {
 		with_turf_gases_write(|arena| arena.remove_turf(id));
-	}
-	if src
-		.get_number(byond_string!("thermal_conductivity"))
-		.unwrap_or_default()
-		> 0.0 && src
-		.get_number(byond_string!("heat_capacity"))
-		.unwrap_or_default()
-		> 0.0
-	{
-		//temperature musn't change on turf updates, everything else must though
-		let mut entry = turf_temperatures()
-			.entry(id)
-			.or_insert_with(|| ThermalInfo {
-				temperature: src
-					.get_number(byond_string!("initial_temperature"))
-					.unwrap_or(TCMB),
-				..Default::default()
-			});
-		entry.thermal_conductivity = src
-			.get_number(byond_string!("thermal_conductivity"))
-			.unwrap();
-		entry.heat_capacity = src.get_number(byond_string!("heat_capacity")).unwrap();
-		entry.adjacent_to_space = flag == 0;
-	} else {
-		turf_temperatures().remove(&id);
 	}
 	Ok(())
 }
@@ -596,9 +572,11 @@ fn _hook_infos() {
 	with_dirty_turfs(|dirty_turfs| -> Result<(), Runtime> {
 		let e = dirty_turfs.entry(unsafe { src.raw.data.id }).or_default();
 		e.insert(DirtyFlags::DIRTY_ADJACENT);
+		/*
 		if src.get_type()?.as_str().starts_with("/turf/open/space") {
 			e.insert(DirtyFlags::DIRTY_ADJACENT_TO_SPACE);
 		}
+		*/
 		Ok(())
 	})?;
 	Ok(Value::null())
@@ -606,15 +584,18 @@ fn _hook_infos() {
 
 #[hook("/turf/proc/return_temperature")]
 fn _hook_turf_temperature() {
-	if let Some(temp_info) = turf_temperatures().get(&unsafe { src.raw.data.id }) {
-		if temp_info.temperature.is_normal() {
-			Ok(Value::from(temp_info.temperature))
+	with_turf_gases_read(|arena| -> DMResult {
+		if let Some(&node_index) = arena.get_id(&unsafe { src.raw.data.id }) {
+			let tmix = arena.get(node_index).unwrap();
+			if tmix.temperature.load(Ordering::Relaxed).is_normal() {
+				Ok(Value::from(tmix.temperature.load(Ordering::Relaxed)))
+			} else {
+				src.get(byond_string!("initial_temperature"))
+			}
 		} else {
 			src.get(byond_string!("initial_temperature"))
 		}
-	} else {
-		src.get(byond_string!("initial_temperature"))
-	}
+	})
 }
 
 // gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't

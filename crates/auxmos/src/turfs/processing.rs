@@ -763,55 +763,52 @@ fn _process_heat_start() -> Result<(), String> {
 			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * info.time_delta;
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * info.time_delta;
 			with_turf_gases_read(|arena| {
-				let temps_to_update = turf_temperatures()
+				let temps_to_update = arena
+					.map
 					.par_iter()
-					.map(|entry| {
-						let (&i, &t) = entry.pair();
-						(i, t)
-					})
-					.filter_map(|(i, t)| {
+					.filter_map(|(&id, &node_index)| {
 						/*
 							If it has no thermal conductivity, low thermal capacity or has no adjacencies,
 							then it's not gonna interact, or at least shouldn't.
 						*/
-						(t.thermal_conductivity > 0.0
-							&& t.heat_capacity > 0.0 && arena
-							.adjacent_turf_ids(*arena.get_id(&i)?)
+						let tmix = arena.get(node_index).unwrap();
+						(tmix.thermal_conductivity > 0.0
+							&& tmix.heat_capacity > 0.0 && arena
+							.adjacent_turf_ids(node_index)
 							.next()
 							.is_some())
 						.then(|| {
 							let mut heat_delta = 0.0;
-							let is_temp_delta_with_air = arena
-								.map
-								.get(&i)
-								.and_then(|&node_id| arena.get(node_id))
-								.filter(|m| m.enabled())
-								.and_then(|m| {
+							let is_temp_delta_with_air = tmix
+								.enabled()
+								.then(|| {
 									GasArena::with_all_mixtures(|all_mixtures| {
-										all_mixtures.get(m.mix).and_then(RwLock::try_read).map(
-											|gas| (t.temperature - gas.get_temperature() > 1.0),
+										all_mixtures.get(tmix.mix).and_then(RwLock::try_read).map(
+											|gas| {
+												tmix.temperature.load(Ordering::Relaxed)
+													- gas.get_temperature() > 1.0
+											},
 										)
 									})
 								})
+								.flatten()
 								.unwrap_or(false);
 
-							for loc in arena.adjacent_turf_ids(*arena.get_id(&i).unwrap()) {
-								heat_delta += turf_temperatures()
-									.try_get(&loc)
-									.try_unwrap()
-									.map_or(0.0, |other| {
-										/*
-											The horrible line below is essentially
-											sharing between solids--making it the minimum of both
-											conductivities makes this consistent, funnily enough.
-										*/
-										t.thermal_conductivity.min(other.thermal_conductivity)
-											* (other.temperature - t.temperature) * (t.heat_capacity
-											* other.heat_capacity
-											/ (t.heat_capacity + other.heat_capacity))
-									});
+							for node_idx in arena.adjacent_node_ids(node_index) {
+								heat_delta += arena.get(node_idx).map_or(0.0, |other| {
+									/*
+										The horrible line below is essentially
+										sharing between solids--making it the minimum of both
+										conductivities makes this consistent, funnily enough.
+									*/
+									tmix.thermal_conductivity.min(other.thermal_conductivity)
+										* (other.temperature.load(Ordering::Relaxed)
+											- tmix.temperature.load(Ordering::Relaxed))
+										* (tmix.heat_capacity * other.heat_capacity
+											/ (tmix.heat_capacity + other.heat_capacity))
+								});
 							}
-							if t.adjacent_to_space {
+							if tmix.adjacent_to_space {
 								/*
 									Straight up the standard blackbody radiation
 									equation. All these are f64s because
@@ -820,55 +817,72 @@ fn _process_heat_start() -> Result<(), String> {
 									this will never go into infinities.
 								*/
 								let blackbody_radiation: f64 = (emissivity_constant
-									* (f64::from(t.temperature).powi(4)))
+									* (f64::from(tmix.temperature.load(Ordering::Relaxed))
+										.powi(4)))
 									- radiation_from_space_tick;
 								heat_delta -= blackbody_radiation as f32;
 							}
-							let temp_delta = heat_delta / t.heat_capacity;
-							(is_temp_delta_with_air || temp_delta.abs() > 0.01)
-								.then(|| (i, t.temperature + temp_delta))
+							let temp_delta = heat_delta / tmix.heat_capacity;
+							(is_temp_delta_with_air || temp_delta.abs() > 0.01).then(|| {
+								(
+									id,
+									tmix.temperature.load(Ordering::Relaxed) + temp_delta,
+									node_index,
+								)
+							})
 						})
 						.flatten()
 					})
 					.collect::<Vec<_>>();
-				temps_to_update
-					.par_iter()
-					.with_min_len(100)
-					.for_each(|&(i, new_temp)| {
-						let maybe_t = turf_temperatures().try_get_mut(&i).try_unwrap();
+				temps_to_update.par_iter().with_min_len(100).for_each(
+					|&(i, new_temp, node_index)| {
+						let maybe_t = arena.get(node_index);
 						if maybe_t.is_none() {
 							return;
 						}
-						let t: &mut ThermalInfo = &mut maybe_t.unwrap();
-						t.temperature = arena
-							.map
-							.get(&i)
-							.and_then(|&node_id| arena.get(node_id))
-							.filter(|m| m.enabled())
-							.and_then(|m| {
-								GasArena::with_all_mixtures(|all_mixtures| {
-									all_mixtures.get(m.mix).map(|entry| {
-										let gas: &mut Mixture = &mut entry.write();
-										gas.temperature_share_non_gas(
-											/*
-												This value should be lower than the
-												turf-to-turf conductivity for balance reasons
-												as well as realism, otherwise fires will
-												just sort of solve theirselves over time.
-											*/
-											t.thermal_conductivity * OPEN_HEAT_TRANSFER_COEFFICIENT,
-											new_temp,
-											t.heat_capacity,
-										)
+						let t = maybe_t.unwrap();
+						t.temperature.store(
+							arena
+								.map
+								.get(&i)
+								.and_then(|&node_id| arena.get(node_id))
+								.filter(|m| m.enabled())
+								.and_then(|m| {
+									GasArena::with_all_mixtures(|all_mixtures| {
+										all_mixtures.get(m.mix).map(|entry| {
+											let gas: &mut Mixture = &mut entry.write();
+											gas.temperature_share_non_gas(
+												/*
+													This value should be lower than the
+													turf-to-turf conductivity for balance reasons
+													as well as realism, otherwise fires will
+													just sort of solve theirselves over time.
+												*/
+												t.thermal_conductivity
+													* OPEN_HEAT_TRANSFER_COEFFICIENT,
+												new_temp,
+												t.heat_capacity,
+											)
+										})
 									})
 								})
-							})
-							.unwrap_or(new_temp);
-						if !t.temperature.is_normal() {
-							t.temperature = 2.7;
-						}
-						if t.temperature > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
-							&& t.temperature > t.heat_capacity
+								.unwrap_or(new_temp),
+							Ordering::Relaxed,
+						);
+						let _ = t.temperature.fetch_update(
+							Ordering::Relaxed,
+							Ordering::Relaxed,
+							|item| {
+								if !item.is_normal() {
+									Some(2.7)
+								} else {
+									None
+								}
+							},
+						);
+						if t.temperature.load(Ordering::Relaxed)
+							> MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
+							&& t.temperature.load(Ordering::Relaxed) > t.heat_capacity
 						{
 							// not what heat capacity means but whatever
 							drop(sender.try_send(Box::new(move || {
@@ -877,7 +891,8 @@ fn _process_heat_start() -> Result<(), String> {
 								Ok(())
 							})));
 						}
-					});
+					},
+				);
 			});
 			//Alright, now how much time did that take?
 			let bench = start_time.elapsed().as_nanos();

@@ -192,7 +192,6 @@ struct TurfGases {
 	map: TurfGraphMap,
 }
 
-#[allow(unused)]
 impl TurfGases {
 	pub fn insert_turf(&mut self, tmix: TurfMixture) {
 		self.map.insert(tmix.id, self.graph.add_node(tmix));
@@ -313,6 +312,7 @@ impl TurfGases {
 			.filter_map(move |idx| Some((&idx.id, all_mixtures.get(idx.mix)?)))
 	}
 
+	/*
 	pub fn adjacent_infos(
 		&self,
 		index: NodeIndex<usize>,
@@ -323,7 +323,6 @@ impl TurfGases {
 			.filter_map(|neighbor| self.graph.node_weight(neighbor))
 	}
 
-	/*
 	pub fn adjacent_ids<'a>(&'a self, idx: TurfID) -> impl Iterator<Item = &'a TurfID> {
 		self.graph
 			.neighbors(*self.map.get(&idx).unwrap())
@@ -419,7 +418,7 @@ fn turf_temperatures() -> &'static DashMap<TurfID, ThermalInfo, FxBuildHasher> {
 	unsafe { TURF_TEMPERATURES.as_ref().unwrap() }
 }
 
-fn register_turf(id: u32) -> Result<Option<u32>, Runtime> {
+fn register_turf(id: u32) -> Result<(), Runtime> {
 	let src = unsafe { Value::turf_by_id_unchecked(id) };
 	let flag = determine_turf_flag(&src);
 	if flag >= 0 {
@@ -455,9 +454,10 @@ fn register_turf(id: u32) -> Result<Option<u32>, Runtime> {
 			}
 		}
 		with_turf_gases_write(|arena| arena.insert_turf(to_insert));
-		Ok(None)
+		Ok(())
 	} else {
-		Ok(Some(id))
+		with_turf_gases_write(|arena| arena.remove_turf(id));
+		Ok(())
 	}
 }
 

@@ -454,11 +454,35 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 			}
 		}
 		with_turf_gases_write(|arena| arena.insert_turf(to_insert));
-		Ok(())
 	} else {
 		with_turf_gases_write(|arena| arena.remove_turf(id));
-		Ok(())
 	}
+	if src
+		.get_number(byond_string!("thermal_conductivity"))
+		.unwrap_or_default()
+		> 0.0 && src
+		.get_number(byond_string!("heat_capacity"))
+		.unwrap_or_default()
+		> 0.0
+	{
+		//temperature musn't change on turf updates, everything else must though
+		let mut entry = turf_temperatures()
+			.entry(id)
+			.or_insert_with(|| ThermalInfo {
+				temperature: src
+					.get_number(byond_string!("initial_temperature"))
+					.unwrap_or(TCMB),
+				..Default::default()
+			});
+		entry.thermal_conductivity = src
+			.get_number(byond_string!("thermal_conductivity"))
+			.unwrap();
+		entry.heat_capacity = src.get_number(byond_string!("heat_capacity")).unwrap();
+		entry.adjacent_to_space = flag == 0;
+	} else {
+		turf_temperatures().remove(&id);
+	}
+	Ok(())
 }
 
 #[hook("/turf/proc/update_air_ref")]
@@ -564,31 +588,6 @@ fn update_adjacency_info(id: u32, adjacent_to_spess: bool) -> Result<(), Runtime
 		}
 		Ok(())
 	})?;
-	if src_turf
-		.get_number(byond_string!("thermal_conductivity"))
-		.unwrap_or_default()
-		> 0.0 && src_turf
-		.get_number(byond_string!("heat_capacity"))
-		.unwrap_or_default()
-		> 0.0
-	{
-		//temperature musn't change on turf updates, everything else must though
-		let mut entry = turf_temperatures()
-			.entry(id)
-			.or_insert_with(|| ThermalInfo {
-				temperature: src_turf
-					.get_number(byond_string!("initial_temperature"))
-					.unwrap_or(TCMB),
-				..Default::default()
-			});
-		entry.thermal_conductivity = src_turf
-			.get_number(byond_string!("thermal_conductivity"))
-			.unwrap();
-		entry.heat_capacity = src_turf.get_number(byond_string!("heat_capacity")).unwrap();
-		entry.adjacent_to_space = adjacent_to_spess;
-	} else {
-		turf_temperatures().remove(&id);
-	}
 	Ok(())
 }
 

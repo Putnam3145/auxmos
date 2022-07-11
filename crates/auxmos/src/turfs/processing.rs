@@ -795,8 +795,6 @@ fn _process_heat_start() -> Result<(), String> {
 								})
 								.unwrap_or(false);
 
-							let mut spess_adjacents = false;
-
 							for loc in arena.adjacent_turf_ids(*arena.get_id(&i).unwrap()) {
 								heat_delta += turf_temperatures()
 									.try_get(&loc)
@@ -807,16 +805,13 @@ fn _process_heat_start() -> Result<(), String> {
 											sharing between solids--making it the minimum of both
 											conductivities makes this consistent, funnily enough.
 										*/
-										if other.adjacent_to_space {
-											spess_adjacents = true;
-										}
 										t.thermal_conductivity.min(other.thermal_conductivity)
 											* (other.temperature - t.temperature) * (t.heat_capacity
 											* other.heat_capacity
 											/ (t.heat_capacity + other.heat_capacity))
 									});
 							}
-							if t.adjacent_to_space || spess_adjacents {
+							if t.adjacent_to_space {
 								/*
 									Straight up the standard blackbody radiation
 									equation. All these are f64s because

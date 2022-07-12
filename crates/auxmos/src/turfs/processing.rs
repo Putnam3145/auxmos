@@ -760,128 +760,116 @@ fn _process_heat_start() -> Result<(), String> {
 			let task_lock = TASKS.read();
 			let start_time = Instant::now();
 			let sender = byond_callback_sender();
-			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * info.time_delta;
-			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * info.time_delta;
 			with_turf_gases_read(|arena| {
 				let temps_to_update = arena
 					.map
 					.par_iter()
+					.filter(|(_, &index)| {
+						let tmix = arena.get(index).unwrap();
+						tmix.thermal_conductivity > 0.0
+							&& tmix.heat_capacity > 0.0 && arena
+							.adjacent_turf_ids(index)
+							.next()
+							.is_some()
+					})
 					.filter_map(|(&id, &node_index)| {
 						/*
 							If it has no thermal conductivity, low thermal capacity or has no adjacencies,
 							then it's not gonna interact, or at least shouldn't.
 						*/
 						let tmix = arena.get(node_index).unwrap();
-						(tmix.thermal_conductivity > 0.0
-							&& tmix.heat_capacity > 0.0 && arena
-							.adjacent_turf_ids(node_index)
-							.next()
-							.is_some())
-						.then(|| {
-							let mut heat_delta = 0.0;
-							let cur_temp = tmix.temperature.load(Ordering::Relaxed);
-							let is_temp_delta_with_air = tmix
-								.enabled()
+						let mut heat_delta = 0.0;
+						let mut shared_turfs: TinyVec<[(NodeIndex<usize>, f32); 6]> =
+							Default::default();
+						let cur_temp = tmix.temperature.load(Ordering::Relaxed);
+						let is_temp_delta_with_air =
+							tmix.enabled()
 								.then(|| {
 									GasArena::with_all_mixtures(|all_mixtures| {
 										all_mixtures.get(tmix.mix).and_then(RwLock::try_read).map(
-											|gas| {
-												cur_temp
-													- gas.get_temperature() > 1.0
-											},
+											|gas| (cur_temp - gas.get_temperature()).abs() > 1.0,
 										)
 									})
 								})
 								.flatten()
 								.unwrap_or(false);
 
-							for node_idx in arena.adjacent_node_ids(node_index) {
-								heat_delta += arena.get(node_idx).map_or(0.0, |other| {
-									/*
-										The horrible line below is essentially
-										sharing between solids--making it the minimum of both
-										conductivities makes this consistent, funnily enough.
-									*/
-									tmix.thermal_conductivity.min(other.thermal_conductivity)
-										* (other.temperature.load(Ordering::Relaxed)
-											- cur_temp)
-										* (tmix.heat_capacity * other.heat_capacity
-											/ (tmix.heat_capacity + other.heat_capacity))
-								});
-							}
-							if tmix.adjacent_to_space {
-								/*
-									Straight up the standard blackbody radiation
-									equation. All these are f64s because
-									f32::MAX^4 < f64::MAX, and t.temperature
-									is ordinarily an f32, meaning that
-									this will never go into infinities.
-								*/
-								let blackbody_radiation: f64 = (emissivity_constant
-									* (f64::from(cur_temp)
-										.powi(4)))
-									- radiation_from_space_tick;
-								heat_delta -= blackbody_radiation as f32;
-							}
-							let temp_delta = heat_delta / tmix.heat_capacity;
-							(is_temp_delta_with_air || temp_delta.abs() > 0.01).then(|| {
-								(
-									id,
-									cur_temp + temp_delta,
-									node_index,
-								)
-							})
-						})
-						.flatten()
+						for (other, nodeid) in arena
+							.adjacent_node_ids(node_index)
+							.filter_map(|idx| Some((arena.get(idx)?, idx)))
+						{
+							/*
+								The horrible line below is essentially
+								sharing between solids--making it the minimum of both
+								conductivities makes this consistent, funnily enough.
+							*/
+							let shareds = tmix.thermal_conductivity.min(other.thermal_conductivity)
+								* (other.temperature.load(Ordering::Relaxed) - cur_temp)
+								* (tmix.heat_capacity * other.heat_capacity
+									/ (tmix.heat_capacity + other.heat_capacity));
+							heat_delta += shareds;
+							shared_turfs.push((nodeid, shareds / other.heat_capacity));
+						}
+						if tmix.adjacent_to_space && cur_temp > T0C {
+							/*
+								Straight up the standard blackbody radiation
+								equation. All these are f64s because
+								f32::MAX^4 < f64::MAX, and t.temperature
+								is ordinarily an f32, meaning that
+								this will never go into infinities.
+							*/
+							let blackbody_radiation: f64 =
+								STEFAN_BOLTZMANN_CONSTANT * (f64::from(cur_temp).powi(4));
+							heat_delta -= blackbody_radiation as f32;
+						}
+						let temp_delta = heat_delta / tmix.heat_capacity;
+						(is_temp_delta_with_air || temp_delta.abs() > 0.01)
+							.then(|| (id, node_index, temp_delta, shared_turfs))
 					})
 					.collect::<Vec<_>>();
-				temps_to_update.par_iter().with_min_len(100).for_each(
-					|&(i, new_temp, node_index)| {
-						let maybe_t = arena.get(node_index);
-						if maybe_t.is_none() {
-							return;
-						}
-						let t = maybe_t.unwrap();
-						t.temperature.store(
-								t.enabled()
-								.then(|| {
-									GasArena::with_all_mixtures(|all_mixtures| {
-										all_mixtures.get(t.mix).map(|entry| {
-											let gas: &mut Mixture = &mut entry.write();
-											gas.temperature_share_non_gas(
-												/*
-													This value should be lower than the
-													turf-to-turf conductivity for balance reasons
-													as well as realism, otherwise fires will
-													just sort of solve theirselves over time.
-												*/
-												t.thermal_conductivity
-													* OPEN_HEAT_TRANSFER_COEFFICIENT,
-												new_temp,
-												t.heat_capacity,
-											)
-										})
+				temps_to_update.into_par_iter().for_each(
+					|(i, node_index, temp_delta, shared_turfs)| {
+						let t = arena.get(node_index).unwrap();
+						let actual_delta = t
+							.enabled()
+							.then(|| {
+								GasArena::with_all_mixtures(|all_mixtures| {
+									all_mixtures.get(t.mix).map(|entry| {
+										let gas: &mut Mixture = &mut entry.write();
+										gas.temperature_share_non_gas(
+											/*
+												This value should be lower than the
+												turf-to-turf conductivity for balance reasons
+												as well as realism, otherwise fires will
+												just sort of solve theirselves over time.
+											*/
+											t.thermal_conductivity * OPEN_HEAT_TRANSFER_COEFFICIENT,
+											temp_delta,
+											t.heat_capacity,
+										)
 									})
 								})
-								.flatten()
-								.unwrap_or(new_temp),
-							Ordering::Release,
-						);
-						let _ = t.temperature.fetch_update(
-							Ordering::Release,
-							Ordering::Acquire,
-							|item| {
-								if !item.is_normal() {
-									Some(2.7)
-								} else {
-									None
-								}
-							},
-						);
-						let cur_temp = t.temperature.load(Ordering::Acquire);
-						if cur_temp
-							> MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
-							&& cur_temp > t.heat_capacity
+							})
+							.flatten()
+							.unwrap_or(temp_delta);
+
+						//fetch_add() returns the previous value (lol)
+						let new_temp =
+							t.temperature.fetch_add(actual_delta, Ordering::Release) + actual_delta;
+
+						//first law of thermodynamic and all
+						for (id, temp_delta) in shared_turfs {
+							if let Some(tmix) = arena.get(id) {
+								tmix.temperature.fetch_sub(temp_delta, Ordering::Relaxed);
+							}
+						}
+
+						if !new_temp.is_normal() {
+							t.temperature.store(TCMB, Ordering::Acquire);
+						}
+
+						if new_temp > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
+							&& new_temp > t.heat_capacity
 						{
 							// not what heat capacity means but whatever
 							drop(sender.try_send(Box::new(move || {

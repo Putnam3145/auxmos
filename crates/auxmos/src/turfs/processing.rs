@@ -790,9 +790,7 @@ fn _process_heat_start() -> Result<(), String> {
 						.filter(|(&turf_id, &heat_index)| {
 							let info = arena.get(heat_index).unwrap();
 							let temp = { *info.temperature.read() };
-							if temp > MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION {
-								return true;
-							}
+							//can share w/ others?
 							if arena
 								.adjacent_heats(heat_index)
 								.find(|item| {
@@ -803,8 +801,23 @@ fn _process_heat_start() -> Result<(), String> {
 							{
 								return true;
 							}
-
-							if GasArena::with_all_mixtures(|all_mixtures| {
+							if temp > MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION {
+								//can share w/ space?
+								if info.adjacent_to_space {
+									return true;
+								//can share w/air?
+								} else if air_arena
+									.get_id(&turf_id)
+									.and_then(|&nodeid| {
+										let tmix = air_arena.get(nodeid)?;
+										tmix.enabled().then(|| tmix)
+									})
+									.is_some()
+								{
+									return true;
+								}
+							} else if GasArena::with_all_mixtures(|all_mixtures| {
+								//can air share w/ us?
 								if let Some(node) = air_arena.get_id(&turf_id) {
 									let cur_mix = air_arena.get(*node).unwrap();
 									if !cur_mix.enabled() {
@@ -834,6 +847,8 @@ fn _process_heat_start() -> Result<(), String> {
 							let mut heat_delta = 0.0;
 							let temp_read = info.temperature.upgradable_read();
 							let cur_temp = *temp_read;
+
+							//share w/ adjacents
 							for other in arena
 								.adjacent_node_ids(node_index)
 								.filter_map(|idx| Some(arena.get(idx)?))
@@ -857,6 +872,8 @@ fn _process_heat_start() -> Result<(), String> {
 									);
 								*other_write -= shareds / other.heat_capacity;
 							}
+
+							//share w/ space
 							if info.adjacent_to_space && cur_temp > T0C {
 								/*
 									Straight up the standard blackbody radiation
@@ -880,24 +897,31 @@ fn _process_heat_start() -> Result<(), String> {
 
 							*temp_write += temp_delta;
 
-							let tmix = air_arena.get(*air_arena.get_id(&id).unwrap()).unwrap();
-							if let Some(update) = GasArena::with_all_mixtures(|all_mixtures| {
-								all_mixtures.get(tmix.mix).map(|entry| {
-									let gas: &mut Mixture = &mut entry.write();
-									gas.temperature_share_non_gas(
-										/*
-											This value should be lower than the
-											turf-to-turf conductivity for balance reasons
-											as well as realism, otherwise fires will
-											just sort of solve theirselves over time.
-										*/
-										info.thermal_conductivity * OPEN_HEAT_TRANSFER_COEFFICIENT,
-										*temp_write,
-										info.heat_capacity,
-									)
-								})
-							}) {
-								*temp_write = update
+							//share w/ air
+							if let Some(&id) = air_arena.get_id(&id) {
+								let tmix = air_arena.get(id).unwrap();
+								if tmix.enabled() {
+									if let Some(update) =
+										GasArena::with_all_mixtures(|all_mixtures| {
+											all_mixtures.get(tmix.mix).map(|entry| {
+												let gas: &mut Mixture = &mut entry.write();
+												gas.temperature_share_non_gas(
+													/*
+														This value should be lower than the
+														turf-to-turf conductivity for balance reasons
+														as well as realism, otherwise fires will
+														just sort of solve theirselves over time.
+													*/
+													info.thermal_conductivity
+														* OPEN_HEAT_TRANSFER_COEFFICIENT,
+													*temp_write,
+													info.heat_capacity,
+												)
+											})
+										}) {
+										*temp_write = update
+									}
+								}
 							}
 
 							if !temp_write.is_normal() {

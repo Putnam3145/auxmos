@@ -48,7 +48,10 @@ struct SSairInfo {
 	planet_enabled: bool,
 }
 
-struct SSheatInfo {}
+#[derive(Copy, Clone)]
+struct SSheatInfo {
+	time_delta: f64,
+}
 
 fn with_processing_callback_receiver<T>(f: impl Fn(&flume::Receiver<Box<SSairInfo>>) -> T) -> T {
 	f(&TURF_CHANNEL.1)
@@ -755,7 +758,6 @@ fn _process_heat_notify() {
 		does this in general, thus turf gas mixtures being 2.5 m^3.
 	*/
 	let sender = heat_processing_callbacks_sender();
-	/*
 	let time_delta = (src.get_number(byond_string!("wait")).map_err(|_| {
 		runtime!(
 			"Attempt to interpret non-number value as number {} {}:{}",
@@ -764,8 +766,7 @@ fn _process_heat_notify() {
 			std::column!()
 		)
 	})? / 10.0) as f64;
-	*/
-	let _ = sender.try_send(SSheatInfo {});
+	let _ = sender.try_send(SSheatInfo { time_delta });
 	Ok(Value::null())
 }
 
@@ -775,57 +776,56 @@ fn _process_heat_start() -> Result<(), String> {
 	INIT_HEAT.call_once(|| {
 		rayon::spawn(|| loop {
 			//this will block until process_turf_heat is called
-			let _ = with_heat_processing_callback_receiver(|receiver| receiver.recv().unwrap());
+			let info = with_heat_processing_callback_receiver(|receiver| receiver.recv().unwrap());
 			let task_lock = TASKS.read();
 			let start_time = Instant::now();
 			let sender = byond_callback_sender();
+			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * info.time_delta;
+			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * info.time_delta;
 			with_turf_heat_read(|arena| {
 				with_turf_gases_read(|air_arena| {
 					arena
 						.map
 						.par_iter()
-						.filter_map(|(turf_id, heat_index)| {
-							let info = arena.get(*heat_index).unwrap();
+						.filter(|(&turf_id, &heat_index)| {
+							let info = arena.get(heat_index).unwrap();
 							let temp = { *info.temperature.read() };
-							let has_shareable_neighbors = {
-								arena
-									.adjacent_heats(*heat_index)
-									.find(|item| {
-										(temp - *item.temperature.read()).abs()
-											> MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER
-									})
-									.is_some()
-							};
-
-							let self_can_start = temp > MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION;
-
-							let has_valid_air = if info.is_open {
-								GasArena::with_all_mixtures(|all_mixtures| {
-									if let Some(node) = air_arena.get_id(turf_id) {
-										let cur_mix = air_arena.get(*node).unwrap();
-										if !cur_mix.enabled() {
-											return false;
-										}
-										let air_temp =
-											all_mixtures[cur_mix.mix].read().get_temperature();
-										if air_temp < MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION {
-											return false;
-										}
-										(temp - air_temp).abs()
-											> MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER
-									} else {
-										false
-									}
+							if temp > MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION {
+								return true;
+							}
+							if arena
+								.adjacent_heats(heat_index)
+								.find(|item| {
+									(temp - *item.temperature.read()).abs()
+										> MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER
 								})
-							} else {
-								false
-							};
+								.is_some()
+							{
+								return true;
+							}
 
-							(has_valid_air || (self_can_start && has_shareable_neighbors)).then(
-								|| (turf_id, heat_index, has_valid_air, has_shareable_neighbors),
-							)
+							if GasArena::with_all_mixtures(|all_mixtures| {
+								if let Some(node) = air_arena.get_id(&turf_id) {
+									let cur_mix = air_arena.get(*node).unwrap();
+									if !cur_mix.enabled() {
+										return false;
+									}
+									let air_temp =
+										all_mixtures[cur_mix.mix].read().get_temperature();
+									if air_temp < MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION {
+										return false;
+									}
+									(temp - air_temp).abs() > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER
+								} else {
+									false
+								}
+							}) {
+								return true;
+							}
+
+							false
 						})
-						.for_each(|(&id, &node_index, has_air, has_neighbors)| {
+						.for_each(|(&id, &node_index)| {
 							/*
 								If it has no thermal conductivity, low thermal capacity or has no adjacencies,
 								then it's not gonna interact, or at least shouldn't.
@@ -834,30 +834,28 @@ fn _process_heat_start() -> Result<(), String> {
 							let mut heat_delta = 0.0;
 							let temp_read = info.temperature.upgradable_read();
 							let cur_temp = *temp_read;
-							if has_neighbors {
-								for other in arena
-									.adjacent_node_ids(node_index)
-									.filter_map(|idx| Some(arena.get(idx)?))
-								{
-									/*
-										The horrible line below is essentially
-										sharing between solids--making it the minimum of both
-										conductivities makes this consistent, funnily enough.
-									*/
-									let other_read = other.temperature.upgradable_read();
-									let shareds =
-										info.thermal_conductivity.min(other.thermal_conductivity)
-											* (*other_read - cur_temp) * (info.heat_capacity
-											* other.heat_capacity / (info
-											.heat_capacity
-											+ other.heat_capacity));
-									heat_delta += shareds;
-									let mut other_write =
-										parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(
-											other_read,
-										);
-									*other_write -= shareds / other.heat_capacity;
-								}
+							for other in arena
+								.adjacent_node_ids(node_index)
+								.filter_map(|idx| Some(arena.get(idx)?))
+							{
+								/*
+									The horrible line below is essentially
+									sharing between solids--making it the minimum of both
+									conductivities makes this consistent, funnily enough.
+								*/
+								let other_read = other.temperature.upgradable_read();
+								let shareds =
+									info.thermal_conductivity.min(other.thermal_conductivity)
+										* (*other_read - cur_temp) * (info.heat_capacity
+										* other.heat_capacity / (info
+										.heat_capacity
+										+ other.heat_capacity));
+								heat_delta += shareds;
+								let mut other_write =
+									parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(
+										other_read,
+									);
+								*other_write -= shareds / other.heat_capacity;
 							}
 							if info.adjacent_to_space && cur_temp > T0C {
 								/*
@@ -867,8 +865,10 @@ fn _process_heat_start() -> Result<(), String> {
 									is ordinarily an f32, meaning that
 									this will never go into infinities.
 								*/
-								let blackbody_radiation: f64 =
-									STEFAN_BOLTZMANN_CONSTANT * (f64::from(cur_temp).powi(4));
+								let blackbody_radiation: f64 = (emissivity_constant
+									* STEFAN_BOLTZMANN_CONSTANT
+									* (f64::from(cur_temp).powi(4)))
+									- radiation_from_space_tick;
 								heat_delta -= blackbody_radiation as f32;
 							}
 							let temp_delta = heat_delta / info.heat_capacity;
@@ -880,27 +880,24 @@ fn _process_heat_start() -> Result<(), String> {
 
 							*temp_write += temp_delta;
 
-							if has_air {
-								let tmix = air_arena.get(*air_arena.get_id(&id).unwrap()).unwrap();
-								if let Some(update) = GasArena::with_all_mixtures(|all_mixtures| {
-									all_mixtures.get(tmix.mix).map(|entry| {
-										let gas: &mut Mixture = &mut entry.write();
-										gas.temperature_share_non_gas(
-											/*
-												This value should be lower than the
-												turf-to-turf conductivity for balance reasons
-												as well as realism, otherwise fires will
-												just sort of solve theirselves over time.
-											*/
-											info.thermal_conductivity
-												* OPEN_HEAT_TRANSFER_COEFFICIENT,
-											*temp_write,
-											info.heat_capacity,
-										)
-									})
-								}) {
-									*temp_write = update
-								}
+							let tmix = air_arena.get(*air_arena.get_id(&id).unwrap()).unwrap();
+							if let Some(update) = GasArena::with_all_mixtures(|all_mixtures| {
+								all_mixtures.get(tmix.mix).map(|entry| {
+									let gas: &mut Mixture = &mut entry.write();
+									gas.temperature_share_non_gas(
+										/*
+											This value should be lower than the
+											turf-to-turf conductivity for balance reasons
+											as well as realism, otherwise fires will
+											just sort of solve theirselves over time.
+										*/
+										info.thermal_conductivity * OPEN_HEAT_TRANSFER_COEFFICIENT,
+										*temp_write,
+										info.heat_capacity,
+									)
+								})
+							}) {
+								*temp_write = update
 							}
 
 							if !temp_write.is_normal() {
@@ -920,12 +917,25 @@ fn _process_heat_start() -> Result<(), String> {
 						});
 				});
 			});
-			//Alright, now how much time did that take?
-			let bench = start_time.elapsed().as_nanos();
-			// We display this as part of the MC atmospherics stuff.
-			let _ = HEAT_PROCESS_TIME.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |item| {
-				Some((item * 3 + (bench * 7) as u64) / 10)
-			});
+			let bench = start_time.elapsed().as_millis();
+			drop(sender.try_send(Box::new(move || {
+				let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
+				let prev_cost = ssair
+					.get_number(byond_string!("cost_superconductivity"))
+					.map_err(|_| {
+						runtime!(
+							"Attempt to interpret non-number value as number {} {}:{}",
+							std::file!(),
+							std::line!(),
+							std::column!()
+						)
+					})?;
+				ssair.set(
+					byond_string!("cost_superconductivity"),
+					Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+				)?;
+				Ok(())
+			})));
 			drop(task_lock);
 		});
 	});

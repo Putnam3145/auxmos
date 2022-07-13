@@ -102,7 +102,6 @@ type TurfID = u32;
 struct ThermalInfo {
 	pub id: TurfID,
 
-	pub is_open: bool,
 	pub thermal_conductivity: f32,
 	pub heat_capacity: f32,
 	pub adjacent_to_space: bool,
@@ -623,8 +622,7 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 	if therm_cond > 0.0 && therm_cap > 0.0 {
 		let therm_info = ThermalInfo {
 			id,
-			is_open: flag >= 0,
-			adjacent_to_space: false,
+			adjacent_to_space: src.call("should_conduct_to_space", &[])?.as_number()? > 0.0,
 			heat_capacity: therm_cap,
 			thermal_conductivity: therm_cond,
 			temperature: RwLock::new(
@@ -781,10 +779,10 @@ fn _hook_turf_temperature() {
 			if read.is_normal() {
 				Ok(Value::from(*read))
 			} else {
-				src.get(byond_string!("initial_temperature"))
+				Ok(Value::from(300))
 			}
 		} else {
-			src.get(byond_string!("initial_temperature"))
+			Ok(Value::from(102))
 		}
 	})
 }

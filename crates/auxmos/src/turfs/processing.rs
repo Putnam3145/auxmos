@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashSet, VecDeque};
 
 use auxtools::*;
+use indexmap::IndexSet;
 
 use super::*;
 
@@ -784,10 +785,10 @@ fn _process_heat_start() -> Result<(), String> {
 			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * info.time_delta;
 			with_turf_heat_read(|arena| {
 				with_turf_gases_read(|air_arena| {
-					arena
+					let adjacencies_to_consider = arena
 						.map
 						.par_iter()
-						.filter(|(&turf_id, &heat_index)| {
+						.filter_map(|(&turf_id, &heat_index)| {
 							let info = arena.get(heat_index).unwrap();
 							let temp = { *info.temperature.read() };
 							//can share w/ others?
@@ -799,12 +800,12 @@ fn _process_heat_start() -> Result<(), String> {
 								})
 								.is_some()
 							{
-								return true;
+								return Some((turf_id, heat_index, true));
 							}
 							if temp > MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION {
 								//can share w/ space?
 								if info.adjacent_to_space {
-									return true;
+									return Some((turf_id, heat_index, false));
 								//can share w/air?
 								} else if air_arena
 									.get_id(&turf_id)
@@ -814,7 +815,7 @@ fn _process_heat_start() -> Result<(), String> {
 									})
 									.is_some()
 								{
-									return true;
+									return Some((turf_id, heat_index, false));
 								}
 							} else if GasArena::with_all_mixtures(|all_mixtures| {
 								//can air share w/ us?
@@ -833,12 +834,12 @@ fn _process_heat_start() -> Result<(), String> {
 									false
 								}
 							}) {
-								return true;
+								return Some((turf_id, heat_index, false));
 							}
 
-							false
+							None
 						})
-						.for_each(|(&id, &node_index)| {
+						.filter_map(|(id, node_index, has_adjacents)| {
 							/*
 								If it has no thermal conductivity, low thermal capacity or has no adjacencies,
 								then it's not gonna interact, or at least shouldn't.
@@ -849,6 +850,7 @@ fn _process_heat_start() -> Result<(), String> {
 							let cur_temp = *temp_read;
 
 							//share w/ adjacents
+							/*
 							for other in arena
 								.adjacent_node_ids(node_index)
 								.filter_map(|idx| Some(arena.get(idx)?))
@@ -872,6 +874,7 @@ fn _process_heat_start() -> Result<(), String> {
 									);
 								*other_write -= shareds / other.heat_capacity;
 							}
+							*/
 
 							//share w/ space
 							if info.adjacent_to_space && cur_temp > T0C {
@@ -938,7 +941,37 @@ fn _process_heat_start() -> Result<(), String> {
 									Ok(())
 								})));
 							}
-						});
+							has_adjacents.then(|| node_index)
+						})
+						.collect::<Vec<_>>();
+
+					let zoned_temps = flood_fill_temps(adjacencies_to_consider, &arena);
+
+					zoned_temps.into_par_iter().for_each(|zone| {
+						for cur_index in zone {
+							let info = arena.get(cur_index).unwrap();
+							let mut temp_write = info.temperature.write();
+							for other in arena
+								.adjacent_node_ids(cur_index)
+								.filter_map(|idx| Some(arena.get(idx)?))
+							{
+								/*
+									The horrible line below is essentially
+									sharing between solids--making it the minimum of both
+									conductivities makes this consistent, funnily enough.
+								*/
+								let mut other_write = other.temperature.write();
+								let shareds =
+									info.thermal_conductivity.min(other.thermal_conductivity)
+										* (*other_write - *temp_write) * (info.heat_capacity
+										* other.heat_capacity / (info
+										.heat_capacity
+										+ other.heat_capacity));
+								*temp_write += shareds / info.heat_capacity;
+								*other_write -= shareds / other.heat_capacity;
+							}
+						}
+					});
 				});
 			});
 			let bench = start_time.elapsed().as_millis();
@@ -964,6 +997,30 @@ fn _process_heat_start() -> Result<(), String> {
 		});
 	});
 	Ok(())
+}
+
+fn flood_fill_temps(
+	input: Vec<NodeIndex<usize>>,
+	arena: &TurfHeat,
+) -> Vec<IndexSet<NodeIndex<usize>, FxBuildHasher>> {
+	let mut found_turfs: HashSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
+	let mut return_val: Vec<IndexSet<NodeIndex<usize>, FxBuildHasher>> = Default::default();
+	for temp_id in input {
+		let mut turfs: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
+		let mut border_turfs: std::collections::VecDeque<NodeIndex<usize>> = Default::default();
+		border_turfs.push_back(temp_id);
+		found_turfs.insert(temp_id);
+		while let Some(cur_index) = border_turfs.pop_front() {
+			for adj_index in arena.adjacent_node_ids(cur_index) {
+				if found_turfs.insert(adj_index) {
+					border_turfs.push_back(adj_index)
+				}
+			}
+			turfs.insert(cur_index);
+		}
+		return_val.push(turfs)
+	}
+	return_val
 }
 
 #[shutdown]

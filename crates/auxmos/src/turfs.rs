@@ -221,7 +221,9 @@ impl TurfHeat {
 	pub fn insert_turf(&mut self, info: ThermalInfo) {
 		if let Some(&node_id) = self.map.get(&info.id) {
 			let thin = self.graph.node_weight_mut(node_id).unwrap();
-			*thin = info
+			thin.thermal_conductivity = info.thermal_conductivity;
+			thin.heat_capacity = info.heat_capacity;
+			thin.adjacent_to_space = info.adjacent_to_space;
 		} else {
 			self.map.insert(info.id, self.graph.add_node(info));
 		}

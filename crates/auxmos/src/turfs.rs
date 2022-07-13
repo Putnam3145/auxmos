@@ -25,9 +25,8 @@ use rayon;
 
 use rayon::prelude::*;
 
-use atomic_float::AtomicF32;
 use std::mem::drop;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
 use bitflags::bitflags;
 
@@ -72,7 +71,7 @@ bitflags! {
 }
 
 #[allow(unused)]
-const fn adj_flag_to_idx(adj_flag: Directions) -> usize {
+const fn adj_flag_to_idx(adj_flag: Directions) -> u8 {
 	match adj_flag {
 		Directions::NORTH => 0,
 		Directions::SOUTH => 1,
@@ -84,7 +83,32 @@ const fn adj_flag_to_idx(adj_flag: Directions) -> usize {
 	}
 }
 
+#[allow(unused)]
+const fn idx_to_adj_flag(idx: u8) -> Directions {
+	match idx {
+		0 => Directions::NORTH,
+		1 => Directions::SOUTH,
+		2 => Directions::EAST,
+		3 => Directions::WEST,
+		4 => Directions::UP,
+		5 => Directions::DOWN,
+		_ => Directions::from_bits_truncate(0),
+	}
+}
+
 type TurfID = u32;
+
+#[derive(Default)]
+struct ThermalInfo {
+	pub id: TurfID,
+
+	pub is_open: bool,
+	pub thermal_conductivity: f32,
+	pub heat_capacity: f32,
+	pub adjacent_to_space: bool,
+
+	pub temperature: RwLock<f32>,
+}
 
 // TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
 #[derive(Default)]
@@ -94,12 +118,6 @@ struct TurfMixture {
 	pub flags: SimulationFlags,
 	pub planetary_atmos: Option<u32>,
 	pub vis_hash: AtomicU64,
-
-	pub thermal_conductivity: f32,
-	pub heat_capacity: f32,
-	pub adjacent_to_space: bool,
-
-	pub temperature: AtomicF32,
 }
 
 #[allow(dead_code)]
@@ -124,6 +142,15 @@ impl TurfMixture {
 				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
 				.read()
 				.return_pressure()
+		})
+	}
+	pub fn return_temperature(&self) -> f32 {
+		GasArena::with_all_mixtures(|all_mixtures| {
+			all_mixtures
+				.get(self.mix)
+				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
+				.read()
+				.get_temperature()
 		})
 	}
 	pub fn total_moles(&self) -> f32 {
@@ -182,6 +209,119 @@ impl TurfMixture {
 	}
 }
 
+type HeatGraphMap = IndexMap<TurfID, NodeIndex<usize>, FxBuildHasher>;
+
+//turf temperature infos goes here
+struct TurfHeat {
+	graph: StableDiGraph<ThermalInfo, (), usize>,
+	map: HeatGraphMap,
+}
+
+#[allow(unused)]
+impl TurfHeat {
+	pub fn insert_turf(&mut self, info: ThermalInfo) {
+		if let Some(&node_id) = self.map.get(&info.id) {
+			let thin = self.graph.node_weight_mut(node_id).unwrap();
+			*thin = info
+		} else {
+			self.map.insert(info.id, self.graph.add_node(info));
+		}
+	}
+
+	pub fn remove_turf(&mut self, id: TurfID) {
+		if let Some(index) = self.map.remove(&id) {
+			self.graph.remove_node(index);
+		}
+	}
+
+	pub fn get(&self, idx: NodeIndex<usize>) -> Option<&ThermalInfo> {
+		self.graph.node_weight(idx)
+	}
+
+	pub fn get_id(&self, idx: &TurfID) -> Option<&NodeIndex<usize>> {
+		self.map.get(idx)
+	}
+
+	pub fn adjacent_node_ids<'a>(
+		&'a self,
+		index: NodeIndex<usize>,
+	) -> impl Iterator<Item = NodeIndex<usize>> + '_ {
+		self.graph.neighbors(index)
+	}
+
+	pub fn adjacent_turf_ids<'a>(
+		&'a self,
+		index: NodeIndex<usize>,
+	) -> impl Iterator<Item = TurfID> + '_ {
+		self.graph
+			.neighbors(index)
+			.filter_map(|index| Some(self.get(index)?.id))
+	}
+	pub fn adjacent_heats<'a>(
+		&'a self,
+		index: NodeIndex<usize>,
+	) -> impl Iterator<Item = &'a ThermalInfo> {
+		self.graph
+			.neighbors(index)
+			.filter_map(|neighbor| self.graph.node_weight(neighbor))
+	}
+
+	pub fn update_adjacencies(
+		&mut self,
+		idx: TurfID,
+		blocked_dirs: Directions,
+		max_x: i32,
+		max_y: i32,
+	) {
+		if let Some(&this_node) = self.get_id(&idx) {
+			self.remove_adjacencies(this_node);
+			for (dir_flag, _) in
+				adjacent_tile_ids(Directions::ALL_CARDINALS_MULTIZ, idx, max_x, max_y)
+			{
+				if blocked_dirs.intersects(dir_flag) {
+					continue;
+				}
+				if let Some(&adjacent_node) = self.get_id(&idx) {
+					self.graph.add_edge(this_node, adjacent_node, ());
+				}
+			}
+		}
+		/*
+		if let Some(&this_index) = self.map.get(&idx) {
+			self.remove_adjacencies(this_index);
+			for i in 1..=adjacent_list.len() {
+				let adj_val = adjacent_list.get(i)?;
+				//let adjacent_num = adjacent_list.get(&adj_val)?.as_number()? as u8;
+				if let Some(&adj_index) = self.map.get(&unsafe { adj_val.raw.data.id }) {
+					let flags = AdjacentFlags::from_bits_truncate(
+						adjacent_list
+							.get(adj_val)
+							.and_then(|g| g.as_number())
+							.unwrap_or(0.0) as u8,
+					);
+					if flags.contains(AdjacentFlags::ATMOS_ADJACENT_ANY) {
+						self.graph.add_edge(this_index, adj_index, flags);
+					}
+				}
+			}
+		};
+		*/
+	}
+
+	//This isn't a useless collect(), we can't hold a mutable ref and an immutable ref at once on the graph
+	#[allow(clippy::needless_collect)]
+	pub fn remove_adjacencies(&mut self, index: NodeIndex<usize>) {
+		let edges = self
+			.graph
+			.edges(index)
+			.map(|edgeref| edgeref.id())
+			.collect::<Vec<_>>();
+		edges.into_iter().for_each(|edgeindex| {
+			self.graph.remove_edge(edgeindex);
+		});
+	}
+}
+
 type TurfGraphMap = IndexMap<TurfID, NodeIndex<usize>, FxBuildHasher>;
 
 //adjacency/turf infos goes here
@@ -190,9 +330,15 @@ struct TurfGases {
 	map: TurfGraphMap,
 }
 
+#[allow(unused)]
 impl TurfGases {
 	pub fn insert_turf(&mut self, tmix: TurfMixture) {
-		self.map.insert(tmix.id, self.graph.add_node(tmix));
+		if let Some(&node_id) = self.map.get(&tmix.id) {
+			let thin = self.graph.node_weight_mut(node_id).unwrap();
+			*thin = tmix
+		} else {
+			self.map.insert(tmix.id, self.graph.add_node(tmix));
+		}
 	}
 	pub fn remove_turf(&mut self, id: TurfID) {
 		if let Some(index) = self.map.remove(&id) {
@@ -341,6 +487,8 @@ impl TurfGases {
 }
 
 static TURF_GASES: RwLock<Option<TurfGases>> = const_rwlock(None);
+
+static TURF_HEAT: RwLock<Option<TurfHeat>> = const_rwlock(None);
 // We store planetary atmos by hash of the initial atmos string here for speed.
 static mut PLANETARY_ATMOS: Option<DashMap<u32, Mixture, FxBuildHasher>> = None;
 
@@ -355,6 +503,10 @@ fn _initialize_turf_statics() -> Result<(), String> {
 		// 10x 255x255 zlevels
 		// double that for edges since each turf can have up to 6 edges but eehhhh
 		*TURF_GASES.write() = Some(TurfGases {
+			graph: StableDiGraph::with_capacity(650_250, 1_300_500),
+			map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
+		});
+		*TURF_HEAT.write() = Some(TurfHeat {
 			graph: StableDiGraph::with_capacity(650_250, 1_300_500),
 			map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
 		});
@@ -396,6 +548,20 @@ where
 	f(TURF_GASES.write().as_mut().unwrap())
 }
 
+fn with_turf_heat_read<T, F>(f: F) -> T
+where
+	F: FnOnce(&TurfHeat) -> T,
+{
+	f(TURF_HEAT.read().as_ref().unwrap())
+}
+
+fn with_turf_heat_write<T, F>(f: F) -> T
+where
+	F: FnOnce(&mut TurfHeat) -> T,
+{
+	f(TURF_HEAT.write().as_mut().unwrap())
+}
+
 fn with_dirty_turfs<T, F>(f: F) -> T
 where
 	F: FnOnce(&mut IndexMap<u32, DirtyFlags, FxBuildHasher>) -> T,
@@ -427,17 +593,6 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 			.to_bits() as usize;
 		to_insert.flags = SimulationFlags::from_bits_truncate(flag as u8);
 		to_insert.id = id;
-		to_insert.thermal_conductivity = src
-			.get_number(byond_string!("thermal_conductivity"))
-			.unwrap_or(0.0);
-		to_insert.heat_capacity = src
-			.get_number(byond_string!("heat_capacity"))
-			.unwrap_or(0.0);
-		to_insert.adjacent_to_space = false;
-		to_insert.temperature = AtomicF32::new(
-			src.get_number(byond_string!("initial_temperature"))
-				.unwrap_or(TCMB),
-		);
 
 		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
 			if is_planet != 0.0 {
@@ -457,6 +612,29 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 		with_turf_gases_write(|arena| arena.insert_turf(to_insert));
 	} else {
 		with_turf_gases_write(|arena| arena.remove_turf(id));
+	}
+
+	let therm_cond = src
+		.get_number(byond_string!("thermal_conductivity"))
+		.unwrap_or(0.0);
+	let therm_cap = src
+		.get_number(byond_string!("heat_capacity"))
+		.unwrap_or(0.0);
+	if therm_cond > 0.0 && therm_cap > 0.0 {
+		let therm_info = ThermalInfo {
+			id,
+			is_open: flag >= 0,
+			adjacent_to_space: false,
+			heat_capacity: therm_cap,
+			thermal_conductivity: therm_cond,
+			temperature: RwLock::new(
+				src.get_number(byond_string!("initial_temperature"))
+					.unwrap_or(TCMB),
+			),
+		};
+		with_turf_heat_write(|arena| arena.insert_turf(therm_info));
+	} else {
+		with_turf_heat_write(|arena| arena.remove_turf(id));
 	}
 	Ok(())
 }
@@ -554,13 +732,25 @@ fn _hook_turf_update_temp() {
 }
 */
 
-fn update_adjacency_info(id: u32) -> Result<(), Runtime> {
+fn update_adjacency_info(id: u32, max_x: i32, max_y: i32) -> Result<(), Runtime> {
 	let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
 	with_turf_gases_write(|arena| -> Result<(), Runtime> {
 		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
 			arena.update_adjacencies(id, adjacent_list)?;
 		} else if let Some(&idx) = arena.map.get(&id) {
 			arena.remove_adjacencies(idx);
+		}
+		Ok(())
+	})?;
+
+	with_turf_heat_write(|arena| -> Result<(), Runtime> {
+		if let Ok(blocked_dirs) =
+			src_turf.get_number(byond_string!("conductivity_blocked_directions"))
+		{
+			let actual_dir = Directions::from_bits_truncate(blocked_dirs as u8);
+			arena.update_adjacencies(id, actual_dir, max_x, max_y)
+		} else if let Some(&idx) = arena.map.get(&id) {
+			arena.remove_adjacencies(idx)
 		}
 		Ok(())
 	})?;
@@ -584,11 +774,12 @@ fn _hook_infos() {
 
 #[hook("/turf/proc/return_temperature")]
 fn _hook_turf_temperature() {
-	with_turf_gases_read(|arena| -> DMResult {
+	with_turf_heat_read(|arena| -> DMResult {
 		if let Some(&node_index) = arena.get_id(&unsafe { src.raw.data.id }) {
-			let tmix = arena.get(node_index).unwrap();
-			if tmix.temperature.load(Ordering::Relaxed).is_normal() {
-				Ok(Value::from(tmix.temperature.load(Ordering::Relaxed)))
+			let info = arena.get(node_index).unwrap();
+			let read = info.temperature.read();
+			if read.is_normal() {
+				Ok(Value::from(*read))
 			} else {
 				src.get(byond_string!("initial_temperature"))
 			}
@@ -644,7 +835,7 @@ pub fn update_visuals(src: Value) -> DMResult {
 		}
 	}
 }
-/*
+
 fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {
 	let z_size = max_x * max_y;
 	let i = i as i32;
@@ -669,7 +860,7 @@ struct AdjacentTileIDs {
 }
 
 impl Iterator for AdjacentTileIDs {
-	type Item = (u8, TurfID);
+	type Item = (Directions, TurfID);
 
 	fn next(&mut self) -> Option<Self::Item> {
 		loop {
@@ -680,7 +871,7 @@ impl Iterator for AdjacentTileIDs {
 			let bit = Directions::from_bits_truncate(1 << (self.count - 1));
 			if self.adj.contains(bit) {
 				return Some((
-					self.count - 1,
+					idx_to_adj_flag(self.count - 1),
 					adjacent_tile_id(self.count - 1, self.i, self.max_x, self.max_y),
 				));
 			}
@@ -705,4 +896,3 @@ fn adjacent_tile_ids(adj: Directions, i: TurfID, max_x: i32, max_y: i32) -> Adja
 		count: 0,
 	}
 }
-*/

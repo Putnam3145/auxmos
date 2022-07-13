@@ -48,10 +48,7 @@ struct SSairInfo {
 	planet_enabled: bool,
 }
 
-#[derive(Copy, Clone)]
-struct SSheatInfo {
-	time_delta: f64,
-}
+struct SSheatInfo {}
 
 fn with_processing_callback_receiver<T>(f: impl Fn(&flume::Receiver<Box<SSairInfo>>) -> T) -> T {
 	f(&TURF_CHANNEL.1)
@@ -100,6 +97,26 @@ fn _finish_process_turfs() {
 }
 
 pub(crate) fn rebuild_turf_graph() -> Result<(), Runtime> {
+	let max_x = auxtools::Value::world()
+		.get_number(byond_string!("maxx"))
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})? as i32;
+	let max_y = auxtools::Value::world()
+		.get_number(byond_string!("maxy"))
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})? as i32;
 	with_dirty_turfs(|dirty_turfs| {
 		for (&t, _) in dirty_turfs
 			.iter()
@@ -111,7 +128,7 @@ pub(crate) fn rebuild_turf_graph() -> Result<(), Runtime> {
 			.drain(..)
 			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
 		{
-			update_adjacency_info(t)?;
+			update_adjacency_info(t, max_x, max_y)?;
 		}
 		Ok(())
 	})?;
@@ -738,6 +755,7 @@ fn _process_heat_notify() {
 		does this in general, thus turf gas mixtures being 2.5 m^3.
 	*/
 	let sender = heat_processing_callbacks_sender();
+	/*
 	let time_delta = (src.get_number(byond_string!("wait")).map_err(|_| {
 		runtime!(
 			"Attempt to interpret non-number value as number {} {}:{}",
@@ -746,7 +764,8 @@ fn _process_heat_notify() {
 			std::column!()
 		)
 	})? / 10.0) as f64;
-	let _ = sender.try_send(SSheatInfo { time_delta });
+	*/
+	let _ = sender.try_send(SSheatInfo {});
 	Ok(Value::null())
 }
 
@@ -756,85 +775,115 @@ fn _process_heat_start() -> Result<(), String> {
 	INIT_HEAT.call_once(|| {
 		rayon::spawn(|| loop {
 			//this will block until process_turf_heat is called
-			let info = with_heat_processing_callback_receiver(|receiver| receiver.recv().unwrap());
+			let _ = with_heat_processing_callback_receiver(|receiver| receiver.recv().unwrap());
 			let task_lock = TASKS.read();
 			let start_time = Instant::now();
 			let sender = byond_callback_sender();
-			with_turf_gases_read(|arena| {
-				let temps_to_update = arena
-					.map
-					.par_iter()
-					.filter(|(_, &index)| {
-						let tmix = arena.get(index).unwrap();
-						tmix.thermal_conductivity > 0.0
-							&& tmix.heat_capacity > 0.0 && arena
-							.adjacent_turf_ids(index)
-							.next()
-							.is_some()
-					})
-					.filter_map(|(&id, &node_index)| {
-						/*
-							If it has no thermal conductivity, low thermal capacity or has no adjacencies,
-							then it's not gonna interact, or at least shouldn't.
-						*/
-						let tmix = arena.get(node_index).unwrap();
-						let mut heat_delta = 0.0;
-						let mut shared_turfs: TinyVec<[(NodeIndex<usize>, f32); 6]> =
-							Default::default();
-						let cur_temp = tmix.temperature.load(Ordering::Relaxed);
-						let is_temp_delta_with_air =
-							tmix.enabled()
-								.then(|| {
-									GasArena::with_all_mixtures(|all_mixtures| {
-										all_mixtures.get(tmix.mix).and_then(RwLock::try_read).map(
-											|gas| (cur_temp - gas.get_temperature()).abs() > 1.0,
-										)
+			with_turf_heat_read(|arena| {
+				with_turf_gases_read(|air_arena| {
+					arena
+						.map
+						.par_iter()
+						.filter_map(|(turf_id, heat_index)| {
+							let info = arena.get(*heat_index).unwrap();
+							let temp = { *info.temperature.read() };
+							let has_shareable_neighbors = {
+								arena
+									.adjacent_heats(*heat_index)
+									.find(|item| {
+										(temp - *item.temperature.read()).abs()
+											> MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER
 									})
-								})
-								.flatten()
-								.unwrap_or(false);
+									.is_some()
+							};
 
-						for (other, nodeid) in arena
-							.adjacent_node_ids(node_index)
-							.filter_map(|idx| Some((arena.get(idx)?, idx)))
-						{
-							/*
-								The horrible line below is essentially
-								sharing between solids--making it the minimum of both
-								conductivities makes this consistent, funnily enough.
-							*/
-							let shareds = tmix.thermal_conductivity.min(other.thermal_conductivity)
-								* (other.temperature.load(Ordering::Relaxed) - cur_temp)
-								* (tmix.heat_capacity * other.heat_capacity
-									/ (tmix.heat_capacity + other.heat_capacity));
-							heat_delta += shareds;
-							shared_turfs.push((nodeid, shareds / other.heat_capacity));
-						}
-						if tmix.adjacent_to_space && cur_temp > T0C {
-							/*
-								Straight up the standard blackbody radiation
-								equation. All these are f64s because
-								f32::MAX^4 < f64::MAX, and t.temperature
-								is ordinarily an f32, meaning that
-								this will never go into infinities.
-							*/
-							let blackbody_radiation: f64 =
-								STEFAN_BOLTZMANN_CONSTANT * (f64::from(cur_temp).powi(4));
-							heat_delta -= blackbody_radiation as f32;
-						}
-						let temp_delta = heat_delta / tmix.heat_capacity;
-						(is_temp_delta_with_air || temp_delta.abs() > 0.01)
-							.then(|| (id, node_index, temp_delta, shared_turfs))
-					})
-					.collect::<Vec<_>>();
-				temps_to_update.into_par_iter().for_each(
-					|(i, node_index, temp_delta, shared_turfs)| {
-						let t = arena.get(node_index).unwrap();
-						let actual_delta = t
-							.enabled()
-							.then(|| {
+							let self_can_start = temp > MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION;
+
+							let has_valid_air = if info.is_open {
 								GasArena::with_all_mixtures(|all_mixtures| {
-									all_mixtures.get(t.mix).map(|entry| {
+									if let Some(node) = air_arena.get_id(turf_id) {
+										let cur_mix = air_arena.get(*node).unwrap();
+										if !cur_mix.enabled() {
+											return false;
+										}
+										let air_temp =
+											all_mixtures[cur_mix.mix].read().get_temperature();
+										if air_temp < MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION {
+											return false;
+										}
+										(temp - air_temp).abs()
+											> MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER
+									} else {
+										false
+									}
+								})
+							} else {
+								false
+							};
+
+							(has_valid_air || (self_can_start && has_shareable_neighbors)).then(
+								|| (turf_id, heat_index, has_valid_air, has_shareable_neighbors),
+							)
+						})
+						.for_each(|(&id, &node_index, has_air, has_neighbors)| {
+							/*
+								If it has no thermal conductivity, low thermal capacity or has no adjacencies,
+								then it's not gonna interact, or at least shouldn't.
+							*/
+							let info = arena.get(node_index).unwrap();
+							let mut heat_delta = 0.0;
+							let temp_read = info.temperature.upgradable_read();
+							let cur_temp = *temp_read;
+							if has_neighbors {
+								for other in arena
+									.adjacent_node_ids(node_index)
+									.filter_map(|idx| Some(arena.get(idx)?))
+								{
+									/*
+										The horrible line below is essentially
+										sharing between solids--making it the minimum of both
+										conductivities makes this consistent, funnily enough.
+									*/
+									let other_read = other.temperature.upgradable_read();
+									let shareds =
+										info.thermal_conductivity.min(other.thermal_conductivity)
+											* (*other_read - cur_temp) * (info.heat_capacity
+											* other.heat_capacity / (info
+											.heat_capacity
+											+ other.heat_capacity));
+									heat_delta += shareds;
+									let mut other_write =
+										parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(
+											other_read,
+										);
+									*other_write -= shareds / other.heat_capacity;
+								}
+							}
+							if info.adjacent_to_space && cur_temp > T0C {
+								/*
+									Straight up the standard blackbody radiation
+									equation. All these are f64s because
+									f32::MAX^4 < f64::MAX, and t.temperature
+									is ordinarily an f32, meaning that
+									this will never go into infinities.
+								*/
+								let blackbody_radiation: f64 =
+									STEFAN_BOLTZMANN_CONSTANT * (f64::from(cur_temp).powi(4));
+								heat_delta -= blackbody_radiation as f32;
+							}
+							let temp_delta = heat_delta / info.heat_capacity;
+
+							let mut temp_write =
+								parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(
+									temp_read,
+								);
+
+							*temp_write += temp_delta;
+
+							if has_air {
+								let tmix = air_arena.get(*air_arena.get_id(&id).unwrap()).unwrap();
+								if let Some(update) = GasArena::with_all_mixtures(|all_mixtures| {
+									all_mixtures.get(tmix.mix).map(|entry| {
 										let gas: &mut Mixture = &mut entry.write();
 										gas.temperature_share_non_gas(
 											/*
@@ -843,43 +892,33 @@ fn _process_heat_start() -> Result<(), String> {
 												as well as realism, otherwise fires will
 												just sort of solve theirselves over time.
 											*/
-											t.thermal_conductivity * OPEN_HEAT_TRANSFER_COEFFICIENT,
-											temp_delta,
-											t.heat_capacity,
+											info.thermal_conductivity
+												* OPEN_HEAT_TRANSFER_COEFFICIENT,
+											*temp_write,
+											info.heat_capacity,
 										)
 									})
-								})
-							})
-							.flatten()
-							.unwrap_or(temp_delta);
-
-						//fetch_add() returns the previous value (lol)
-						let new_temp =
-							t.temperature.fetch_add(actual_delta, Ordering::Release) + actual_delta;
-
-						//first law of thermodynamic and all
-						for (id, temp_delta) in shared_turfs {
-							if let Some(tmix) = arena.get(id) {
-								tmix.temperature.fetch_sub(temp_delta, Ordering::Relaxed);
+								}) {
+									*temp_write = update
+								}
 							}
-						}
 
-						if !new_temp.is_normal() {
-							t.temperature.store(TCMB, Ordering::Acquire);
-						}
+							if !temp_write.is_normal() {
+								*temp_write = TCMB;
+							}
 
-						if new_temp > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
-							&& new_temp > t.heat_capacity
-						{
-							// not what heat capacity means but whatever
-							drop(sender.try_send(Box::new(move || {
-								let turf = unsafe { Value::turf_by_id_unchecked(i) };
-								turf.set(byond_string!("to_be_destroyed"), 1.0)?;
-								Ok(())
-							})));
-						}
-					},
-				);
+							if *temp_write > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
+								&& *temp_write > info.heat_capacity
+							{
+								// not what heat capacity means but whatever
+								drop(sender.try_send(Box::new(move || {
+									let turf = unsafe { Value::turf_by_id_unchecked(id) };
+									turf.set(byond_string!("to_be_destroyed"), 1.0)?;
+									Ok(())
+								})));
+							}
+						});
+				});
 			});
 			//Alright, now how much time did that take?
 			let bench = start_time.elapsed().as_nanos();

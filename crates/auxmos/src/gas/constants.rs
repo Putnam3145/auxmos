@@ -82,7 +82,7 @@ pub const HEAT_CAPACITY_VACUUM: f32 = 7000.0;
 /// The Stefan-Boltzmann constant. M T^-3 Θ^-4
 pub const STEFAN_BOLTZMANN_CONSTANT: f64 = 5.670_373e-08; // watts/(meter^2*kelvin^4)
 
-const SPACE_TEMP: f64 = T20C as f64;
+const SPACE_TEMP: f64 = TCMB as f64;
 
 /// How much power is coming in from space per square meter. M T^-3
 pub const RADIATION_FROM_SPACE: f64 =

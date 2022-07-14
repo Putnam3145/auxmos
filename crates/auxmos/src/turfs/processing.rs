@@ -795,7 +795,7 @@ fn _process_heat_start() -> Result<(), String> {
 						.filter_map(|(&turf_id, &heat_index)| {
 							let info = arena.get(heat_index).unwrap();
 							let temp = { *info.temperature.read() };
-							//can share w/ others?
+							//can share w/ adjacents?
 							if arena
 								.adjacent_heats(heat_index)
 								.find(|item| {
@@ -927,7 +927,7 @@ fn _process_heat_start() -> Result<(), String> {
 							let info = arena.get(cur_index).unwrap();
 							let mut temp_write = info.temperature.write();
 
-							//share w/ adjacents
+							//share w/ adjacents that are strictly in zone
 							for other in arena
 								.adjacent_node_ids(cur_index)
 								.filter_map(|idx| zone.contains(&idx).then(|| arena.get(idx))?)

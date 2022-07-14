@@ -771,6 +771,10 @@ fn _process_heat_notify() {
 	Ok(Value::null())
 }
 
+fn get_share_energy(delta: f32, cap_1: f32, cap_2: f32) -> f32 {
+	delta * ((cap_1 * cap_2) / (cap_1 + cap_2))
+}
+
 //Fires the task into the thread pool, once
 #[init(full)]
 fn _process_heat_start() -> Result<(), String> {
@@ -849,33 +853,6 @@ fn _process_heat_start() -> Result<(), String> {
 							let temp_read = info.temperature.upgradable_read();
 							let cur_temp = *temp_read;
 
-							//share w/ adjacents
-							/*
-							for other in arena
-								.adjacent_node_ids(node_index)
-								.filter_map(|idx| Some(arena.get(idx)?))
-							{
-								/*
-									The horrible line below is essentially
-									sharing between solids--making it the minimum of both
-									conductivities makes this consistent, funnily enough.
-								*/
-								let other_read = other.temperature.upgradable_read();
-								let shareds =
-									info.thermal_conductivity.min(other.thermal_conductivity)
-										* (*other_read - cur_temp) * (info.heat_capacity
-										* other.heat_capacity / (info
-										.heat_capacity
-										+ other.heat_capacity));
-								heat_delta += shareds;
-								let mut other_write =
-									parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(
-										other_read,
-									);
-								*other_write -= shareds / other.heat_capacity;
-							}
-							*/
-
 							//share w/ space
 							if info.adjacent_to_space && cur_temp > T0C {
 								/*
@@ -904,26 +881,23 @@ fn _process_heat_start() -> Result<(), String> {
 							if let Some(&id) = air_arena.get_id(&id) {
 								let tmix = air_arena.get(id).unwrap();
 								if tmix.enabled() {
-									if let Some(update) =
-										GasArena::with_all_mixtures(|all_mixtures| {
-											all_mixtures.get(tmix.mix).map(|entry| {
-												let gas: &mut Mixture = &mut entry.write();
-												gas.temperature_share_non_gas(
-													/*
-														This value should be lower than the
-														turf-to-turf conductivity for balance reasons
-														as well as realism, otherwise fires will
-														just sort of solve theirselves over time.
-													*/
-													info.thermal_conductivity
-														* OPEN_HEAT_TRANSFER_COEFFICIENT,
-													*temp_write,
-													info.heat_capacity,
-												)
-											})
-										}) {
-										*temp_write = update
-									}
+									GasArena::with_all_mixtures(|all_mixtures| {
+										all_mixtures.get(tmix.mix).map(|entry| {
+											let mut gas = entry.write();
+											*temp_write = gas.temperature_share_non_gas(
+												/*
+													This value should be lower than the
+													turf-to-turf conductivity for balance reasons
+													as well as realism, otherwise fires will
+													just sort of solve theirselves over time.
+												*/
+												info.thermal_conductivity
+													* OPEN_HEAT_TRANSFER_COEFFICIENT,
+												*temp_write,
+												info.heat_capacity,
+											)
+										});
+									})
 								}
 							}
 
@@ -945,15 +919,18 @@ fn _process_heat_start() -> Result<(), String> {
 						})
 						.collect::<Vec<_>>();
 
+					//the floodfills separate zones where sharing can be done sequentially without threads trampling on each other
 					let zoned_temps = flood_fill_temps(adjacencies_to_consider, &arena);
 
 					zoned_temps.into_par_iter().for_each(|zone| {
-						for cur_index in zone {
+						for &cur_index in zone.iter() {
 							let info = arena.get(cur_index).unwrap();
 							let mut temp_write = info.temperature.write();
+
+							//share w/ adjacents
 							for other in arena
 								.adjacent_node_ids(cur_index)
-								.filter_map(|idx| Some(arena.get(idx)?))
+								.filter_map(|idx| zone.contains(&idx).then(|| arena.get(idx))?)
 							{
 								/*
 									The horrible line below is essentially
@@ -961,12 +938,13 @@ fn _process_heat_start() -> Result<(), String> {
 									conductivities makes this consistent, funnily enough.
 								*/
 								let mut other_write = other.temperature.write();
-								let shareds =
-									info.thermal_conductivity.min(other.thermal_conductivity)
-										* (*other_write - *temp_write) * (info.heat_capacity
-										* other.heat_capacity / (info
-										.heat_capacity
-										+ other.heat_capacity));
+								let shareds = info
+									.thermal_conductivity
+									.min(other.thermal_conductivity) * get_share_energy(
+									*other_write - *temp_write,
+									info.heat_capacity,
+									other.heat_capacity,
+								);
 								*temp_write += shareds / info.heat_capacity;
 								*other_write -= shareds / other.heat_capacity;
 							}
@@ -1011,6 +989,9 @@ fn flood_fill_temps(
 		border_turfs.push_back(temp_id);
 		found_turfs.insert(temp_id);
 		while let Some(cur_index) = border_turfs.pop_front() {
+			if turfs.len() >= 100 {
+				break;
+			}
 			for adj_index in arena.adjacent_node_ids(cur_index) {
 				if found_turfs.insert(adj_index) {
 					border_turfs.push_back(adj_index)

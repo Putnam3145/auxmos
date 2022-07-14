@@ -793,6 +793,10 @@ fn _process_heat_start() -> Result<(), String> {
 						.map
 						.par_iter()
 						.filter_map(|(&turf_id, &heat_index)| {
+							/*
+								If it has no thermal conductivity, low thermal capacity or has no adjacencies,
+								then it's not gonna interact, or at least shouldn't.
+							*/
 							let info = arena.get(heat_index).unwrap();
 							let temp = { *info.temperature.read() };
 							//can share w/ adjacents?
@@ -844,10 +848,6 @@ fn _process_heat_start() -> Result<(), String> {
 							None
 						})
 						.filter_map(|(id, node_index, has_adjacents)| {
-							/*
-								If it has no thermal conductivity, low thermal capacity or has no adjacencies,
-								then it's not gonna interact, or at least shouldn't.
-							*/
 							let info = arena.get(node_index).unwrap();
 							let mut heat_delta = 0.0;
 							let temp_read = info.temperature.upgradable_read();

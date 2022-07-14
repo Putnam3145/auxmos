@@ -55,7 +55,6 @@ bitflags! {
 		const SIMULATION_ANY = Self::SIMULATION_DIFFUSE.bits | Self::SIMULATION_ALL.bits;
 	}
 
-	//TODO: Do adjacency for heat as well
 	#[derive(Default)]
 	pub struct AdjacentFlags: u8 {
 		const ATMOS_ADJACENT_ANY = 0b1;
@@ -287,26 +286,6 @@ impl TurfHeat {
 				}
 			}
 		}
-		/*
-		if let Some(&this_index) = self.map.get(&idx) {
-			self.remove_adjacencies(this_index);
-			for i in 1..=adjacent_list.len() {
-				let adj_val = adjacent_list.get(i)?;
-				//let adjacent_num = adjacent_list.get(&adj_val)?.as_number()? as u8;
-				if let Some(&adj_index) = self.map.get(&unsafe { adj_val.raw.data.id }) {
-					let flags = AdjacentFlags::from_bits_truncate(
-						adjacent_list
-							.get(adj_val)
-							.and_then(|g| g.as_number())
-							.unwrap_or(0.0) as u8,
-					);
-					if flags.contains(AdjacentFlags::ATMOS_ADJACENT_ANY) {
-						self.graph.add_edge(this_index, adj_index, flags);
-					}
-				}
-			}
-		};
-		*/
 	}
 
 	//This isn't a useless collect(), we can't hold a mutable ref and an immutable ref at once on the graph
@@ -674,63 +653,6 @@ fn determine_turf_flag(src: &Value) -> i32 {
 		OPEN_TURF
 	}
 }
-/*
-#[hook("/turf/proc/__auxtools_update_turf_temp_info")]
-fn _hook_turf_update_temp() {
-	let sender = aux_callbacks_sender(crate::callbacks::TEMPERATURE);
-	let id = unsafe { src.raw.data.id };
-	if src
-		.get_number(byond_string!("thermal_conductivity"))
-		.unwrap_or_default()
-		> 0.0 && src
-		.get_number(byond_string!("heat_capacity"))
-		.unwrap_or_default()
-		> 0.0
-	{
-		let mut to_insert = ThermalInfo {
-			temperature: 293.15,
-			thermal_conductivity: 0.0,
-			heat_capacity: 0.0,
-			adjacent_to_space: false,
-		};
-		to_insert.thermal_conductivity = src
-			.get_number(byond_string!("thermal_conductivity"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?;
-		to_insert.heat_capacity = src
-			.get_number(byond_string!("heat_capacity"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?;
-		to_insert.temperature = src
-			.get_number(byond_string!("initial_temperature"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?;
-		to_insert.adjacent_to_space = src.get_type()?.as_str().starts_with("/turf/open/space");
-		turf_temperatures().insert(id, to_insert);
-	} else {
-		turf_temperatures().remove(&id);
-	}
-	Ok(Value::null())
-}
-*/
 
 fn update_adjacency_info(id: u32, max_x: i32, max_y: i32) -> Result<(), Runtime> {
 	let src_turf = unsafe { Value::turf_by_id_unchecked(id) };

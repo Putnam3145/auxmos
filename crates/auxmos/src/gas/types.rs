@@ -235,7 +235,7 @@ fn _create_gas_info_structs() -> Result<(), String> {
 
 #[shutdown]
 fn _destroy_gas_info_structs() {
-	crate::turfs::processing::wait_for_tasks();
+	crate::turfs::wait_for_tasks();
 	unsafe {
 		GAS_INFO_BY_STRING = None;
 	};

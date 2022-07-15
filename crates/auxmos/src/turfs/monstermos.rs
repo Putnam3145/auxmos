@@ -736,7 +736,7 @@ fn process_planet_turfs(
 #[deprecated(
 	note = "Katmos should be used intead of Monstermos or Putnamos, as that one is actively maintained."
 )]
-pub(crate) fn equalize(
+pub fn equalize(
 	equalize_turf_limit: usize,
 	equalize_hard_turf_limit: usize,
 	max_x: i32,

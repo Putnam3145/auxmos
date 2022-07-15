@@ -7,10 +7,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["auxcleanup_gas_deletion", "turf_processing"]
+default = ["auxcleanup_gas_deletion", "turf_processing", "superconductivity"]
 auxcleanup_gas_deletion = ["auxcleanup"]
 zas_hooks = []
 turf_processing = []
+superconductivity = ["turf_processing"]
 fastmos = ["turf_processing"]
 katmos = ["fastmos"]
 katmos_slow_decompression = ["fastmos"]

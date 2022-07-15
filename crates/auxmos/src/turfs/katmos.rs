@@ -735,7 +735,7 @@ fn process_planet_turfs(
 
 static PLANET_TURF_CYCLE: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn equalize(
+pub fn equalize(
 	equalize_hard_turf_limit: usize,
 	high_pressure_turfs: &std::collections::BTreeSet<NodeIndex<usize>>,
 	planet_enabled: bool,

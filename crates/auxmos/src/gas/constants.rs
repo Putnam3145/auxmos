@@ -119,7 +119,7 @@ pub const MOLES_GAS_VISIBLE_STEP: f32 = 0.25;
 // so this is here to prevent that from getting out of control.
 // TinyVec is used mostly to prevent too much heap stuff from going on, since there can be a LOT of reactions going.
 // ReactionIdentifier is 12 bytes, so this can be pretty generous.
-pub(crate) const MAX_REACTION_TINYVEC_SIZE: usize = 32;
+pub const MAX_REACTION_TINYVEC_SIZE: usize = 32;
 
 bitflags! {
 	/// return values for reactions (bitflags)

@@ -1,3 +1,5 @@
+
+#[allow(dead_code)]
 pub mod constants;
 pub mod mixture;
 pub mod types;
@@ -65,7 +67,7 @@ fn _init_gas_mixtures() -> Result<(), String> {
 
 #[shutdown]
 fn _shut_down_gases() {
-	crate::turfs::processing::wait_for_tasks();
+	crate::turfs::wait_for_tasks();
 	GAS_MIXTURES.write().as_mut().unwrap().clear();
 	NEXT_GAS_IDS.write().as_mut().unwrap().clear();
 	unsafe {
@@ -458,10 +460,10 @@ where
 	)
 }
 
-pub(crate) fn amt_gases() -> usize {
+pub fn amt_gases() -> usize {
 	GAS_MIXTURES.read().as_ref().unwrap().len() - NEXT_GAS_IDS.read().as_ref().unwrap().len()
 }
 
-pub(crate) fn tot_gases() -> usize {
+pub fn tot_gases() -> usize {
 	GAS_MIXTURES.read().as_ref().unwrap().len()
 }

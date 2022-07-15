@@ -1,5 +1,5 @@
 #[cfg(feature = "reaction_hooks")]
-pub mod hooks;
+mod hooks;
 
 use auxtools::{byond_string, runtime, shutdown, DMResult, Value};
 
@@ -81,7 +81,7 @@ thread_local! {
 
 #[shutdown]
 fn clean_up_reaction_values() {
-	crate::turfs::processing::wait_for_tasks();
+	crate::turfs::wait_for_tasks();
 	REACTION_VALUES.with(|reaction_values| {
 		reaction_values.borrow_mut().clear();
 	});

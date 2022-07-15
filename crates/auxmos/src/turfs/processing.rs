@@ -1,41 +1,26 @@
 use std::collections::{BTreeSet, HashSet, VecDeque};
 
 use auxtools::*;
-use indexmap::IndexSet;
 
 use super::*;
 
 use crate::GasArena;
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
-
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::{Once, RwLock};
 
 use tinyvec::TinyVec;
+
+static INIT_TURF: Once = Once::new();
 
 lazy_static::lazy_static! {
 	static ref TURF_CHANNEL: (
 		flume::Sender<Box<SSairInfo>>,
 		flume::Receiver<Box<SSairInfo>>
 	) = flume::bounded(1);
-	static ref HEAT_CHANNEL: (flume::Sender<SSheatInfo>, flume::Receiver<SSheatInfo>) =
-		flume::bounded(1);
-}
-
-static INIT_TURF: Once = Once::new();
-
-static INIT_HEAT: Once = Once::new();
-
-//thread status
-static TASKS: RwLock<()> = const_rwlock(());
-
-//block until threads are done
-pub fn wait_for_tasks() {
-	drop(TASKS.write())
 }
 
 #[derive(Copy, Clone)]
@@ -49,25 +34,12 @@ struct SSairInfo {
 	planet_enabled: bool,
 }
 
-#[derive(Copy, Clone)]
-struct SSheatInfo {
-	time_delta: f64,
-}
-
 fn with_processing_callback_receiver<T>(f: impl Fn(&flume::Receiver<Box<SSairInfo>>) -> T) -> T {
 	f(&TURF_CHANNEL.1)
 }
 
 fn processing_callbacks_sender() -> flume::Sender<Box<SSairInfo>> {
 	TURF_CHANNEL.0.clone()
-}
-
-fn with_heat_processing_callback_receiver<T>(f: impl Fn(&flume::Receiver<SSheatInfo>) -> T) -> T {
-	f(&HEAT_CHANNEL.1)
-}
-
-fn heat_processing_callbacks_sender() -> flume::Sender<SSheatInfo> {
-	HEAT_CHANNEL.0.clone()
 }
 
 #[hook("/datum/controller/subsystem/air/proc/thread_running")]
@@ -100,27 +72,7 @@ fn _finish_process_turfs() {
 	}
 }
 
-pub(crate) fn rebuild_turf_graph() -> Result<(), Runtime> {
-	let max_x = auxtools::Value::world()
-		.get_number(byond_string!("maxx"))
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})? as i32;
-	let max_y = auxtools::Value::world()
-		.get_number(byond_string!("maxy"))
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})? as i32;
+pub fn rebuild_turf_graph() -> Result<(), Runtime> {
 	with_dirty_turfs(|dirty_turfs| {
 		for (&t, _) in dirty_turfs
 			.iter()
@@ -132,7 +84,7 @@ pub(crate) fn rebuild_turf_graph() -> Result<(), Runtime> {
 			.drain(..)
 			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
 		{
-			update_adjacency_info(t, max_x, max_y)?;
+			update_adjacency_info(t)?;
 		}
 		Ok(())
 	})?;
@@ -726,272 +678,4 @@ fn post_process() {
 			Ok(())
 		})));
 	});
-}
-
-static HEAT_PROCESS_TIME: AtomicU64 = AtomicU64::new(1_000_000);
-
-#[hook("/datum/controller/subsystem/air/proc/heat_process_time")]
-fn _process_heat_time() {
-	let tot = HEAT_PROCESS_TIME.load(Ordering::Relaxed);
-	Ok(Value::from(
-		Duration::new(tot / 1_000_000_000, (tot % 1_000_000_000) as u32).as_millis() as f32,
-	))
-}
-
-// Expected function call: process_turf_heat()
-// Returns: TRUE if thread not done, FALSE otherwise
-#[hook("/datum/controller/subsystem/air/proc/process_turf_heat")]
-fn _process_heat_notify() {
-	/*
-		Replacing LINDA's superconductivity system is this much more brute-force
-		system--it shares heat between turfs and their neighbors,
-		then receives and emits radiation to space, then shares
-		between turfs and their gases. Since the latter requires a write lock,
-		it's done after the previous step. This one doesn't care about
-		consistency like the processing step does--this can run in full parallel.
-		Can't get a number from src in the thread, so we get it here.
-		Have to get the time delta because the radiation
-		is actually physics-based--the stefan boltzmann constant
-		and radiation from space both have dimensions of second^-1 that
-		need to be multiplied out to have any physical meaning.
-		They also have dimensions of meter^-2, but I'm assuming
-		turf tiles are 1 meter^2 anyway--the atmos subsystem
-		does this in general, thus turf gas mixtures being 2.5 m^3.
-	*/
-	let sender = heat_processing_callbacks_sender();
-	let time_delta = (src.get_number(byond_string!("wait")).map_err(|_| {
-		runtime!(
-			"Attempt to interpret non-number value as number {} {}:{}",
-			std::file!(),
-			std::line!(),
-			std::column!()
-		)
-	})? / 10.0) as f64;
-	let _ = sender.try_send(SSheatInfo { time_delta });
-	Ok(Value::null())
-}
-
-fn get_share_energy(delta: f32, cap_1: f32, cap_2: f32) -> f32 {
-	delta * ((cap_1 * cap_2) / (cap_1 + cap_2))
-}
-
-//Fires the task into the thread pool, once
-#[init(full)]
-fn _process_heat_start() -> Result<(), String> {
-	INIT_HEAT.call_once(|| {
-		rayon::spawn(|| loop {
-			//this will block until process_turf_heat is called
-			let info = with_heat_processing_callback_receiver(|receiver| receiver.recv().unwrap());
-			let task_lock = TASKS.read();
-			let start_time = Instant::now();
-			let sender = byond_callback_sender();
-			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * info.time_delta;
-			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * info.time_delta;
-			with_turf_heat_read(|arena| {
-				with_turf_gases_read(|air_arena| {
-					let adjacencies_to_consider = arena
-						.map
-						.par_iter()
-						.filter_map(|(&turf_id, &heat_index)| {
-							/*
-								If it has no thermal conductivity, low thermal capacity or has no adjacencies,
-								then it's not gonna interact, or at least shouldn't.
-							*/
-							let info = arena.get(heat_index).unwrap();
-							let temp = { *info.temperature.read() };
-							//can share w/ adjacents?
-							if arena.adjacent_heats(heat_index).any(|item| {
-								(temp - *item.temperature.read()).abs()
-									> MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER
-							}) {
-								return Some((turf_id, heat_index, true));
-							}
-							if temp > MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION {
-								//can share w/ space/air?
-								if info.adjacent_to_space
-									|| air_arena
-										.get_id(&turf_id)
-										.and_then(|&nodeid| {
-											air_arena.get(nodeid)?.enabled().then(|| ())
-										})
-										.is_some()
-								{
-									Some((turf_id, heat_index, false))
-								} else {
-									None
-								}
-							} else if GasArena::with_all_mixtures(|all_mixtures| {
-								//can air share w/ us?
-								if let Some(node) = air_arena.get_id(&turf_id) {
-									let cur_mix = air_arena.get(*node).unwrap();
-									if !cur_mix.enabled() {
-										return false;
-									}
-									let air_temp =
-										all_mixtures[cur_mix.mix].read().get_temperature();
-									if air_temp < MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION {
-										return false;
-									}
-									(temp - air_temp).abs() > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER
-								} else {
-									false
-								}
-							}) {
-								Some((turf_id, heat_index, false))
-							} else {
-								None
-							}
-						})
-						.filter_map(|(id, node_index, has_adjacents)| {
-							let info = arena.get(node_index).unwrap();
-							let temp_write = info.temperature.try_write();
-
-							if temp_write.is_none() {
-								return None;
-							}
-							let mut temp_write = temp_write.unwrap();
-
-							//share w/ space
-							if info.adjacent_to_space && *temp_write > T0C {
-								/*
-									Straight up the standard blackbody radiation
-									equation. All these are f64s because
-									f32::MAX^4 < f64::MAX, and t.temperature
-									is ordinarily an f32, meaning that
-									this will never go into infinities.
-								*/
-								let blackbody_radiation: f64 = (emissivity_constant
-									* STEFAN_BOLTZMANN_CONSTANT
-									* (f64::from(*temp_write).powi(4)))
-									- radiation_from_space_tick;
-								*temp_write -= blackbody_radiation as f32 / info.heat_capacity;
-							}
-
-							//share w/ air
-							if let Some(&id) = air_arena.get_id(&id) {
-								let tmix = air_arena.get(id).unwrap();
-								if tmix.enabled() {
-									GasArena::with_all_mixtures(|all_mixtures| {
-										if let Some(entry) = all_mixtures.get(tmix.mix) {
-											let mut gas = entry.write();
-											*temp_write = gas.temperature_share_non_gas(
-												/*
-													This value should be lower than the
-													turf-to-turf conductivity for balance reasons
-													as well as realism, otherwise fires will
-													just sort of solve theirselves over time.
-												*/
-												info.thermal_conductivity
-													* OPEN_HEAT_TRANSFER_COEFFICIENT,
-												*temp_write,
-												info.heat_capacity,
-											)
-										};
-									})
-								}
-							}
-
-							if !temp_write.is_normal() {
-								*temp_write = TCMB;
-							}
-
-							if *temp_write > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION
-								&& *temp_write > info.heat_capacity
-							{
-								// not what heat capacity means but whatever
-								drop(sender.try_send(Box::new(move || {
-									let turf = unsafe { Value::turf_by_id_unchecked(id) };
-									turf.set(byond_string!("to_be_destroyed"), 1.0)?;
-									Ok(())
-								})));
-							}
-							has_adjacents.then(|| node_index)
-						})
-						.collect::<Vec<_>>();
-
-					//the floodfills separate zones where sharing can be done sequentially without threads trampling on each other
-					let zoned_temps = flood_fill_temps(adjacencies_to_consider, arena);
-
-					zoned_temps.into_par_iter().for_each(|zone| {
-						for &cur_index in zone.iter() {
-							let info = arena.get(cur_index).unwrap();
-							let mut temp_write = info.temperature.write();
-
-							//share w/ adjacents that are strictly in zone
-							for other in arena
-								.adjacent_node_ids(cur_index)
-								.filter_map(|idx| arena.get(idx))
-							{
-								/*
-									The horrible line below is essentially
-									sharing between solids--making it the minimum of both
-									conductivities makes this consistent, funnily enough.
-								*/
-								let mut other_write = other.temperature.write();
-								let shareds = info
-									.thermal_conductivity
-									.min(other.thermal_conductivity) * get_share_energy(
-									*other_write - *temp_write,
-									info.heat_capacity,
-									other.heat_capacity,
-								);
-								*temp_write += shareds / info.heat_capacity;
-								*other_write -= shareds / other.heat_capacity;
-							}
-						}
-					});
-				});
-			});
-			let bench = start_time.elapsed().as_millis();
-			drop(sender.try_send(Box::new(move || {
-				let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-				let prev_cost = ssair
-					.get_number(byond_string!("cost_superconductivity"))
-					.map_err(|_| {
-						runtime!(
-							"Attempt to interpret non-number value as number {} {}:{}",
-							std::file!(),
-							std::line!(),
-							std::column!()
-						)
-					})?;
-				ssair.set(
-					byond_string!("cost_superconductivity"),
-					Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
-				)?;
-				Ok(())
-			})));
-			drop(task_lock);
-		});
-	});
-	Ok(())
-}
-
-fn flood_fill_temps(
-	input: Vec<NodeIndex<usize>>,
-	arena: &TurfHeat,
-) -> Vec<IndexSet<NodeIndex<usize>, FxBuildHasher>> {
-	let mut found_turfs: HashSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
-	let mut return_val: Vec<IndexSet<NodeIndex<usize>, FxBuildHasher>> = Default::default();
-	for temp_id in input {
-		let mut turfs: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
-		let mut border_turfs: std::collections::VecDeque<NodeIndex<usize>> = Default::default();
-		border_turfs.push_back(temp_id);
-		found_turfs.insert(temp_id);
-		while let Some(cur_index) = border_turfs.pop_front() {
-			for adj_index in arena.adjacent_node_ids(cur_index) {
-				if found_turfs.insert(adj_index) {
-					border_turfs.push_back(adj_index)
-				}
-			}
-			turfs.insert(cur_index);
-		}
-		return_val.push(turfs)
-	}
-	return_val
-}
-
-#[shutdown]
-fn reset_auxmos_processing() {
-	HEAT_PROCESS_TIME.store(1_000_000, Ordering::Relaxed);
 }

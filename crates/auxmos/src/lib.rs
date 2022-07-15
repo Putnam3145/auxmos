@@ -1,9 +1,9 @@
-pub mod gas;
+mod gas;
 
 #[cfg(feature = "turf_processing")]
-pub mod turfs;
+mod turfs;
 
-pub mod reaction;
+mod reaction;
 
 use auxtools::{byond_string, hook, inventory, runtime, List, Value};
 

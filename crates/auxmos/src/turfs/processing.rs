@@ -800,28 +800,21 @@ fn _process_heat_start() -> Result<(), String> {
 							let info = arena.get(heat_index).unwrap();
 							let temp = { *info.temperature.read() };
 							//can share w/ adjacents?
-							if arena
-								.adjacent_heats(heat_index)
-								.find(|item| {
-									(temp - *item.temperature.read()).abs()
-										> MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER
-								})
-								.is_some()
-							{
+							if arena.adjacent_heats(heat_index).any(|item| {
+								(temp - *item.temperature.read()).abs()
+									> MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER
+							}) {
 								return Some((turf_id, heat_index, true));
 							}
 							if temp > MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION {
-								//can share w/ space?
-								if info.adjacent_to_space {
-									return Some((turf_id, heat_index, false));
-								//can share w/air?
-								} else if air_arena
-									.get_id(&turf_id)
-									.and_then(|&nodeid| {
-										let tmix = air_arena.get(nodeid)?;
-										tmix.enabled().then(|| tmix)
-									})
-									.is_some()
+								//can share w/ space/air?
+								if info.adjacent_to_space
+									|| air_arena
+										.get_id(&turf_id)
+										.and_then(|&nodeid| {
+											air_arena.get(nodeid)?.enabled().then(|| ())
+										})
+										.is_some()
 								{
 									return Some((turf_id, heat_index, false));
 								}
@@ -882,7 +875,7 @@ fn _process_heat_start() -> Result<(), String> {
 								let tmix = air_arena.get(id).unwrap();
 								if tmix.enabled() {
 									GasArena::with_all_mixtures(|all_mixtures| {
-										all_mixtures.get(tmix.mix).map(|entry| {
+										if let Some(entry) = all_mixtures.get(tmix.mix) {
 											let mut gas = entry.write();
 											*temp_write = gas.temperature_share_non_gas(
 												/*
@@ -896,7 +889,7 @@ fn _process_heat_start() -> Result<(), String> {
 												*temp_write,
 												info.heat_capacity,
 											)
-										});
+										};
 									})
 								}
 							}
@@ -920,7 +913,7 @@ fn _process_heat_start() -> Result<(), String> {
 						.collect::<Vec<_>>();
 
 					//the floodfills separate zones where sharing can be done sequentially without threads trampling on each other
-					let zoned_temps = flood_fill_temps(adjacencies_to_consider, &arena);
+					let zoned_temps = flood_fill_temps(adjacencies_to_consider, arena);
 
 					zoned_temps.into_par_iter().for_each(|zone| {
 						for &cur_index in zone.iter() {

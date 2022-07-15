@@ -758,15 +758,17 @@ pub(crate) fn equalize(
 					return None;
 				}
 
-				//does this turf or its adjacencies have enough moles to share?
-				if GasArena::with_all_mixtures(|all_mixtures| {
+				let is_unshareable = GasArena::with_all_mixtures(|all_mixtures| {
 					let our_moles = all_mixtures[cur_mixture.mix].read().total_moles();
 					our_moles < 10.0
 						|| arena.adjacent_mixes(cur_index, all_mixtures).all(|lock| {
 							(lock.read().total_moles() - our_moles).abs()
 								< MINIMUM_MOLES_DELTA_TO_MOVE
 						})
-				}) {
+				});
+
+				//does this turf or its adjacencies have enough moles to share?
+				if is_unshareable {
 					return None;
 				}
 

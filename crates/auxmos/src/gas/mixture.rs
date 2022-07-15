@@ -36,6 +36,8 @@ impl GasCache {
 	pub fn invalidate(&self) {
 		self.0.store(f32::NAN, Relaxed);
 	}
+	//cannot fix this, because f is FnMut and then() takes FnOnce
+	#[allow(clippy::redundant_closure)]
 	pub fn get_or_else(&self, mut f: impl FnMut() -> f32) -> f32 {
 		match self
 			.0

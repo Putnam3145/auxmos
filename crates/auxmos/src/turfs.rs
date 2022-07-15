@@ -257,10 +257,10 @@ impl TurfHeat {
 			.neighbors(index)
 			.filter_map(|index| Some(self.get(index)?.id))
 	}
-	pub fn adjacent_heats<'a>(
-		&'a self,
+	pub fn adjacent_heats(
+		&self,
 		index: NodeIndex<usize>,
-	) -> impl Iterator<Item = &'a ThermalInfo> {
+	) -> impl Iterator<Item = &ThermalInfo> + '_ {
 		self.graph
 			.neighbors(index)
 			.filter_map(|neighbor| self.graph.node_weight(neighbor))

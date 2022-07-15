@@ -24,8 +24,6 @@ use dashmap::DashMap;
 
 use fxhash::FxBuildHasher;
 
-use rayon;
-
 use rayon::prelude::*;
 
 use std::mem::drop;

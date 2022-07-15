@@ -146,9 +146,7 @@ impl TurfHeat {
 	) {
 		if let Some(&this_node) = self.get_id(&idx) {
 			self.remove_adjacencies(this_node);
-			for (dir_flag, _) in
-				adjacent_tile_ids(blocked_dirs.complement(), idx, max_x, max_y)
-			{
+			for (dir_flag, _) in adjacent_tile_ids(blocked_dirs.complement(), idx, max_x, max_y) {
 				if let Some(&adjacent_node) = self.get_id(&idx) {
 					self.graph.add_edge(this_node, adjacent_node, ());
 				}
@@ -363,12 +361,7 @@ fn _process_heat_start() -> Result<(), String> {
 						})
 						.filter_map(|(id, node_index, has_adjacents)| {
 							let info = arena.get(node_index).unwrap();
-							let temp_write = info.temperature.try_write();
-
-							if temp_write.is_none() {
-								return None;
-							}
-							let mut temp_write = temp_write.unwrap();
+							let mut temp_write = info.temperature.try_write()?;
 
 							//share w/ space
 							if info.adjacent_to_space && *temp_write > T0C {

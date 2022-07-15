@@ -541,11 +541,6 @@ fn _hook_infos() {
 	with_dirty_turfs(|dirty_turfs| -> Result<(), Runtime> {
 		let e = dirty_turfs.entry(unsafe { src.raw.data.id }).or_default();
 		e.insert(DirtyFlags::DIRTY_ADJACENT);
-		/*
-		if src.get_type()?.as_str().starts_with("/turf/open/space") {
-			e.insert(DirtyFlags::DIRTY_ADJACENT_TO_SPACE);
-		}
-		*/
 		Ok(())
 	})?;
 	Ok(Value::null())

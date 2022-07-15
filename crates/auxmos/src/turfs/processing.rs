@@ -915,7 +915,7 @@ fn _process_heat_start() -> Result<(), String> {
 							//share w/ adjacents that are strictly in zone
 							for other in arena
 								.adjacent_node_ids(cur_index)
-								.filter_map(|idx| zone.contains(&idx).then(|| arena.get(idx))?)
+								.filter_map(|idx| arena.get(idx))
 							{
 								/*
 									The horrible line below is essentially
@@ -974,9 +974,6 @@ fn flood_fill_temps(
 		border_turfs.push_back(temp_id);
 		found_turfs.insert(temp_id);
 		while let Some(cur_index) = border_turfs.pop_front() {
-			if turfs.len() >= 100 {
-				break;
-			}
 			for adj_index in arena.adjacent_node_ids(cur_index) {
 				if found_turfs.insert(adj_index) {
 					border_turfs.push_back(adj_index)

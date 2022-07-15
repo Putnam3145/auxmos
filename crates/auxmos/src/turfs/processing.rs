@@ -816,7 +816,9 @@ fn _process_heat_start() -> Result<(), String> {
 										})
 										.is_some()
 								{
-									return Some((turf_id, heat_index, false));
+									Some((turf_id, heat_index, false))
+								} else {
+									None
 								}
 							} else if GasArena::with_all_mixtures(|all_mixtures| {
 								//can air share w/ us?
@@ -835,19 +837,17 @@ fn _process_heat_start() -> Result<(), String> {
 									false
 								}
 							}) {
-								return Some((turf_id, heat_index, false));
+								Some((turf_id, heat_index, false))
+							} else {
+								None
 							}
-
-							None
 						})
 						.filter_map(|(id, node_index, has_adjacents)| {
 							let info = arena.get(node_index).unwrap();
-							let mut heat_delta = 0.0;
-							let temp_read = info.temperature.upgradable_read();
-							let cur_temp = *temp_read;
+							let mut temp_write = info.temperature.write();
 
 							//share w/ space
-							if info.adjacent_to_space && cur_temp > T0C {
+							if info.adjacent_to_space && *temp_write > T0C {
 								/*
 									Straight up the standard blackbody radiation
 									equation. All these are f64s because
@@ -857,18 +857,10 @@ fn _process_heat_start() -> Result<(), String> {
 								*/
 								let blackbody_radiation: f64 = (emissivity_constant
 									* STEFAN_BOLTZMANN_CONSTANT
-									* (f64::from(cur_temp).powi(4)))
+									* (f64::from(*temp_write).powi(4)))
 									- radiation_from_space_tick;
-								heat_delta -= blackbody_radiation as f32;
+								*temp_write -= blackbody_radiation as f32 / info.heat_capacity;
 							}
-							let temp_delta = heat_delta / info.heat_capacity;
-
-							let mut temp_write =
-								parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(
-									temp_read,
-								);
-
-							*temp_write += temp_delta;
 
 							//share w/ air
 							if let Some(&id) = air_arena.get_id(&id) {

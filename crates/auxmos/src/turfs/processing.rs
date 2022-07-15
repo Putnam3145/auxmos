@@ -844,7 +844,12 @@ fn _process_heat_start() -> Result<(), String> {
 						})
 						.filter_map(|(id, node_index, has_adjacents)| {
 							let info = arena.get(node_index).unwrap();
-							let mut temp_write = info.temperature.write();
+							let temp_write = info.temperature.try_write();
+
+							if temp_write.is_none() {
+								return None;
+							}
+							let mut temp_write = temp_write.unwrap();
 
 							//share w/ space
 							if info.adjacent_to_space && *temp_write > T0C {

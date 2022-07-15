@@ -758,7 +758,7 @@ pub fn update_visuals(src: Value) -> DMResult {
 	}
 }
 
-fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {
+const fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {
 	let z_size = max_x * max_y;
 	let i = i as i32;
 	match id {

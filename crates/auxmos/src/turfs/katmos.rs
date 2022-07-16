@@ -411,7 +411,7 @@ fn explosively_depressurize(
 				Ok(())
 			})?;
 			if had_firelock {
-				super::processing::rebuild_turf_graph()?; // consider_firelocks ought to dirtify it anyway
+				rebuild_turf_graph()?; // consider_firelocks ought to dirtify it anyway
 			}
 			if warned_about_planet_atmos {
 				break;

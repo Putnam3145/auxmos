@@ -72,25 +72,6 @@ fn _finish_process_turfs() {
 	}
 }
 
-pub fn rebuild_turf_graph() -> Result<(), Runtime> {
-	with_dirty_turfs(|dirty_turfs| {
-		for (&t, _) in dirty_turfs
-			.iter()
-			.filter(|&(_, &flags)| flags.contains(DirtyFlags::DIRTY_MIX_REF))
-		{
-			register_turf(t)?;
-		}
-		for (t, _) in dirty_turfs
-			.drain(..)
-			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
-		{
-			update_adjacency_info(t)?;
-		}
-		Ok(())
-	})?;
-	Ok(())
-}
-
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
 fn _process_turf_notify() {
 	let sender = processing_callbacks_sender();

@@ -438,6 +438,26 @@ fn planetary_atmos() -> &'static DashMap<u32, Mixture, FxBuildHasher> {
 	unsafe { PLANETARY_ATMOS.as_ref().unwrap() }
 }
 
+
+fn rebuild_turf_graph() -> Result<(), Runtime> {
+	with_dirty_turfs(|dirty_turfs| {
+		for (&t, _) in dirty_turfs
+			.iter()
+			.filter(|&(_, &flags)| flags.contains(DirtyFlags::DIRTY_MIX_REF))
+		{
+			register_turf(t)?;
+		}
+		for (t, _) in dirty_turfs
+			.drain(..)
+			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
+		{
+			update_adjacency_info(t)?;
+		}
+		Ok(())
+	})?;
+	Ok(())
+}
+
 fn register_turf(id: u32) -> Result<(), Runtime> {
 	let src = unsafe { Value::turf_by_id_unchecked(id) };
 	let flag = determine_turf_flag(&src);

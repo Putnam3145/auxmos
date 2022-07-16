@@ -337,24 +337,24 @@ fn _process_heat_start() -> Result<(), String> {
 								} else {
 									None
 								}
-							} else if GasArena::with_all_mixtures(|all_mixtures| {
-								//can air share w/ us?
-								if let Some(node) = air_arena.get_id(&turf_id) {
-									let cur_mix = air_arena.get(*node).unwrap();
-									if !cur_mix.enabled() {
+							} else if let Some(node) = air_arena.get_id(&turf_id) {
+								let cur_mix = air_arena.get(*node).unwrap();
+								if !cur_mix.enabled() {
+									return None;
+								}
+								GasArena::with_all_mixtures(|all_mixtures| {
+									let air_temp = all_mixtures[cur_mix.mix].try_read();
+									if air_temp.is_none() {
 										return false;
 									}
-									let air_temp =
-										all_mixtures[cur_mix.mix].read().get_temperature();
+									let air_temp = air_temp.unwrap().get_temperature();
+
 									if air_temp < MINIMUM_TEMPERATURE_FOR_SUPERCONDUCTION {
 										return false;
 									}
 									(temp - air_temp).abs() > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER
-								} else {
-									false
-								}
-							}) {
-								Some((turf_id, heat_index, false))
+								})
+								.then(|| (turf_id, heat_index, false))
 							} else {
 								None
 							}
@@ -385,20 +385,21 @@ fn _process_heat_start() -> Result<(), String> {
 								if tmix.enabled() {
 									GasArena::with_all_mixtures(|all_mixtures| {
 										if let Some(entry) = all_mixtures.get(tmix.mix) {
-											let mut gas = entry.write();
-											*temp_write = gas.temperature_share_non_gas(
-												/*
-													This value should be lower than the
-													turf-to-turf conductivity for balance reasons
-													as well as realism, otherwise fires will
-													just sort of solve theirselves over time.
-												*/
-												info.thermal_conductivity
-													* OPEN_HEAT_TRANSFER_COEFFICIENT,
-												*temp_write,
-												info.heat_capacity,
-											)
-										};
+											if let Some(mut gas) = entry.try_write() {
+												*temp_write = gas.temperature_share_non_gas(
+													/*
+														This value should be lower than the
+														turf-to-turf conductivity for balance reasons
+														as well as realism, otherwise fires will
+														just sort of solve theirselves over time.
+													*/
+													info.thermal_conductivity
+														* OPEN_HEAT_TRANSFER_COEFFICIENT,
+													*temp_write,
+													info.heat_capacity,
+												);
+											}
+										}
 									})
 								}
 							}
@@ -420,6 +421,10 @@ fn _process_heat_start() -> Result<(), String> {
 							has_adjacents.then(|| node_index)
 						})
 						.collect::<Vec<_>>();
+
+					if check_turfs_dirty() {
+						return;
+					}
 
 					//the floodfills separate zones where sharing can be done sequentially without threads trampling on each other
 					let zoned_temps = flood_fill_temps(adjacencies_to_consider, arena);

@@ -438,7 +438,6 @@ fn planetary_atmos() -> &'static DashMap<u32, Mixture, FxBuildHasher> {
 	unsafe { PLANETARY_ATMOS.as_ref().unwrap() }
 }
 
-
 fn rebuild_turf_graph() -> Result<(), Runtime> {
 	with_dirty_turfs(|dirty_turfs| {
 		for (&t, _) in dirty_turfs
@@ -455,6 +454,7 @@ fn rebuild_turf_graph() -> Result<(), Runtime> {
 		}
 		Ok(())
 	})?;
+	set_turfs_dirty(false);
 	Ok(())
 }
 

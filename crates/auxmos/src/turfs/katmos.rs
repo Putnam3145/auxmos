@@ -609,7 +609,7 @@ fn flood_fill_equalize_turfs(
 						// NOT ONE OF YOU IS GONNA SURVIVE THIS
 						// (I just made explosions less laggy, you're welcome)
 						if !ignore_zone {
-							drop(sender.send(Box::new(move || {
+							drop(sender.try_send(Box::new(move || {
 								explosively_depressurize(cur_index, equalize_hard_turf_limit)
 							})));
 						}
@@ -695,12 +695,18 @@ fn process_planet_turfs(
 			}
 		}
 	}
-	drop(sender.send(Box::new(move || {
+
+	//whoops, this can absolutely fail
+	if sender.try_send(Box::new(move || {
 		for callback in firelock_callbacks.iter() {
 			callback()?;
 		}
 		Ok(())
-	})));
+	})).is_err() {
+		PLANET_TURF_CYCLE.store(false, Ordering::Relaxed);
+		return;
+	}
+
 	if !did_firelocks {
 		return;
 	}
@@ -883,12 +889,11 @@ pub fn equalize(
 				finalize_eq(cur_index, arena, &mut graph, &mut pressures);
 			});
 
-			pressures.par_chunks(10).for_each(|chunk| {
-				let sender = byond_callback_sender();
-				//fuck all this copying, but it's pretty much the only way
-				let actual_chunk = chunk.to_vec();
-				drop(sender.try_send(Box::new(move || {
-					for &(amt, cur_turf, adj_turf) in actual_chunk.iter() {
+			pressures
+				.into_par_iter()
+				.for_each(|(amt, cur_turf, adj_turf)| {
+					let sender = byond_callback_sender();
+					drop(sender.try_send(Box::new(move || {
 						let real_amount = Value::from(amt);
 						let turf = unsafe { Value::turf_by_id_unchecked(cur_turf) };
 						let other_turf = unsafe { Value::turf_by_id_unchecked(adj_turf) };
@@ -899,10 +904,9 @@ pub fn equalize(
 								.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
 								.call(&[&Value::from_string(e.message.as_str())?])?;
 						}
-					}
-					Ok(())
-				})))
-			});
+						Ok(())
+					})))
+				});
 		});
 	});
 	turfs_processed.load(Ordering::Relaxed)

@@ -121,7 +121,6 @@ fn _process_turf_start() -> Result<(), String> {
 		rayon::spawn(|| loop {
 			//this will block until process_turfs is called
 			let info = with_processing_callback_receiver(|receiver| receiver.recv().unwrap());
-			set_turfs_dirty(false);
 			let task_lock = TASKS.read();
 			let sender = byond_callback_sender();
 			let mut stats: Vec<Box<dyn Fn() -> Result<(), Runtime> + Send + Sync>> =
@@ -489,38 +488,28 @@ fn fdm(
 				low_pressure_turfs.par_extend(low_pressure.par_iter().map(|(i, _, _)| i));
 				//tossing things around is already handled by katmos, so we don't need to do it here.
 				if !equalize_enabled {
-					let pressure_deltas_fixed = high_pressure
+					high_pressure
 						.into_par_iter()
-						.filter_map(|(index, diffs, _)| Some((arena.get(index)?.id, diffs)))
-						.collect::<Vec<_>>();
-					let pressure_deltas_chunked =
-						pressure_deltas_fixed.par_chunks(20).collect::<Vec<_>>();
-					pressure_deltas_chunked
-						.par_iter()
-						.with_min_len(5)
-						.for_each(|temp_value| {
+						.filter_map(|(node_id, pressures, _)| {
+							Some((arena.get(node_id)?.id, pressures))
+						})
+						.for_each(|(id, diffs)| {
 							let sender = byond_callback_sender();
-							let these_pressure_deltas = temp_value.to_vec();
 							drop(sender.try_send(Box::new(move || {
-								for (turf_id, pressure_diffs) in
-									these_pressure_deltas.clone().into_iter()
-								{
-									let turf = unsafe { Value::turf_by_id_unchecked(turf_id) };
-									for (id, diff) in pressure_diffs {
-										if id != 0 {
-											let enemy_tile =
-												unsafe { Value::turf_by_id_unchecked(id) };
-											if diff > 5.0 {
-												turf.call(
-													"consider_pressure_difference",
-													&[&enemy_tile, &Value::from(diff)],
-												)?;
-											} else if diff < -5.0 {
-												enemy_tile.call(
-													"consider_pressure_difference",
-													&[&turf.clone(), &Value::from(-diff)],
-												)?;
-											}
+								let turf = unsafe { Value::turf_by_id_unchecked(id) };
+								for (id, diff) in diffs.to_vec() {
+									if id != 0 {
+										let enemy_tile = unsafe { Value::turf_by_id_unchecked(id) };
+										if diff > 5.0 {
+											turf.call(
+												"consider_pressure_difference",
+												&[&enemy_tile, &Value::from(diff)],
+											)?;
+										} else if diff < -5.0 {
+											enemy_tile.call(
+												"consider_pressure_difference",
+												&[&turf.clone(), &Value::from(-diff)],
+											)?;
 										}
 									}
 								}
@@ -639,10 +628,11 @@ fn post_process() {
 			})
 		})
 	});
-	processables.into_par_iter().chunks(30).for_each(|chunk| {
-		let sender = byond_callback_sender();
-		drop(sender.try_send(Box::new(move || {
-			for (i, should_update_vis, should_react) in chunk.clone() {
+	processables
+		.into_par_iter()
+		.for_each(|(i, should_update_vis, should_react)| {
+			let sender = byond_callback_sender();
+			drop(sender.try_send(Box::new(move || {
 				let turf = unsafe { Value::turf_by_id_unchecked(i) };
 				if should_react {
 					if cfg!(target_os = "linux") {
@@ -655,8 +645,7 @@ fn post_process() {
 					//turf.call("update_visuals", &[])?;
 					update_visuals(turf)?;
 				}
-			}
-			Ok(())
-		})));
-	});
+				Ok(())
+			})));
+		});
 }

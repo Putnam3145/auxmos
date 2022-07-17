@@ -142,7 +142,12 @@ impl TurfHeat {
 	) {
 		if let Some(&this_node) = self.get_id(&idx) {
 			self.remove_adjacencies(this_node);
-			for (dir_flag, _) in adjacent_tile_ids(blocked_dirs.complement(), idx, max_x, max_y) {
+			for (dir_flag, _) in adjacent_tile_ids(
+				Directions::ALL_CARDINALS_MULTIZ & !blocked_dirs,
+				idx,
+				max_x,
+				max_y,
+			) {
 				if let Some(&adjacent_node) = self.get_id(&idx) {
 					self.graph.add_edge(this_node, adjacent_node, ());
 				}

@@ -626,7 +626,7 @@ const fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {
 		3 => (i - 1) as TurfID,
 		4 => (i + z_size) as TurfID,
 		5 => (i - z_size) as TurfID,
-		_ => i as TurfID,
+		_ => panic!("Invalid id passed to adjacent_tile_id!"),
 	}
 }
 
@@ -644,17 +644,17 @@ impl Iterator for AdjacentTileIDs {
 
 	fn next(&mut self) -> Option<Self::Item> {
 		loop {
-			if self.count > 6 {
+			if self.count > 5 {
 				return None;
 			}
-			self.count += 1;
-			let dir = Directions::from_bits_truncate(1 << (self.count - 1));
+			let dir = Directions::from_bits_truncate(1 << self.count);
 			if self.adj.contains(dir) {
 				return Some((
 					dir,
-					adjacent_tile_id(self.count - 1, self.i, self.max_x, self.max_y),
+					adjacent_tile_id(self.count, self.i, self.max_x, self.max_y),
 				));
 			}
+			self.count += 1;
 		}
 	}
 

@@ -7,17 +7,13 @@ use super::*;
 
 use crate::GasArena;
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use auxcallback::byond_callback_sender;
-
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Once;
 
 static INIT_HEAT: Once = Once::new();
-
-static HEAT_PROCESS_TIME: AtomicU64 = AtomicU64::new(1_000_000);
 
 static TURF_HEAT: RwLock<Option<TurfHeat>> = const_rwlock(None);
 
@@ -245,14 +241,6 @@ fn _hook_turf_temperature() {
 			Ok(Value::from(102))
 		}
 	})
-}
-
-#[hook("/datum/controller/subsystem/air/proc/heat_process_time")]
-fn _process_heat_time() {
-	let tot = HEAT_PROCESS_TIME.load(Ordering::Relaxed);
-	Ok(Value::from(
-		Duration::new(tot / 1_000_000_000, (tot % 1_000_000_000) as u32).as_millis() as f32,
-	))
 }
 
 // Expected function call: process_turf_heat()
@@ -506,9 +494,4 @@ fn flood_fill_temps(
 		return_val.push(turfs)
 	}
 	return_val
-}
-
-#[shutdown]
-fn reset_auxmos_processing() {
-	HEAT_PROCESS_TIME.store(1_000_000, Ordering::Relaxed);
 }

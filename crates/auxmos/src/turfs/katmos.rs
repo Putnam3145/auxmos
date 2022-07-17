@@ -697,12 +697,15 @@ fn process_planet_turfs(
 	}
 
 	//whoops, this can absolutely fail
-	if sender.try_send(Box::new(move || {
-		for callback in firelock_callbacks.iter() {
-			callback()?;
-		}
-		Ok(())
-	})).is_err() {
+	if sender
+		.try_send(Box::new(move || {
+			for callback in firelock_callbacks.iter() {
+				callback()?;
+			}
+			Ok(())
+		}))
+		.is_err()
+	{
 		PLANET_TURF_CYCLE.store(false, Ordering::Relaxed);
 		return;
 	}
@@ -883,30 +886,35 @@ pub fn equalize(
 			return;
 		}
 
-		turfs.into_par_iter().for_each(|(turf, mut graph)| {
-			let mut pressures: Vec<(f32, u32, u32)> = Vec::new();
-			turf.iter().for_each(|&cur_index| {
-				finalize_eq(cur_index, arena, &mut graph, &mut pressures);
-			});
-
-			pressures
-				.into_par_iter()
-				.for_each(|(amt, cur_turf, adj_turf)| {
-					let sender = byond_callback_sender();
-					drop(sender.try_send(Box::new(move || {
-						let real_amount = Value::from(amt);
-						let turf = unsafe { Value::turf_by_id_unchecked(cur_turf) };
-						let other_turf = unsafe { Value::turf_by_id_unchecked(adj_turf) };
-						if let Err(e) =
-							turf.call("consider_pressure_difference", &[&other_turf, &real_amount])
-						{
-							Proc::find(byond_string!("/proc/stack_trace"))
-								.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
-								.call(&[&Value::from_string(e.message.as_str())?])?;
-						}
-						Ok(())
-					})))
+		let final_pressures = turfs
+			.into_par_iter()
+			.filter_map(|(turf, mut graph)| {
+				let mut pressures: Vec<(f32, u32, u32)> = Vec::new();
+				turf.iter().for_each(|&cur_index| {
+					finalize_eq(cur_index, arena, &mut graph, &mut pressures);
 				});
+				(pressures.len() > 0).then(|| pressures)
+			})
+			.collect::<Vec<_>>();
+
+		let sender = byond_callback_sender();
+
+		final_pressures.into_iter().for_each(|final_pressures| {
+			for (amt, cur_turf, adj_turf) in final_pressures {
+				drop(sender.try_send(Box::new(move || {
+					let real_amount = Value::from(amt);
+					let turf = unsafe { Value::turf_by_id_unchecked(cur_turf) };
+					let other_turf = unsafe { Value::turf_by_id_unchecked(adj_turf) };
+					if let Err(e) =
+						turf.call("consider_pressure_difference", &[&other_turf, &real_amount])
+					{
+						Proc::find(byond_string!("/proc/stack_trace"))
+							.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
+							.call(&[&Value::from_string(e.message.as_str())?])?;
+					}
+					Ok(())
+				})));
+			}
 		});
 	});
 	turfs_processed.load(Ordering::Relaxed)

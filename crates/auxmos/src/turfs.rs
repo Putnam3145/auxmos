@@ -195,6 +195,9 @@ impl TurfMixture {
 		});
 		ret
 	}
+	pub fn invalidate_vis_cache(&self) {
+		self.vis_hash.store(0, std::sync::atomic::Ordering::Relaxed);
+	}
 }
 
 type TurfGraphMap = IndexMap<TurfID, NodeIndex<usize>, FxBuildHasher>;

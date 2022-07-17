@@ -592,12 +592,12 @@ fn excited_group_processing(
 }
 
 // Checks if the gas can react or can update visuals, returns None if not.
-fn post_process_cell(
-	mixture: &TurfMixture,
+fn post_process_cell<'a>(
+	mixture: &'a TurfMixture,
 	vis: &[Option<f32>],
 	all_mixtures: &[RwLock<Mixture>],
 	reactions: &[crate::reaction::Reaction],
-) -> Option<(TurfID, bool, bool)> {
+) -> Option<(&'a TurfMixture, bool, bool)> {
 	all_mixtures
 		.get(mixture.mix)
 		.and_then(RwLock::try_read)
@@ -605,7 +605,7 @@ fn post_process_cell(
 			let should_update_visuals = gas.vis_hash_changed(vis, &mixture.vis_hash);
 			let reactable = gas.can_react_with_slice(reactions);
 			(should_update_visuals || reactable)
-				.then(|| (mixture.id, should_update_visuals, reactable))
+				.then(|| (mixture, should_update_visuals, reactable))
 		})
 }
 
@@ -613,8 +613,8 @@ fn post_process_cell(
 // update visuals, if it should react, sends a callback if it should.
 fn post_process() {
 	let vis = crate::gas::visibility_copies();
-	let processables = with_turf_gases_read(|arena| {
-		crate::gas::types::with_reactions(|reactions| {
+	with_turf_gases_read(|arena| {
+		let processables = crate::gas::types::with_reactions(|reactions| {
 			GasArena::with_all_mixtures(|all_mixtures| {
 				arena
 					.map
@@ -626,26 +626,39 @@ fn post_process() {
 					.filter_map(|mixture| post_process_cell(mixture, &vis, all_mixtures, reactions))
 					.collect::<Vec<_>>()
 			})
-		})
-	});
-	processables
-		.into_par_iter()
-		.for_each(|(i, should_update_vis, should_react)| {
-			let sender = byond_callback_sender();
-			drop(sender.try_send(Box::new(move || {
-				let turf = unsafe { Value::turf_by_id_unchecked(i) };
+		});
+		processables
+			.into_par_iter()
+			.for_each(|(tmix, should_update_vis, should_react)| {
+				let sender = byond_callback_sender();
+				let id = tmix.id;
+
 				if should_react {
-					if cfg!(target_os = "linux") {
-						turf.get(byond_string!("air"))?.call("vv_react", &[&turf])?;
-					} else {
-						turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+					drop(sender.try_send(Box::new(move || {
+						let turf = unsafe { Value::turf_by_id_unchecked(id) };
+						if cfg!(target_os = "linux") {
+							turf.get(byond_string!("air"))?.call("vv_react", &[&turf])?;
+						} else {
+							turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+						}
+						Ok(())
+					})));
+				}
+
+				if should_update_vis {
+					if sender
+						.try_send(Box::new(move || {
+							let turf = unsafe { Value::turf_by_id_unchecked(id) };
+							update_visuals(turf)?;
+							Ok(())
+						}))
+						.is_err()
+					{
+						//this update failed, consider vis_cache to be bogus so it can send the
+						//update again later
+						tmix.invalidate_vis_cache();
 					}
 				}
-				if should_update_vis {
-					//turf.call("update_visuals", &[])?;
-					update_visuals(turf)?;
-				}
-				Ok(())
-			})));
-		});
+			});
+	});
 }

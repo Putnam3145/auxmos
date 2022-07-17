@@ -16,7 +16,7 @@ impl Timer {
 	fn new(time: Duration) -> Self {
 		let done = Arc::new(AtomicBool::new(false));
 		let thread_done = Arc::clone(&done);
-		let builder = std::thread::Builder::new();
+		let builder = std::thread::Builder::new().name("auxcallback-timer".to_string());
 		match builder.spawn(move || {
 			std::thread::sleep(time);
 			thread_done.store(true, Relaxed);
@@ -42,7 +42,7 @@ static mut CALLBACK_CHANNEL: Option<CallbackChannel> = None;
 #[init(partial)]
 fn _start_callbacks() -> Result<(), String> {
 	unsafe {
-		CALLBACK_CHANNEL = Some(flume::bounded(100000));
+		CALLBACK_CHANNEL = Some(flume::bounded(100_000));
 	}
 	Ok(())
 }
@@ -63,7 +63,7 @@ pub fn byond_callback_sender() -> flume::Sender<DeferredFunc> {
 }
 
 /// Goes through every single outstanding callback and calls them.
-pub fn process_callbacks() {
+fn process_callbacks() {
 	let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
@@ -75,7 +75,7 @@ pub fn process_callbacks() {
 }
 
 /// Goes through every single outstanding callback and calls them, until a given time limit is reached.
-pub fn process_callbacks_for(duration: Duration) -> bool {
+fn process_callbacks_for(duration: Duration) -> bool {
 	let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
 	let timer = Timer::new(duration);
 	with_callback_receiver(|receiver| {

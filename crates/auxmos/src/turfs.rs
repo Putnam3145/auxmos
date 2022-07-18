@@ -640,18 +640,18 @@ impl Iterator for AdjacentTileIDs {
 
 	fn next(&mut self) -> Option<Self::Item> {
 		loop {
-			if self.count > 5 {
+			if self.count == 6 {
 				return None;
 			}
-			//SAFETY: count can never be above 5
+			//SAFETY: count can never be invalid
 			let dir = unsafe { Directions::from_bits_unchecked(1 << self.count) };
+			self.count += 1;
 			if self.adj.contains(dir) {
 				return Some((
 					dir,
-					adjacent_tile_id(self.count, self.i, self.max_x, self.max_y),
+					adjacent_tile_id(self.count - 1, self.i, self.max_x, self.max_y),
 				));
 			}
-			self.count += 1;
 		}
 	}
 

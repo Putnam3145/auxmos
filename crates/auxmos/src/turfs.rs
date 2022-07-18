@@ -643,7 +643,8 @@ impl Iterator for AdjacentTileIDs {
 			if self.count > 5 {
 				return None;
 			}
-			let dir = Directions::from_bits_truncate(1 << self.count);
+			//SAFETY: count can never be above 5
+			let dir = unsafe { Directions::from_bits_unchecked(1 << self.count) };
 			if self.adj.contains(dir) {
 				return Some((
 					dir,

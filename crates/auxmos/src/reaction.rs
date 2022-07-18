@@ -3,11 +3,10 @@ mod hooks;
 
 use auxtools::{byond_string, runtime, shutdown, DMResult, Value};
 
-use std::cell::RefCell;
-
 use crate::gas::{gas_idx_to_id, total_num_gases, GasIDX, Mixture};
 
 use core::cmp::Ordering;
+use std::cell::RefCell;
 
 #[derive(Clone)]
 pub struct Reaction {

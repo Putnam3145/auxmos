@@ -1,8 +1,8 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use auxtools::*;
 
 use fxhash::FxBuildHasher;
 
-use std::cell::RefCell;
+use parking_lot::{const_rwlock, RwLock};
 
 use crate::reaction::Reaction;
 
@@ -10,13 +10,13 @@ use super::GasIDX;
 
 use dashmap::DashMap;
 
-use std::collections::HashMap;
+use std::{
+	cell::RefCell,
+	collections::HashMap,
+	sync::atomic::{AtomicUsize, Ordering},
+};
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
-
-use auxtools::*;
-
-use parking_lot::{const_rwlock, RwLock};
 
 static REACTION_INFO: RwLock<Option<Vec<Reaction>>> = const_rwlock(None);
 

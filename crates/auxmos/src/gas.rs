@@ -1,19 +1,21 @@
 #[allow(dead_code)]
 pub mod constants;
+
 pub mod mixture;
+
 pub mod types;
 
 use auxtools::*;
 
-use fxhash::FxBuildHasher;
+pub use types::*;
 
-use std::collections::HashSet;
+use fxhash::FxBuildHasher;
 
 use parking_lot::{const_rwlock, RwLock};
 
-pub use types::*;
-
 pub use mixture::Mixture;
+
+use std::collections::HashSet;
 
 pub type GasIDX = usize;
 

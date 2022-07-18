@@ -2,6 +2,16 @@
 
 use super::*;
 
+use indexmap::IndexSet;
+
+use ahash::RandomState;
+
+use fxhash::FxBuildHasher;
+
+use auxcallback::byond_callback_sender;
+
+use petgraph::{graph::NodeIndex, graphmap::DiGraphMap};
+
 use std::{
 	cell::Cell,
 	{
@@ -9,15 +19,6 @@ use std::{
 		sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 	},
 };
-
-use indexmap::IndexSet;
-
-use ahash::RandomState;
-use fxhash::FxBuildHasher;
-
-use auxcallback::byond_callback_sender;
-
-use petgraph::{graph::NodeIndex, graphmap::DiGraphMap};
 
 #[derive(Copy, Clone)]
 struct MonstermosInfo {

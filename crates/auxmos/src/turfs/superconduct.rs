@@ -1,17 +1,16 @@
-use std::collections::HashSet;
-
 use auxtools::*;
-use indexmap::IndexSet;
 
 use super::*;
 
-use crate::GasArena;
+use indexmap::IndexSet;
 
-use std::time::Instant;
+use crate::GasArena;
 
 use auxcallback::byond_callback_sender;
 
 use parking_lot::Once;
+
+use std::{collections::HashSet, time::Instant};
 
 static INIT_HEAT: Once = Once::new();
 

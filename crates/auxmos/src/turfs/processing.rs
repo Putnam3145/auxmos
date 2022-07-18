@@ -1,18 +1,19 @@
-use std::collections::{BTreeSet, HashSet, VecDeque};
-
 use auxtools::*;
 
 use super::*;
 
 use crate::GasArena;
 
-use std::time::Instant;
-
 use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
 
 use parking_lot::{Once, RwLock};
 
 use tinyvec::TinyVec;
+
+use std::{
+	collections::{BTreeSet, HashSet, VecDeque},
+	time::Instant,
+};
 
 static INIT_TURF: Once = Once::new();
 

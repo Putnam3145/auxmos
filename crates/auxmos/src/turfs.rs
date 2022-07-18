@@ -12,29 +12,25 @@ mod katmos;
 #[cfg(feature = "superconductivity")]
 mod superconduct;
 
-use crate::gas::Mixture;
-
 use auxtools::*;
 
-use crate::constants::*;
+use rayon::prelude::*;
 
-use crate::GasArena;
+use crate::{constants::*, gas::Mixture, GasArena};
 
 use dashmap::DashMap;
 
 use fxhash::FxBuildHasher;
 
-use rayon::prelude::*;
-
-use std::mem::drop;
-use std::sync::atomic::AtomicU64;
-
 use bitflags::bitflags;
 
 use parking_lot::{const_mutex, const_rwlock, Mutex, RwLock};
+
 use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef, Direction};
 
 use indexmap::IndexMap;
+
+use std::{mem::drop, sync::atomic::AtomicU64};
 
 bitflags! {
 	#[derive(Default)]

@@ -4,8 +4,6 @@ use itertools::{
 	Itertools,
 };
 
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
-
 use atomic_float::AtomicF32;
 
 use tinyvec::TinyVec;
@@ -15,6 +13,8 @@ use crate::reaction::ReactionIdentifier;
 use super::{
 	constants::*, gas_visibility, total_num_gases, with_reactions, with_specific_heats, GasIDX,
 };
+
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 type SpecificFireInfo = (usize, f32, f32);
 

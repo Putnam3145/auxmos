@@ -81,7 +81,6 @@ struct TurfHeat {
 	map: HeatGraphMap,
 }
 
-#[allow(unused)]
 impl TurfHeat {
 	pub fn insert_turf(&mut self, info: ThermalInfo) {
 		if let Some(&node_id) = self.map.get(&info.id) {
@@ -115,14 +114,6 @@ impl TurfHeat {
 		self.graph.neighbors(index)
 	}
 
-	pub fn adjacent_turf_ids<'a>(
-		&'a self,
-		index: NodeIndex<usize>,
-	) -> impl Iterator<Item = TurfID> + '_ {
-		self.graph
-			.neighbors(index)
-			.filter_map(|index| Some(self.get(index)?.id))
-	}
 	pub fn adjacent_heats(
 		&self,
 		index: NodeIndex<usize>,

@@ -11,7 +11,7 @@ pub use types::*;
 
 use fxhash::FxBuildHasher;
 
-use parking_lot::{const_rwlock, RwLock};
+use parking_lot::{const_mutex, const_rwlock, Mutex, RwLock};
 
 pub use mixture::Mixture;
 
@@ -33,30 +33,27 @@ static GAS_MIXTURES: RwLock<Option<Vec<RwLock<Mixture>>>> = const_rwlock(None);
 
 static NEXT_GAS_IDS: RwLock<Option<Vec<usize>>> = const_rwlock(None);
 
-static mut REGISTERED_GAS_MIXES: Option<HashSet<u32, FxBuildHasher>> = None;
+static REGISTERED_GAS_MIXES: Mutex<Option<HashSet<u32, FxBuildHasher>>> = const_mutex(None);
 
 fn is_registered_mix(i: u32) -> bool {
-	unsafe {
-		REGISTERED_GAS_MIXES
-			.as_ref()
-			.map_or(false, |map| map.contains(&i))
-	}
+	REGISTERED_GAS_MIXES
+		.lock()
+		.as_ref()
+		.map_or(false, |map| map.contains(&i))
 }
 
 fn register_mix(v: &Value) {
-	unsafe {
-		REGISTERED_GAS_MIXES
-			.get_or_insert_with(HashSet::default)
-			.insert(v.raw.data.id);
-	}
+	REGISTERED_GAS_MIXES
+		.lock()
+		.get_or_insert_with(HashSet::default)
+		.insert(unsafe { v.raw.data.id });
 }
 
 fn unregister_mix(i: u32) {
-	unsafe {
-		REGISTERED_GAS_MIXES
-			.get_or_insert_with(HashSet::default)
-			.remove(&i);
-	}
+	REGISTERED_GAS_MIXES
+		.lock()
+		.get_or_insert_with(HashSet::default)
+		.remove(&i);
 }
 
 #[init(partial)]
@@ -71,11 +68,10 @@ fn _shut_down_gases() {
 	crate::turfs::wait_for_tasks();
 	GAS_MIXTURES.write().as_mut().unwrap().clear();
 	NEXT_GAS_IDS.write().as_mut().unwrap().clear();
-	unsafe {
-		REGISTERED_GAS_MIXES
-			.get_or_insert_with(HashSet::default)
-			.clear();
-	}
+	REGISTERED_GAS_MIXES
+		.lock()
+		.get_or_insert_with(HashSet::default)
+		.clear();
 }
 
 impl GasArena {

@@ -106,19 +106,17 @@ fn finalize_eq(
 				Ok(())
 			}));
 		} else if planet_transfer_amount < 0.0 {
-			if let Some(air_entry) = turf
-				.planetary_atmos
-				.and_then(|i| planetary_atmos().try_get(&i).try_unwrap())
-			{
-				let planet_air = air_entry.value();
-				let planet_sum = planet_air.total_moles();
-				if planet_sum > 0.0 {
-					drop(GasArena::with_gas_mixture_mut(turf.mix, |gas| {
-						gas.merge(&(planet_air * (-planet_transfer_amount / planet_sum)));
-						Ok(())
-					}));
+			with_planetary_atmos(|map| {
+				if let Some(planet_air) = turf.planetary_atmos.and_then(|i| map.get(&i)) {
+					let planet_sum = planet_air.total_moles();
+					if planet_sum > 0.0 {
+						drop(GasArena::with_gas_mixture_mut(turf.mix, |gas| {
+							gas.merge(&(planet_air * (-planet_transfer_amount / planet_sum)));
+							Ok(())
+						}));
+					}
 				}
-			}
+			})
 		}
 	}
 	let cur_turf_id = arena.get(index).unwrap().id;
@@ -634,22 +632,16 @@ fn process_planet_turfs(
 	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
 	let sender = byond_callback_sender();
-	let sample_turf = arena.get(planet_turfs[0]);
-	if sample_turf.is_none() {
+	let planet_sum = with_planetary_atmos(|map| -> Option<f32> {
+		Some(
+			map.get(&arena.get(planet_turfs[0])?.planetary_atmos?)?
+				.total_moles(),
+		)
+	});
+	if planet_sum.is_none() {
 		return;
 	}
-	let sample_turf = sample_turf.unwrap();
-	let sample_planet_atmos = sample_turf.planetary_atmos;
-	if sample_planet_atmos.is_none() {
-		return;
-	}
-	let maybe_planet_sum = planetary_atmos()
-		.try_get(&sample_planet_atmos.unwrap())
-		.try_unwrap();
-	if maybe_planet_sum.is_none() {
-		return;
-	}
-	let planet_sum = maybe_planet_sum.unwrap().value().total_moles();
+	let planet_sum = planet_sum.unwrap();
 	let target_delta = planet_sum - average_moles;
 
 	let mut progression_order: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();

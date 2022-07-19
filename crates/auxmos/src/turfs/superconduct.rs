@@ -408,41 +408,34 @@ fn _process_heat_start() -> Result<(), String> {
 						})
 						.collect::<Vec<_>>();
 
-					if check_turfs_dirty() {
-						return;
-					}
+					for cur_index in adjacencies_to_consider {
+						if check_turfs_dirty() {
+							return;
+						}
+						let info = arena.get(cur_index).unwrap();
+						let mut temp_write = info.temperature.write();
 
-					//the floodfills separate zones where sharing can be done sequentially without threads trampling on each other
-					let zoned_temps = flood_fill_temps(adjacencies_to_consider, arena);
-
-					zoned_temps.into_par_iter().for_each(|zone| {
-						for &cur_index in zone.iter() {
-							let info = arena.get(cur_index).unwrap();
-							let mut temp_write = info.temperature.write();
-
-							//share w/ adjacents that are strictly in zone
-							for other in arena
-								.adjacent_node_ids(cur_index)
-								.filter_map(|idx| arena.get(idx))
-							{
-								/*
-									The horrible line below is essentially
-									sharing between solids--making it the minimum of both
-									conductivities makes this consistent, funnily enough.
-								*/
-								let mut other_write = other.temperature.write();
-								let shareds = info
-									.thermal_conductivity
-									.min(other.thermal_conductivity) * get_share_energy(
+						//share w/ adjacents that are strictly in zone
+						for other in arena
+							.adjacent_node_ids(cur_index)
+							.filter_map(|idx| arena.get(idx))
+						{
+							/*
+								The horrible line below is essentially
+								sharing between solids--making it the minimum of both
+								conductivities makes this consistent, funnily enough.
+							*/
+							let mut other_write = other.temperature.write();
+							let shareds = info.thermal_conductivity.min(other.thermal_conductivity)
+								* get_share_energy(
 									*other_write - *temp_write,
 									info.heat_capacity,
 									other.heat_capacity,
 								);
-								*temp_write += shareds / info.heat_capacity;
-								*other_write -= shareds / other.heat_capacity;
-							}
+							*temp_write += shareds / info.heat_capacity;
+							*other_write -= shareds / other.heat_capacity;
 						}
-					});
+					}
 				});
 			});
 			let bench = start_time.elapsed().as_millis();
@@ -469,6 +462,7 @@ fn _process_heat_start() -> Result<(), String> {
 	});
 	Ok(())
 }
+/*
 
 fn flood_fill_temps(
 	input: Vec<NodeIndex<usize>>,
@@ -493,3 +487,4 @@ fn flood_fill_temps(
 	}
 	return_val
 }
+*/

@@ -268,46 +268,45 @@ fn _process_turf_start() -> Result<(), String> {
 }
 
 fn planet_process() {
+	let task_lock = TASKS.read();
 	with_turf_gases_read(|arena| {
 		GasArena::with_all_mixtures(|all_mixtures| {
-			arena
-				.map
-				.par_values()
-				.filter_map(|&node_idx| {
-					let mix = arena.get(node_idx)?;
-					Some((
-						mix,
-						mix.planetary_atmos
-							.and_then(|id| planetary_atmos().try_get(&id).try_unwrap())?,
-					))
-				})
-				.for_each(|(turf_mix, planet_atmos_entry)| {
-					let planet_atmos = planet_atmos_entry.value();
-					if let Some(gas_read) = all_mixtures
-						.get(turf_mix.mix)
-						.and_then(|lock| lock.try_upgradable_read())
-					{
-						let comparison = gas_read.compare(planet_atmos);
-						if let Some(mut gas) = (comparison > GAS_MIN_MOLES)
-							.then(|| {
-								parking_lot::lock_api::RwLockUpgradableReadGuard::try_upgrade(
-									gas_read,
-								)
-								.ok()
-							})
-							.flatten()
+			with_planetary_atmos(|map| {
+				arena
+					.map
+					.par_values()
+					.filter_map(|&node_idx| {
+						let mix = arena.get(node_idx)?;
+						Some((mix, mix.planetary_atmos.and_then(|id| map.get(&id))?))
+					})
+					.for_each(|(turf_mix, planet_atmos)| {
+						if let Some(gas_read) = all_mixtures
+							.get(turf_mix.mix)
+							.and_then(|lock| lock.try_upgradable_read())
 						{
-							if comparison > 0.1 {
-								gas.multiply(1.0 - GAS_DIFFUSION_CONSTANT);
-								gas.merge(&(planet_atmos * GAS_DIFFUSION_CONSTANT));
-							} else {
-								gas.copy_from_mutable(planet_atmos);
+							let comparison = gas_read.compare(planet_atmos);
+							if let Some(mut gas) = (comparison > GAS_MIN_MOLES)
+								.then(|| {
+									parking_lot::lock_api::RwLockUpgradableReadGuard::try_upgrade(
+										gas_read,
+									)
+									.ok()
+								})
+								.flatten()
+							{
+								if comparison > 0.1 {
+									gas.multiply(1.0 - GAS_DIFFUSION_CONSTANT);
+									gas.merge(&(planet_atmos * GAS_DIFFUSION_CONSTANT));
+								} else {
+									gas.copy_from_mutable(planet_atmos);
+								}
 							}
 						}
-					}
-				})
+					})
+			})
 		})
-	})
+	});
+	drop(task_lock)
 }
 
 // Compares with neighbors, returning early if any of them are valid.

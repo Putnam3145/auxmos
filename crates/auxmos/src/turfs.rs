@@ -18,8 +18,6 @@ use rayon::prelude::*;
 
 use crate::{constants::*, gas::Mixture, GasArena};
 
-use dashmap::DashMap;
-
 use fxhash::FxBuildHasher;
 
 use bitflags::bitflags;
@@ -30,6 +28,7 @@ use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef, Di
 
 use indexmap::IndexMap;
 
+use std::time::Duration;
 use std::{mem::drop, sync::atomic::AtomicU64};
 
 bitflags! {
@@ -364,7 +363,7 @@ impl TurfGases {
 static TURF_GASES: RwLock<Option<TurfGases>> = const_rwlock(None);
 
 // We store planetary atmos by hash of the initial atmos string here for speed.
-static mut PLANETARY_ATMOS: Option<DashMap<u32, Mixture, FxBuildHasher>> = None;
+static PLANETARY_ATMOS: RwLock<Option<IndexMap<u32, Mixture, FxBuildHasher>>> = const_rwlock(None);
 
 //whether there is any tasks running
 static TASKS: RwLock<()> = const_rwlock(());
@@ -374,23 +373,25 @@ static DIRTY_TURFS: Mutex<Option<IndexMap<TurfID, DirtyFlags, FxBuildHasher>>> =
 
 static ANY_TURF_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-//block until threads are done
 pub fn wait_for_tasks() {
-	drop(TASKS.write())
+	match TASKS.try_write_for(Duration::from_secs(5)) {
+		Some(_) => (),
+		None => panic!(
+			"Threads failed to release resources within 5 seconds, this may indicate a deadlock!"
+		),
+	}
 }
 
 #[init(partial)]
 fn _initialize_turf_statics() -> Result<(), String> {
-	unsafe {
-		// 10x 255x255 zlevels
-		// double that for edges since each turf can have up to 6 edges but eehhhh
-		*TURF_GASES.write() = Some(TurfGases {
-			graph: StableDiGraph::with_capacity(650_250, 1_300_500),
-			map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
-		});
-		PLANETARY_ATMOS = Some(Default::default());
-		*DIRTY_TURFS.lock() = Some(Default::default());
-	};
+	// 10x 255x255 zlevels
+	// double that for edges since each turf can have up to 6 edges but eehhhh
+	*TURF_GASES.write() = Some(TurfGases {
+		graph: StableDiGraph::with_capacity(650_250, 1_300_500),
+		map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
+	});
+	*PLANETARY_ATMOS.write() = Some(Default::default());
+	*DIRTY_TURFS.lock() = Some(Default::default());
 	Ok(())
 }
 
@@ -399,9 +400,7 @@ fn _shutdown_turfs() {
 	wait_for_tasks();
 	*DIRTY_TURFS.lock() = None;
 	*TURF_GASES.write() = None;
-	unsafe {
-		PLANETARY_ATMOS = None;
-	}
+	*PLANETARY_ATMOS.write() = None;
 }
 
 fn set_turfs_dirty(b: bool) {
@@ -428,14 +427,24 @@ where
 
 fn with_dirty_turfs<T, F>(f: F) -> T
 where
-	F: FnOnce(&mut IndexMap<u32, DirtyFlags, FxBuildHasher>) -> T,
+	F: FnOnce(&mut IndexMap<TurfID, DirtyFlags, FxBuildHasher>) -> T,
 {
 	set_turfs_dirty(true);
 	f(DIRTY_TURFS.lock().as_mut().unwrap())
 }
 
-fn planetary_atmos() -> &'static DashMap<u32, Mixture, FxBuildHasher> {
-	unsafe { PLANETARY_ATMOS.as_ref().unwrap() }
+fn with_planetary_atmos<T, F>(f: F) -> T
+where
+	F: FnOnce(&IndexMap<u32, Mixture, FxBuildHasher>) -> T,
+{
+	f(PLANETARY_ATMOS.read().as_ref().unwrap())
+}
+
+fn with_planetary_atmos_write<T, F>(f: F) -> T
+where
+	F: FnOnce(&mut IndexMap<u32, Mixture, FxBuildHasher>) -> T,
+{
+	f(PLANETARY_ATMOS.write().as_mut().unwrap())
 }
 
 fn rebuild_turf_graph() -> Result<(), Runtime> {
@@ -481,15 +490,17 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
 			if is_planet != 0.0 {
 				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
-					to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
-					let mut entry = planetary_atmos()
-						.entry(to_insert.planetary_atmos.unwrap())
-						.or_insert_with(|| {
-							let mut gas = to_insert.get_gas_copy();
-							gas.mark_immutable();
-							gas
-						});
-					entry.mark_immutable();
+					with_planetary_atmos_write(|map| {
+						to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
+						let entry = map
+							.entry(to_insert.planetary_atmos.unwrap())
+							.or_insert_with(|| {
+								let mut gas = to_insert.get_gas_copy();
+								gas.mark_immutable();
+								gas
+							});
+						entry.mark_immutable();
+					});
 				}
 			}
 		}

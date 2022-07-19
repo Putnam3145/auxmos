@@ -2,7 +2,7 @@ use auxtools::*;
 
 use super::*;
 
-use indexmap::IndexSet;
+//use indexmap::IndexSet;
 
 use crate::GasArena;
 
@@ -10,7 +10,7 @@ use auxcallback::byond_callback_sender;
 
 use parking_lot::Once;
 
-use std::{collections::HashSet, time::Instant};
+use std::time::Instant;
 
 static INIT_HEAT: Once = Once::new();
 

@@ -204,7 +204,6 @@ struct TurfGases {
 	map: TurfGraphMap,
 }
 
-#[allow(unused)]
 impl TurfGases {
 	pub fn insert_turf(&mut self, tmix: TurfMixture) {
 		if let Some(&node_id) = self.map.get(&tmix.id) {
@@ -287,6 +286,7 @@ impl TurfGases {
 		self.graph.neighbors(index)
 	}
 
+	#[allow(unused)]
 	pub fn adjacent_turf_ids<'a>(
 		&'a self,
 		index: NodeIndex<usize>,
@@ -296,6 +296,7 @@ impl TurfGases {
 			.filter_map(|index| Some(self.get(index)?.id))
 	}
 
+	#[allow(unused)]
 	pub fn adjacent_node_ids_enabled<'a>(
 		&'a self,
 		index: NodeIndex<usize>,

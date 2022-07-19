@@ -139,7 +139,10 @@ impl TurfHeat {
 				max_y,
 			) {
 				if let Some(&adjacent_node) = self.get_id(&adj_idx) {
-					self.graph.add_edge(this_node, adjacent_node, ());
+					//this fucking happens, I don't even know anymore
+					if adjacent_node != this_node {
+						self.graph.add_edge(this_node, adjacent_node, ());
+					}
 				}
 			}
 		}

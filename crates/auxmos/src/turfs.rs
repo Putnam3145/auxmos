@@ -274,6 +274,7 @@ impl TurfGases {
 		self.graph.node_weight(idx)
 	}
 
+	#[allow(unused)]
 	pub fn get_id(&self, idx: &TurfID) -> Option<&NodeIndex<usize>> {
 		self.map.get(idx)
 	}

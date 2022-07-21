@@ -288,8 +288,8 @@ fn _process_heat_start() -> Result<(), String> {
 			let task_lock = TASKS.read();
 			let start_time = Instant::now();
 			let sender = byond_callback_sender();
-			let emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * info.time_delta;
-			let radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * info.time_delta;
+			let _emissivity_constant: f64 = STEFAN_BOLTZMANN_CONSTANT * info.time_delta;
+			let _radiation_from_space_tick: f64 = RADIATION_FROM_SPACE * info.time_delta;
 			with_turf_heat_read(|arena| {
 				with_turf_gases_read(|air_arena| {
 					let adjacencies_to_consider = arena
@@ -349,6 +349,7 @@ fn _process_heat_start() -> Result<(), String> {
 							let info = arena.get(node_index).unwrap();
 							let mut temp_write = info.temperature.try_write()?;
 
+							/*
 							//share w/ space
 							if info.adjacent_to_space && *temp_write > T0C {
 								/*
@@ -363,6 +364,17 @@ fn _process_heat_start() -> Result<(), String> {
 									* (f64::from(*temp_write).powi(4)))
 									- radiation_from_space_tick;
 								*temp_write -= blackbody_radiation as f32 / info.heat_capacity;
+							}
+							*/
+							//share w/ space
+							if info.adjacent_to_space && *temp_write > T20C {
+								let delta = *temp_write - TCMB;
+								let energy = get_share_energy(
+									info.thermal_conductivity * delta,
+									HEAT_CAPACITY_VACUUM,
+									info.heat_capacity,
+								);
+								*temp_write -= energy / info.heat_capacity;
 							}
 
 							//share w/ air
@@ -408,34 +420,40 @@ fn _process_heat_start() -> Result<(), String> {
 						})
 						.collect::<Vec<_>>();
 
-					for cur_index in adjacencies_to_consider {
-						if check_turfs_dirty() {
-							return;
-						}
-						let info = arena.get(cur_index).unwrap();
-						let mut temp_write = info.temperature.write();
-
-						//share w/ adjacents that are strictly in zone
-						for other in arena
-							.adjacent_node_ids(cur_index)
-							.filter_map(|idx| arena.get(idx))
-						{
-							/*
-								The horrible line below is essentially
-								sharing between solids--making it the minimum of both
-								conductivities makes this consistent, funnily enough.
-							*/
-							let mut other_write = other.temperature.write();
-							let shareds = info.thermal_conductivity.min(other.thermal_conductivity)
-								* get_share_energy(
-									*other_write - *temp_write,
-									info.heat_capacity,
-									other.heat_capacity,
-								);
-							*temp_write += shareds / info.heat_capacity;
-							*other_write -= shareds / other.heat_capacity;
-						}
-					}
+					let _ = adjacencies_to_consider
+						.par_iter()
+						.try_for_each(|&cur_index| {
+							let info = arena.get(cur_index).unwrap();
+							if let Some(mut temp_write) = info.temperature.try_write() {
+								//share w/ adjacents that are strictly in zone
+								for other in arena
+									.adjacent_node_ids(cur_index)
+									.filter_map(|idx| arena.get(idx))
+								{
+									/*
+										The horrible line below is essentially
+										sharing between solids--making it the minimum of both
+										conductivities makes this consistent, funnily enough.
+									*/
+									if let Some(mut other_write) = other.temperature.try_write() {
+										let shareds =
+											info.thermal_conductivity
+												.min(other.thermal_conductivity) * get_share_energy(
+												*other_write - *temp_write,
+												info.heat_capacity,
+												other.heat_capacity,
+											);
+										*temp_write += shareds / info.heat_capacity;
+										*other_write -= shareds / other.heat_capacity;
+									}
+								}
+							}
+							if check_turfs_dirty() {
+								Err(())
+							} else {
+								Ok(())
+							}
+						});
 				});
 			});
 			let bench = start_time.elapsed().as_millis();

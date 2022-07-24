@@ -138,13 +138,14 @@ impl Reaction {
 					string_id
 				)));
 			}
-			if let Some(function) = func {
-				r.borrow_mut()
-					.insert(our_reaction.id, ReactionSide::RustSide(function));
-			} else {
-				r.borrow_mut()
-					.insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone()));
-			}
+			match func {
+				Some(function) => r
+					.borrow_mut()
+					.insert(our_reaction.id, ReactionSide::RustSide(function)),
+				None => r
+					.borrow_mut()
+					.insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone())),
+			};
 			Ok(())
 		})?;
 		Ok(our_reaction)
@@ -174,7 +175,7 @@ impl Reaction {
 	}
 	/// Returns the priority of the reaction.
 	#[must_use]
-	pub fn get_priority(&self) -> u32 {
+	pub fn get_priority(&self) -> ReactionPriority {
 		self.priority
 	}
 	/// Calls the reaction with the given arguments.

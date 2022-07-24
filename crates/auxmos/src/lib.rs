@@ -450,7 +450,7 @@ fn _react_hook(holder: Value) {
 	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
 	for reaction in reactions {
 		ret |= ReactionReturn::from_bits_truncate(
-			react_by_id(&reaction, src, holder)?
+			react_by_id(reaction, src, holder)?
 				.as_number()
 				.unwrap_or_default() as u32,
 		);

@@ -1,3 +1,4 @@
+use auxcallback::byond_callback_sender;
 use auxtools::*;
 
 use fxhash::FxBuildHasher;
@@ -12,13 +13,13 @@ use dashmap::DashMap;
 
 use std::{
 	cell::RefCell,
-	collections::HashMap,
+	collections::{BTreeMap, HashMap},
 	sync::atomic::{AtomicUsize, Ordering},
 };
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
 
-static REACTION_INFO: RwLock<Option<Vec<Reaction>>> = const_rwlock(None);
+static REACTION_INFO: RwLock<Option<BTreeMap<u32, Vec<Reaction>>>> = const_rwlock(None);
 
 /// The temperature at which this gas can oxidize and how much fuel it can oxidize when it can.
 #[derive(Clone, Copy)]
@@ -303,16 +304,25 @@ fn _hook_init() {
 	Ok(Value::from(true))
 }
 
-fn get_reaction_info() -> Vec<Reaction> {
+fn get_reaction_info() -> BTreeMap<u32, Vec<Reaction>> {
 	let gas_reactions = Value::globals()
 		.get(byond_string!("SSair"))
 		.unwrap()
 		.get_list(byond_string!("gas_reactions"))
 		.unwrap();
-	let mut reaction_cache: Vec<Reaction> = Vec::with_capacity(gas_reactions.len() as usize);
+	let mut reaction_cache: BTreeMap<u32, Vec<Reaction>> = Default::default();
 	for i in 1..=gas_reactions.len() {
-		let reaction = &gas_reactions.get(i).unwrap();
-		reaction_cache.push(Reaction::from_byond_reaction(reaction));
+		match Reaction::from_byond_reaction(&gas_reactions.get(i).unwrap()) {
+			Ok(reaction) => reaction_cache
+				.entry(reaction.get_priority())
+				.or_default()
+				.push(reaction),
+			//maybe awful error handling
+			Err(runtime) => {
+				let sender = byond_callback_sender();
+				drop(sender.try_send(Box::new(move || Err(runtime))));
+			}
+		}
 	}
 	reaction_cache
 }
@@ -328,7 +338,7 @@ fn _update_reactions() {
 /// If reactions aren't loaded yet.
 pub fn with_reactions<T, F>(mut f: F) -> T
 where
-	F: FnMut(&[Reaction]) -> T,
+	F: FnMut(&BTreeMap<u32, Vec<Reaction>>) -> T,
 {
 	f(REACTION_INFO
 		.read()

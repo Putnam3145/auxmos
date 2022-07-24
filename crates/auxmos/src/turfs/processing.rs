@@ -11,7 +11,7 @@ use parking_lot::{Once, RwLock};
 use tinyvec::TinyVec;
 
 use std::{
-	collections::{BTreeSet, HashSet, VecDeque},
+	collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
 	time::Instant,
 };
 
@@ -596,14 +596,14 @@ fn post_process_cell<'a>(
 	mixture: &'a TurfMixture,
 	vis: &[Option<f32>],
 	all_mixtures: &[RwLock<Mixture>],
-	reactions: &[crate::reaction::Reaction],
+	reactions: &BTreeMap<u32, Vec<crate::reaction::Reaction>>,
 ) -> Option<(&'a TurfMixture, bool, bool)> {
 	all_mixtures
 		.get(mixture.mix)
 		.and_then(RwLock::try_read)
 		.and_then(|gas| {
 			let should_update_visuals = gas.vis_hash_changed(vis, &mixture.vis_hash);
-			let reactable = gas.can_react_with_slice(reactions);
+			let reactable = gas.can_react_with_reactions(reactions);
 			(should_update_visuals || reactable)
 				.then(|| (mixture, should_update_visuals, reactable))
 		})

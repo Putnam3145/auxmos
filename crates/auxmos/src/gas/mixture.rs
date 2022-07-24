@@ -8,13 +8,13 @@ use atomic_float::AtomicF32;
 
 use tinyvec::TinyVec;
 
-use crate::reaction::ReactionIdentifier;
-
 use super::{
 	constants::*, gas_visibility, total_num_gases, with_reactions, with_specific_heats, GasIDX,
 };
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+use std::collections::BTreeMap;
 
 type SpecificFireInfo = (usize, f32, f32);
 
@@ -452,24 +452,35 @@ impl Mixture {
 			self.garbage_collect();
 		}
 	}
-	pub fn can_react_with_slice(&self, reactions: &[crate::reaction::Reaction]) -> bool {
-		reactions.iter().any(|r| r.check_conditions(self))
+	pub fn can_react_with_reactions(
+		&self,
+		reactions: &BTreeMap<u32, Vec<crate::reaction::Reaction>>,
+	) -> bool {
+		//priorities are inversed because fuck you
+		reactions
+			.values()
+			.rev()
+			.flatten()
+			.any(|reaction| reaction.check_conditions(self))
 	}
 	/// Checks if the proc can react with any reactions.
 	pub fn can_react(&self) -> bool {
-		with_reactions(|reactions| self.can_react_with_slice(reactions))
+		with_reactions(|reactions| self.can_react_with_reactions(reactions))
 	}
 	pub fn all_reactable_with_slice(
 		&self,
-		reactions: &[crate::reaction::Reaction],
-	) -> TinyVec<[ReactionIdentifier; MAX_REACTION_TINYVEC_SIZE]> {
+		reactions: &BTreeMap<u32, Vec<crate::reaction::Reaction>>,
+	) -> TinyVec<[u64; MAX_REACTION_TINYVEC_SIZE]> {
+		//priorities are inversed because fuck you
 		reactions
-			.iter()
-			.filter_map(|r| r.check_conditions(self).then(|| r.get_id()))
+			.values()
+			.rev()
+			.flatten()
+			.filter_map(|thin| thin.check_conditions(self).then(|| thin.get_id()))
 			.collect()
 	}
 	/// Gets all of the reactions this mix should do.
-	pub fn all_reactable(&self) -> TinyVec<[ReactionIdentifier; MAX_REACTION_TINYVEC_SIZE]> {
+	pub fn all_reactable(&self) -> TinyVec<[u64; MAX_REACTION_TINYVEC_SIZE]> {
 		with_reactions(|reactions| self.all_reactable_with_slice(reactions))
 	}
 	/// Returns a tuple with oxidation power and fuel amount of this gas mixture.

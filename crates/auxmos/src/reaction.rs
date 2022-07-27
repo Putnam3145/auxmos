@@ -59,11 +59,6 @@ pub fn react_by_id(id: ReactionIdentifier, src: &Value, holder: &Value) -> DMRes
 
 impl Reaction {
 	/// Takes a `/datum/gas_reaction` and makes a byond reaction out of it.
-	///
-	/// # Panics
-	///
-	///
-	/// If given anything but a `/datum/gas_reaction`, this will panic.
 	#[must_use]
 	pub fn from_byond_reaction(reaction: &Value) -> Result<Self, Runtime> {
 		let priority = reaction

@@ -19,7 +19,7 @@ use std::{
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
 
-static REACTION_INFO: RwLock<Option<BTreeMap<u32, Vec<Reaction>>>> = const_rwlock(None);
+static REACTION_INFO: RwLock<Option<BTreeMap<u32, Reaction>>> = const_rwlock(None);
 
 /// The temperature at which this gas can oxidize and how much fuel it can oxidize when it can.
 #[derive(Clone, Copy)]
@@ -304,22 +304,29 @@ fn _hook_init() {
 	Ok(Value::from(true))
 }
 
-fn get_reaction_info() -> BTreeMap<u32, Vec<Reaction>> {
+fn get_reaction_info() -> BTreeMap<u32, Reaction> {
 	let gas_reactions = Value::globals()
 		.get(byond_string!("SSair"))
 		.unwrap()
 		.get_list(byond_string!("gas_reactions"))
 		.unwrap();
-	let mut reaction_cache: BTreeMap<u32, Vec<Reaction>> = Default::default();
+	let mut reaction_cache: BTreeMap<u32, Reaction> = Default::default();
+	let sender = byond_callback_sender();
 	for i in 1..=gas_reactions.len() {
 		match Reaction::from_byond_reaction(&gas_reactions.get(i).unwrap()) {
-			Ok(reaction) => reaction_cache
-				.entry(reaction.get_priority())
-				.or_default()
-				.push(reaction),
+			Ok(reaction) => {
+				if reaction_cache.contains_key(&reaction.get_priority()) {
+					drop(sender.try_send(Box::new(move || {
+						Err(runtime!(
+							"Duplicate reaction priority, this reaction will be ignored!"
+						))
+					})));
+				} else {
+					reaction_cache.insert(reaction.get_priority(), reaction);
+				}
+			}
 			//maybe awful error handling
 			Err(runtime) => {
-				let sender = byond_callback_sender();
 				drop(sender.try_send(Box::new(move || Err(runtime))));
 			}
 		}
@@ -338,7 +345,7 @@ fn _update_reactions() {
 /// If reactions aren't loaded yet.
 pub fn with_reactions<T, F>(mut f: F) -> T
 where
-	F: FnMut(&BTreeMap<u32, Vec<Reaction>>) -> T,
+	F: FnMut(&BTreeMap<u32, Reaction>) -> T,
 {
 	f(REACTION_INFO
 		.read()

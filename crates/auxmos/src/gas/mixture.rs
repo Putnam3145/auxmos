@@ -454,13 +454,12 @@ impl Mixture {
 	}
 	pub fn can_react_with_reactions(
 		&self,
-		reactions: &BTreeMap<u32, Vec<crate::reaction::Reaction>>,
+		reactions: &BTreeMap<u32, crate::reaction::Reaction>,
 	) -> bool {
 		//priorities are inversed because fuck you
 		reactions
 			.values()
 			.rev()
-			.flatten()
 			.any(|reaction| reaction.check_conditions(self))
 	}
 	/// Checks if the proc can react with any reactions.
@@ -469,13 +468,12 @@ impl Mixture {
 	}
 	pub fn all_reactable_with_slice(
 		&self,
-		reactions: &BTreeMap<u32, Vec<crate::reaction::Reaction>>,
+		reactions: &BTreeMap<u32, crate::reaction::Reaction>,
 	) -> TinyVec<[u64; MAX_REACTION_TINYVEC_SIZE]> {
 		//priorities are inversed because fuck you
 		reactions
 			.values()
 			.rev()
-			.flatten()
 			.filter_map(|thin| thin.check_conditions(self).then(|| thin.get_id()))
 			.collect()
 	}

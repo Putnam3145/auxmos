@@ -5,13 +5,16 @@ mod turfs;
 
 mod reaction;
 
+mod parser;
+
 use auxtools::{byond_string, hook, inventory, runtime, List, Value};
 
 use auxcleanup::{datum_del, DelDatumFunc};
 
 use gas::{
-	amt_gases, constants, gas_idx_from_value, gas_idx_to_id, tot_gases, types, with_gas_info,
-	with_mix, with_mix_mut, with_mixes, with_mixes_custom, with_mixes_mut, GasArena, Mixture,
+	amt_gases, constants, gas_idx_from_string, gas_idx_from_value, gas_idx_to_id, tot_gases, types,
+	with_gas_info, with_mix, with_mix_mut, with_mixes, with_mixes_custom, with_mixes_mut, GasArena,
+	Mixture,
 };
 
 use reaction::react_by_id;
@@ -653,4 +656,33 @@ fn _hook_amt_gas_mixes() {
 #[hook("/datum/controller/subsystem/air/proc/get_max_gas_mixes")]
 fn _hook_max_gas_mixes() {
 	Ok(Value::from(tot_gases() as f32))
+}
+
+#[hook("/datum/gas_mixture/proc/__auxtools_parse_gas_string")]
+fn _parse_gas_string(string: Value) {
+	let actual_string = string.as_string()?;
+
+	let (_, vec) = parser::parse_gas_string(&actual_string)
+		.map_err(|_| runtime!(format!("Failed to parse gas string: {}", actual_string)))?;
+
+	with_mix_mut(src, move |air| {
+		air.clear();
+		for (gas, moles) in vec.iter() {
+			if let Ok(idx) = gas_idx_from_string(gas) {
+				if (*moles).is_normal() && *moles > 0.0 {
+					air.set_moles(idx, *moles)
+				}
+			} else if gas.contains("TEMP") {
+				let mut checked_temp = *moles;
+				if !checked_temp.is_normal() || checked_temp < constants::TCMB {
+					checked_temp = constants::TCMB
+				}
+				air.set_temperature(checked_temp)
+			} else {
+				return Err(runtime!(format!("Unknown gas id: {}", gas)));
+			}
+		}
+		Ok(())
+	})?;
+	Ok(Value::from(true))
 }

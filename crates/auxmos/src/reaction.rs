@@ -134,10 +134,12 @@ impl Reaction {
 				)));
 			}
 			match func {
-				Some(function) => reaction_map
-					.insert(our_reaction.id, ReactionSide::RustSide(function)),
-				None => reaction_map
-					.insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone())),
+				Some(function) => {
+					reaction_map.insert(our_reaction.id, ReactionSide::RustSide(function))
+				}
+				None => {
+					reaction_map.insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone()))
+				}
 			};
 			Ok(())
 		})?;

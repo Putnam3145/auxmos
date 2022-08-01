@@ -1,11 +1,9 @@
-pub mod gas;
+mod gas;
 
 #[cfg(feature = "turf_processing")]
-pub mod turfs;
+mod turfs;
 
-pub mod reaction;
-
-pub mod callbacks;
+mod reaction;
 
 use auxtools::{byond_string, hook, inventory, runtime, List, Value};
 
@@ -23,7 +21,7 @@ use gas::constants::{ReactionReturn, GAS_MIN_MOLES, MINIMUM_MOLES_DELTA_TO_MOVE}
 /// Args: (ms). Runs callbacks until time limit is reached. If time limit is omitted, runs all callbacks.
 #[hook("/proc/process_atmos_callbacks")]
 fn _atmos_callback_handle() {
-	auxcallback::callback_processing_hook(args)
+	auxcallback::callback_processing_hook(&mut args)
 }
 
 /// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
@@ -452,7 +450,7 @@ fn _react_hook(holder: Value) {
 	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
 	for reaction in reactions {
 		ret |= ReactionReturn::from_bits_truncate(
-			react_by_id(&reaction, src, holder)?
+			react_by_id(reaction, src, holder)?
 				.as_number()
 				.unwrap_or_default() as u32,
 		);

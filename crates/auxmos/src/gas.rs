@@ -1,18 +1,21 @@
+#[allow(dead_code)]
 pub mod constants;
+
 pub mod mixture;
+
 pub mod types;
 
 use auxtools::*;
 
-use fxhash::FxBuildHasher;
+pub use types::*;
 
-use std::collections::HashSet;
+use fxhash::FxBuildHasher;
 
 use parking_lot::{const_rwlock, RwLock};
 
-pub use types::*;
-
 pub use mixture::Mixture;
+
+use std::{cell::RefCell, collections::HashSet};
 
 pub type GasIDX = usize;
 
@@ -30,49 +33,51 @@ static GAS_MIXTURES: RwLock<Option<Vec<RwLock<Mixture>>>> = const_rwlock(None);
 
 static NEXT_GAS_IDS: RwLock<Option<Vec<usize>>> = const_rwlock(None);
 
-static mut REGISTERED_GAS_MIXES: Option<HashSet<u32, FxBuildHasher>> = None;
+thread_local! {
+	static REGISTERED_GAS_MIXES: RefCell<Option<HashSet<u32, FxBuildHasher>>> = RefCell::new(None);
+}
 
 fn is_registered_mix(i: u32) -> bool {
-	unsafe {
-		REGISTERED_GAS_MIXES
+	REGISTERED_GAS_MIXES.with(|thin| {
+		thin.borrow()
 			.as_ref()
-			.map_or(false, |map| map.contains(&i))
-	}
+			.expect("Wrong thread tried to access REGISTERED_GAS_MIXES, must be the main thread!")
+			.contains(&i)
+	})
 }
 
 fn register_mix(v: &Value) {
-	unsafe {
-		REGISTERED_GAS_MIXES
-			.get_or_insert_with(|| Default::default())
-			.insert(v.raw.data.id);
-	}
+	REGISTERED_GAS_MIXES.with(|thin| {
+		thin.borrow_mut()
+			.as_mut()
+			.expect("Wrong thread tried to access REGISTERED_GAS_MIXES, must be the main thread!")
+			.insert(unsafe { v.raw.data.id })
+	});
 }
 
 fn unregister_mix(i: u32) {
-	unsafe {
-		REGISTERED_GAS_MIXES
-			.get_or_insert_with(|| Default::default())
+	REGISTERED_GAS_MIXES.with(|thin| {
+		thin.borrow_mut()
+			.as_mut()
+			.expect("Wrong thread tried to access REGISTERED_GAS_MIXES, must be the main thread!")
 			.remove(&i);
-	}
+	});
 }
 
 #[init(partial)]
 fn _init_gas_mixtures() -> Result<(), String> {
 	*GAS_MIXTURES.write() = Some(Vec::with_capacity(240_000));
 	*NEXT_GAS_IDS.write() = Some(Vec::with_capacity(2000));
+	REGISTERED_GAS_MIXES.with(|thing| *thing.borrow_mut() = Some(Default::default()));
 	Ok(())
 }
 
 #[shutdown]
 fn _shut_down_gases() {
-	crate::turfs::processing::wait_for_tasks();
+	crate::turfs::wait_for_tasks();
 	GAS_MIXTURES.write().as_mut().unwrap().clear();
 	NEXT_GAS_IDS.write().as_mut().unwrap().clear();
-	unsafe {
-		REGISTERED_GAS_MIXES
-			.get_or_insert_with(|| Default::default())
-			.clear();
-	}
+	REGISTERED_GAS_MIXES.with(|thing| *thing.borrow_mut() = None);
 }
 
 impl GasArena {
@@ -208,6 +213,7 @@ impl GasArena {
 	/// # Errors
 	/// If `initial_volume` is incorrect or `_extools_pointer_gasmixture` doesn't exist, somehow.
 	/// # Panics
+	/// If not called from the main thread
 	/// If `NEXT_GAS_IDS` is not initialized, somehow.
 	pub fn register_mix(mix: &Value) -> DMResult {
 		if NEXT_GAS_IDS.read().as_ref().unwrap().is_empty() {
@@ -281,7 +287,8 @@ impl GasArena {
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
 	/// # Panics
-	/// Panics if `NEXT_GAS_IDS` hasn't been initialized, somehow.
+	/// If not called from the main thread
+	/// If `NEXT_GAS_IDS` hasn't been initialized, somehow.
 	pub fn unregister_mix(mix: u32) {
 		if is_registered_mix(mix) {
 			use raw_types::values::{ValueData, ValueTag};
@@ -458,10 +465,10 @@ where
 	)
 }
 
-pub(crate) fn amt_gases() -> usize {
+pub fn amt_gases() -> usize {
 	GAS_MIXTURES.read().as_ref().unwrap().len() - NEXT_GAS_IDS.read().as_ref().unwrap().len()
 }
 
-pub(crate) fn tot_gases() -> usize {
+pub fn tot_gases() -> usize {
 	GAS_MIXTURES.read().as_ref().unwrap().len()
 }

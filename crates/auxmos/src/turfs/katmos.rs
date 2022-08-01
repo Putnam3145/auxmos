@@ -2,6 +2,16 @@
 
 use super::*;
 
+use indexmap::IndexSet;
+
+use ahash::RandomState;
+
+use fxhash::FxBuildHasher;
+
+use auxcallback::byond_callback_sender;
+
+use petgraph::{graph::NodeIndex, graphmap::DiGraphMap};
+
 use std::{
 	cell::Cell,
 	{
@@ -9,15 +19,6 @@ use std::{
 		sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 	},
 };
-
-use indexmap::IndexSet;
-
-use ahash::RandomState;
-use fxhash::FxBuildHasher;
-
-use auxcallback::byond_callback_sender;
-
-use petgraph::{graph::NodeIndex, graphmap::DiGraphMap};
 
 #[derive(Copy, Clone)]
 struct MonstermosInfo {
@@ -105,19 +106,17 @@ fn finalize_eq(
 				Ok(())
 			}));
 		} else if planet_transfer_amount < 0.0 {
-			if let Some(air_entry) = turf
-				.planetary_atmos
-				.and_then(|i| planetary_atmos().try_get(&i).try_unwrap())
-			{
-				let planet_air = air_entry.value();
-				let planet_sum = planet_air.total_moles();
-				if planet_sum > 0.0 {
-					drop(GasArena::with_gas_mixture_mut(turf.mix, |gas| {
-						gas.merge(&(planet_air * (-planet_transfer_amount / planet_sum)));
-						Ok(())
-					}));
+			with_planetary_atmos(|map| {
+				if let Some(planet_air) = turf.planetary_atmos.and_then(|i| map.get(&i)) {
+					let planet_sum = planet_air.total_moles();
+					if planet_sum > 0.0 {
+						drop(GasArena::with_gas_mixture_mut(turf.mix, |gas| {
+							gas.merge(&(planet_air * (-planet_transfer_amount / planet_sum)));
+							Ok(())
+						}));
+					}
 				}
-			}
+			})
 		}
 	}
 	let cur_turf_id = arena.get(index).unwrap().id;
@@ -358,7 +357,7 @@ fn take_from_givers(
 fn explosively_depressurize(
 	initial_index: NodeIndex<usize>,
 	equalize_hard_turf_limit: usize,
-) -> DMResult {
+) -> Result<(), Runtime> {
 	//1st floodfill
 	let (space_turfs, warned_about_planet_atmos) = {
 		let mut cur_queue_idx = 0;
@@ -411,7 +410,7 @@ fn explosively_depressurize(
 				Ok(())
 			})?;
 			if had_firelock {
-				super::processing::rebuild_turf_graph()?; // consider_firelocks ought to dirtify it anyway
+				rebuild_turf_graph()?; // consider_firelocks ought to dirtify it anyway
 			}
 			if warned_about_planet_atmos {
 				break;
@@ -421,7 +420,7 @@ fn explosively_depressurize(
 	};
 
 	if warned_about_planet_atmos || space_turfs.is_empty() {
-		return Ok(Value::null()); // planet atmos > space
+		return Ok(()); // planet atmos > space
 	}
 
 	with_turf_gases_read(move |arena| {
@@ -491,7 +490,7 @@ fn explosively_depressurize(
 				std::line!(),
 				std::column!()
 			)),
-			|opt| Ok(opt),
+			Ok,
 		)?;
 
 		for &cur_index in progression_order.iter().rev() {
@@ -564,7 +563,7 @@ fn explosively_depressurize(
 		Ok(())
 	})?;
 
-	Ok(Value::null())
+	Ok(())
 }
 
 // Clippy go away, this type is only used once
@@ -609,7 +608,7 @@ fn flood_fill_equalize_turfs(
 						// NOT ONE OF YOU IS GONNA SURVIVE THIS
 						// (I just made explosions less laggy, you're welcome)
 						if !ignore_zone {
-							drop(sender.send(Box::new(move || {
+							drop(sender.try_send(Box::new(move || {
 								explosively_depressurize(cur_index, equalize_hard_turf_limit)
 							})));
 						}
@@ -633,22 +632,16 @@ fn process_planet_turfs(
 	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
 ) {
 	let sender = byond_callback_sender();
-	let sample_turf = arena.get(planet_turfs[0]);
-	if sample_turf.is_none() {
+	let planet_sum = with_planetary_atmos(|map| -> Option<f32> {
+		Some(
+			map.get(&arena.get(planet_turfs[0])?.planetary_atmos?)?
+				.total_moles(),
+		)
+	});
+	if planet_sum.is_none() {
 		return;
 	}
-	let sample_turf = sample_turf.unwrap();
-	let sample_planet_atmos = sample_turf.planetary_atmos;
-	if sample_planet_atmos.is_none() {
-		return;
-	}
-	let maybe_planet_sum = planetary_atmos()
-		.try_get(&sample_planet_atmos.unwrap())
-		.try_unwrap();
-	if maybe_planet_sum.is_none() {
-		return;
-	}
-	let planet_sum = maybe_planet_sum.unwrap().value().total_moles();
+	let planet_sum = planet_sum.unwrap();
 	let target_delta = planet_sum - average_moles;
 
 	let mut progression_order: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
@@ -695,12 +688,21 @@ fn process_planet_turfs(
 			}
 		}
 	}
-	drop(sender.send(Box::new(move || {
-		for callback in firelock_callbacks.iter() {
-			callback()?;
-		}
-		Ok(Value::null())
-	})));
+
+	//whoops, this can absolutely fail
+	if sender
+		.try_send(Box::new(move || {
+			for callback in firelock_callbacks.iter() {
+				callback()?;
+			}
+			Ok(())
+		}))
+		.is_err()
+	{
+		PLANET_TURF_CYCLE.store(false, Ordering::Relaxed);
+		return;
+	}
+
 	if !did_firelocks {
 		return;
 	}
@@ -735,9 +737,10 @@ fn process_planet_turfs(
 
 static PLANET_TURF_CYCLE: AtomicBool = AtomicBool::new(false);
 
-pub(crate) fn equalize(
+pub fn equalize(
 	equalize_hard_turf_limit: usize,
 	high_pressure_turfs: &std::collections::BTreeSet<NodeIndex<usize>>,
+	planet_enabled: bool,
 ) -> usize {
 	let turfs_processed: AtomicUsize = AtomicUsize::new(0);
 	let mut found_turfs: HashSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
@@ -757,15 +760,17 @@ pub(crate) fn equalize(
 					return None;
 				}
 
-				//does this turf or its adjacencies have enough moles to share?
-				if GasArena::with_all_mixtures(|all_mixtures| {
+				let is_unshareable = GasArena::with_all_mixtures(|all_mixtures| {
 					let our_moles = all_mixtures[cur_mixture.mix].read().total_moles();
 					our_moles < 10.0
 						|| arena.adjacent_mixes(cur_index, all_mixtures).all(|lock| {
 							(lock.read().total_moles() - our_moles).abs()
 								< MINIMUM_MOLES_DELTA_TO_MOVE
 						})
-				}) {
+				});
+
+				//does this turf or its adjacencies have enough moles to share?
+				if is_unshareable {
 					return None;
 				}
 
@@ -850,9 +855,8 @@ pub(crate) fn equalize(
 				} else {
 					take_from_givers(&taker_turfs, arena, &mut info, &mut graph);
 				}
-				if planet_turfs.is_empty() {
-					turfs_processed.fetch_add(turfs.len(), Ordering::Relaxed);
-				} else {
+
+				if !planet_turfs.is_empty() && planet_enabled {
 					turfs_processed.fetch_add(turfs.len() + planet_turfs.len(), Ordering::Relaxed);
 					process_planet_turfs(
 						&planet_turfs,
@@ -863,7 +867,10 @@ pub(crate) fn equalize(
 						&mut info,
 						&mut graph,
 					);
+				} else {
+					turfs_processed.fetch_add(turfs.len(), Ordering::Relaxed);
 				}
+
 				(turfs, graph)
 			})
 			.collect::<Vec<_>>();
@@ -872,32 +879,35 @@ pub(crate) fn equalize(
 			return;
 		}
 
-		turfs.into_par_iter().for_each(|(turf, mut graph)| {
-			let mut pressures: Vec<(f32, u32, u32)> = Vec::new();
-			turf.iter().for_each(|&cur_index| {
-				finalize_eq(cur_index, arena, &mut graph, &mut pressures);
-			});
+		let final_pressures = turfs
+			.into_par_iter()
+			.filter_map(|(turf, mut graph)| {
+				let mut pressures: Vec<(f32, u32, u32)> = Vec::new();
+				turf.iter().for_each(|&cur_index| {
+					finalize_eq(cur_index, arena, &mut graph, &mut pressures);
+				});
+				(pressures.len() > 0).then(|| pressures)
+			})
+			.collect::<Vec<_>>();
 
-			pressures.par_chunks(10).for_each(|chunk| {
-				let sender = byond_callback_sender();
-				//fuck all this copying, but it's pretty much the only way
-				let actual_chunk = chunk.to_vec();
+		let sender = byond_callback_sender();
+
+		final_pressures.into_iter().for_each(|final_pressures| {
+			for (amt, cur_turf, adj_turf) in final_pressures {
 				drop(sender.try_send(Box::new(move || {
-					for &(amt, cur_turf, adj_turf) in actual_chunk.iter() {
-						let real_amount = Value::from(amt);
-						let turf = unsafe { Value::turf_by_id_unchecked(cur_turf) };
-						let other_turf = unsafe { Value::turf_by_id_unchecked(adj_turf) };
-						if let Err(e) =
-							turf.call("consider_pressure_difference", &[&other_turf, &real_amount])
-						{
-							Proc::find(byond_string!("/proc/stack_trace"))
-								.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
-								.call(&[&Value::from_string(e.message.as_str())?])?;
-						}
+					let real_amount = Value::from(amt);
+					let turf = unsafe { Value::turf_by_id_unchecked(cur_turf) };
+					let other_turf = unsafe { Value::turf_by_id_unchecked(adj_turf) };
+					if let Err(e) =
+						turf.call("consider_pressure_difference", &[&other_turf, &real_amount])
+					{
+						Proc::find(byond_string!("/proc/stack_trace"))
+							.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
+							.call(&[&Value::from_string(e.message.as_str())?])?;
 					}
-					Ok(Value::null())
-				})))
-			});
+					Ok(())
+				})));
+			}
 		});
 	});
 	turfs_processed.load(Ordering::Relaxed)

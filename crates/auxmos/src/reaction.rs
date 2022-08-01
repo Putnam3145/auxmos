@@ -1,17 +1,20 @@
 #[cfg(feature = "reaction_hooks")]
-pub mod hooks;
+mod hooks;
 
-use auxtools::{byond_string, inventory, runtime, shutdown, DMResult, Value};
-
-use std::cell::RefCell;
+use auxtools::{byond_string, runtime, shutdown, DMResult, Runtime, Value};
 
 use crate::gas::{gas_idx_to_id, total_num_gases, GasIDX, Mixture};
 
-use core::cmp::Ordering;
+use std::cell::RefCell;
+
+type ReactionPriority = u32;
+
+type ReactionIdentifier = u64;
 
 #[derive(Clone)]
 pub struct Reaction {
 	id: ReactionIdentifier,
+	priority: ReactionPriority,
 	min_temp_req: Option<f32>,
 	max_temp_req: Option<f32>,
 	min_ener_req: Option<f32>,
@@ -19,55 +22,8 @@ pub struct Reaction {
 	min_gas_reqs: Vec<(GasIDX, f32)>,
 }
 
-#[derive(Copy, Clone, Default)]
-pub struct ReactionIdentifier {
-	string_id_hash: u64,
-	priority: f32,
-}
-
-impl Ord for ReactionIdentifier {
-	fn cmp(&self, other: &Self) -> Ordering {
-		self.priority
-			.partial_cmp(&other.priority)
-			.unwrap_or_else(|| self.string_id_hash.cmp(&other.string_id_hash))
-	}
-}
-
-impl PartialOrd for ReactionIdentifier {
-	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-		Some(self.cmp(other))
-	}
-}
-
-impl PartialEq for ReactionIdentifier {
-	fn eq(&self, other: &Self) -> bool {
-		self.string_id_hash == other.string_id_hash
-	}
-}
-
-impl Eq for ReactionIdentifier {}
-
-impl Ord for Reaction {
-	fn cmp(&self, other: &Self) -> Ordering {
-		self.id.cmp(&other.id)
-	}
-}
-
-impl PartialOrd for Reaction {
-	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-		Some(self.cmp(other))
-	}
-}
-
-impl PartialEq for Reaction {
-	fn eq(&self, other: &Self) -> bool {
-		self.id == other.id
-	}
-}
-
-impl Eq for Reaction {}
-
-use std::collections::BTreeMap;
+use fxhash::FxBuildHasher;
+use std::collections::HashMap;
 
 enum ReactionSide {
 	ByondSide(Value),
@@ -75,13 +31,12 @@ enum ReactionSide {
 }
 
 thread_local! {
-	// gotta be a BTreeMap for priorities
-	static REACTION_VALUES: RefCell<BTreeMap<ReactionIdentifier,ReactionSide>> = RefCell::new(BTreeMap::new())
+	static REACTION_VALUES: RefCell<HashMap<ReactionIdentifier, ReactionSide, FxBuildHasher>> = Default::default();
 }
 
 #[shutdown]
 fn clean_up_reaction_values() {
-	crate::turfs::processing::wait_for_tasks();
+	crate::turfs::wait_for_tasks();
 	REACTION_VALUES.with(|reaction_values| {
 		reaction_values.borrow_mut().clear();
 	});
@@ -90,9 +45,9 @@ fn clean_up_reaction_values() {
 /// Runs a reaction given a `ReactionIdentifier`. Returns the result of the reaction, error or success.
 /// # Errors
 /// If the reaction itself has a runtime.
-pub fn react_by_id(id: &ReactionIdentifier, src: &Value, holder: &Value) -> DMResult {
+pub fn react_by_id(id: ReactionIdentifier, src: &Value, holder: &Value) -> DMResult {
 	REACTION_VALUES.with(|r| {
-		r.borrow().get(id).map_or_else(
+		r.borrow().get(&id).map_or_else(
 			|| Err(runtime!("Reaction with invalid id")),
 			|reaction| match reaction {
 				ReactionSide::ByondSide(val) => val.call("react", &[src, holder]),
@@ -104,19 +59,15 @@ pub fn react_by_id(id: &ReactionIdentifier, src: &Value, holder: &Value) -> DMRe
 
 impl Reaction {
 	/// Takes a `/datum/gas_reaction` and makes a byond reaction out of it.
-	///
-	/// # Panics
-	///
-	///
-	/// If given anything but a `/datum/gas_reaction`, this will panic.
 	#[must_use]
-	pub fn from_byond_reaction(reaction: &Value) -> Self {
-		let priority = -reaction
+	pub fn from_byond_reaction(reaction: &Value) -> Result<Self, Runtime> {
+		let priority = reaction
 			.get_number(byond_string!("priority"))
-			.unwrap_or_default();
+			.map_err(|_| runtime!("Reaction priorty must be a number!"))?
+			.floor() as u32;
 		let string_id = reaction
 			.get_string(byond_string!("id"))
-			.unwrap_or_else(|_| "invalid".to_string());
+			.map_err(|_| runtime!("Reaction id must be a string!"))?;
 		let func = {
 			#[cfg(feature = "reaction_hooks")]
 			{
@@ -127,11 +78,7 @@ impl Reaction {
 				None
 			}
 		};
-		let string_id_hash = fxhash::hash64(string_id.as_bytes());
-		let id = ReactionIdentifier {
-			string_id_hash,
-			priority,
-		};
+		let id = fxhash::hash64(string_id.as_bytes());
 		let our_reaction = {
 			if let Ok(min_reqs) = reaction.get_list(byond_string!("min_requirements")) {
 				let mut min_gas_reqs: Vec<(GasIDX, f32)> = Vec::new();
@@ -142,6 +89,11 @@ impl Reaction {
 					{
 						min_gas_reqs.push((i, req_amount));
 					}
+				}
+				if min_gas_reqs.len() == 0 {
+					return Err(runtime!(
+						"Tried to register a reaction with no valid requirements!"
+					));
 				}
 				let min_temp_req = min_reqs
 					.get(byond_string!("TEMP"))
@@ -159,37 +111,39 @@ impl Reaction {
 					.get(byond_string!("FIRE_REAGENTS"))
 					.and_then(|v| v.as_number())
 					.ok();
-				Reaction {
+				Ok(Reaction {
 					id,
+					priority,
 					min_temp_req,
 					max_temp_req,
 					min_ener_req,
 					min_fire_req,
 					min_gas_reqs,
-				}
+				})
 			} else {
-				Reaction {
-					id,
-					min_temp_req: None,
-					max_temp_req: Some(1.0),
-					min_ener_req: None,
-					min_fire_req: None,
-					min_gas_reqs: vec![],
-				}
+				Err(runtime!("Reactions must have a gas requirements list!"))
 			}
-		};
-		if let Some(function) = func {
-			REACTION_VALUES.with(|r| {
-				r.borrow_mut()
-					.insert(our_reaction.id, ReactionSide::RustSide(function))
-			});
-		} else {
-			REACTION_VALUES.with(|r| {
-				r.borrow_mut()
-					.insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone()))
-			});
-		}
-		our_reaction
+		}?;
+
+		REACTION_VALUES.with(|r| -> Result<(), Runtime> {
+			let reaction_map = r.borrow_mut();
+			if reaction_map.contains_key(&our_reaction.id) {
+				return Err(runtime!(format!(
+					"Duplicate reaction id {}, only one reaction of this id will be registered",
+					string_id
+				)));
+			}
+			match func {
+				Some(function) => r
+					.borrow_mut()
+					.insert(our_reaction.id, ReactionSide::RustSide(function)),
+				None => r
+					.borrow_mut()
+					.insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone())),
+			};
+			Ok(())
+		})?;
+		Ok(our_reaction)
 	}
 	#[must_use]
 	pub fn get_id(&self) -> ReactionIdentifier {
@@ -216,13 +170,13 @@ impl Reaction {
 	}
 	/// Returns the priority of the reaction.
 	#[must_use]
-	pub fn get_priority(&self) -> f32 {
-		self.id.priority
+	pub fn get_priority(&self) -> ReactionPriority {
+		self.priority
 	}
 	/// Calls the reaction with the given arguments.
 	/// # Errors
 	/// If the reaction itself has a runtime error, this will propagate it up.
 	pub fn react(&self, src: &Value, holder: &Value) -> DMResult {
-		react_by_id(&self.id, src, holder)
+		react_by_id(self.id, src, holder)
 	}
 }

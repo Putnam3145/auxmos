@@ -1,0 +1,24 @@
+[package]
+name = "auxcleanup"
+version = "0.1.0"
+authors = ["Putnam <putnam3145@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+auxtools = { git = "https://github.com/willox/auxtools" }
+inventory = "0.2.3"
+quote = "1.0"
+auxcleanup-impl = { path = "./auxcleanup-impl", version = "0.1.0", package = "auxcleanup-impl"}
+
+[dependencies.detour]
+version = "0.8.1"
+default-features = false
+
+[dependencies.syn]
+version = "1.0"
+features = ["full"]

@@ -454,7 +454,7 @@ impl Mixture {
 	}
 	pub fn can_react_with_reactions(
 		&self,
-		reactions: &BTreeMap<u32, crate::reaction::Reaction>,
+		reactions: &BTreeMap<i32, crate::reaction::Reaction>,
 	) -> bool {
 		//priorities are inversed because fuck you
 		reactions
@@ -468,7 +468,7 @@ impl Mixture {
 	}
 	pub fn all_reactable_with_slice(
 		&self,
-		reactions: &BTreeMap<u32, crate::reaction::Reaction>,
+		reactions: &BTreeMap<i32, crate::reaction::Reaction>,
 	) -> TinyVec<[u64; MAX_REACTION_TINYVEC_SIZE]> {
 		//priorities are inversed because fuck you
 		reactions

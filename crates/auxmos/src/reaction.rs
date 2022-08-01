@@ -7,7 +7,7 @@ use crate::gas::{gas_idx_to_id, total_num_gases, GasIDX, Mixture};
 
 use std::cell::RefCell;
 
-type ReactionPriority = u32;
+type ReactionPriority = i32;
 
 type ReactionIdentifier = u64;
 
@@ -63,8 +63,7 @@ impl Reaction {
 	pub fn from_byond_reaction(reaction: &Value) -> Result<Self, Runtime> {
 		let priority = reaction
 			.get_number(byond_string!("priority"))
-			.map_err(|_| runtime!("Reaction priorty must be a number!"))?
-			.floor() as u32;
+			.map_err(|_| runtime!("Reaction priorty must be a number!"))? as i32;
 		let string_id = reaction
 			.get_string(byond_string!("id"))
 			.map_err(|_| runtime!("Reaction id must be a string!"))?;

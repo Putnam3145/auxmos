@@ -90,9 +90,10 @@ impl Reaction {
 					}
 				}
 				if min_gas_reqs.len() == 0 {
-					return Err(runtime!(
-						format!("Reaction {} has no valid requirements!", string_id)
-					));
+					return Err(runtime!(format!(
+						"Reaction {} has no valid requirements!",
+						string_id
+					)));
 				}
 				let min_temp_req = min_reqs
 					.get(byond_string!("TEMP"))
@@ -120,7 +121,10 @@ impl Reaction {
 					min_gas_reqs,
 				})
 			} else {
-				Err(runtime!(format!("Reaction {} doesn't have a gas requirements list!", string_id)))
+				Err(runtime!(format!(
+					"Reaction {} doesn't have a gas requirements list!",
+					string_id
+				)))
 			}
 		}?;
 

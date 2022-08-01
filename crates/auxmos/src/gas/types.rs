@@ -317,9 +317,10 @@ fn get_reaction_info() -> BTreeMap<i32, Reaction> {
 			Ok(reaction) => {
 				if reaction_cache.contains_key(&reaction.get_priority()) {
 					drop(sender.try_send(Box::new(move || {
-						Err(runtime!(
-							format!("Duplicate reaction priority {}, this reaction will be ignored!", reaction.get_priority())
-						))
+						Err(runtime!(format!(
+							"Duplicate reaction priority {}, this reaction will be ignored!",
+							reaction.get_priority()
+						)))
 					})));
 				} else {
 					reaction_cache.insert(reaction.get_priority(), reaction);

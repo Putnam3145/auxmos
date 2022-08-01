@@ -126,7 +126,7 @@ impl Reaction {
 		}?;
 
 		REACTION_VALUES.with(|r| -> Result<(), Runtime> {
-			let reaction_map = r.borrow_mut();
+			let mut reaction_map = r.borrow_mut();
 			if reaction_map.contains_key(&our_reaction.id) {
 				return Err(runtime!(format!(
 					"Duplicate reaction id {}, only one reaction of this id will be registered",
@@ -134,11 +134,9 @@ impl Reaction {
 				)));
 			}
 			match func {
-				Some(function) => r
-					.borrow_mut()
+				Some(function) => reaction_map
 					.insert(our_reaction.id, ReactionSide::RustSide(function)),
-				None => r
-					.borrow_mut()
+				None => reaction_map
 					.insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone())),
 			};
 			Ok(())

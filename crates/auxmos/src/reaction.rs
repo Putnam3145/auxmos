@@ -92,7 +92,7 @@ impl Reaction {
 				}
 				if min_gas_reqs.len() == 0 {
 					return Err(runtime!(
-						"Tried to register a reaction with no valid requirements!"
+						format!("Reaction {} has no valid requirements!", string_id)
 					));
 				}
 				let min_temp_req = min_reqs
@@ -121,7 +121,7 @@ impl Reaction {
 					min_gas_reqs,
 				})
 			} else {
-				Err(runtime!("Reactions must have a gas requirements list!"))
+				Err(runtime!(format!("Reaction {} doesn't have a gas requirements list!", string_id)))
 			}
 		}?;
 

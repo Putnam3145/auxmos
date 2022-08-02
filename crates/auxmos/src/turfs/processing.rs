@@ -596,7 +596,7 @@ fn post_process_cell<'a>(
 	mixture: &'a TurfMixture,
 	vis: &[Option<f32>],
 	all_mixtures: &[RwLock<Mixture>],
-	reactions: &BTreeMap<u32, crate::reaction::Reaction>,
+	reactions: &BTreeMap<i32, crate::reaction::Reaction>,
 ) -> Option<(&'a TurfMixture, bool, bool)> {
 	all_mixtures
 		.get(mixture.mix)

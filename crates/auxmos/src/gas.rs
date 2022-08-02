@@ -37,12 +37,14 @@ thread_local! {
 	static REGISTERED_GAS_MIXES: RefCell<Option<HashSet<u32, FxBuildHasher>>> = RefCell::new(None);
 }
 
+//is registered mix may be called when byond's del datum runs after world shutdown is done.
+//this is allowed to fail because of that
 fn is_registered_mix(i: u32) -> bool {
 	REGISTERED_GAS_MIXES.with(|thin| {
 		thin.borrow()
 			.as_ref()
-			.expect("Wrong thread tried to access REGISTERED_GAS_MIXES, must be the main thread!")
-			.contains(&i)
+			.and_then(|opt| Some(opt.contains(&i)))
+			.unwrap_or(false)
 	})
 }
 
@@ -55,12 +57,13 @@ fn register_mix(v: &Value) {
 	});
 }
 
+//Unregister mix may be called when byond's del datum runs after world shutdown is done.
+//this is allowed to fail because of that
 fn unregister_mix(i: u32) {
 	REGISTERED_GAS_MIXES.with(|thin| {
 		thin.borrow_mut()
 			.as_mut()
-			.expect("Wrong thread tried to access REGISTERED_GAS_MIXES, must be the main thread!")
-			.remove(&i);
+			.and_then(|opt| Some(opt.remove(&i)));
 	});
 }
 

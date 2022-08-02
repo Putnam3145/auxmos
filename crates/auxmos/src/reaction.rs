@@ -7,7 +7,7 @@ use crate::gas::{gas_idx_to_id, total_num_gases, GasIDX, Mixture};
 
 use std::cell::RefCell;
 
-type ReactionPriority = u32;
+type ReactionPriority = i32;
 
 type ReactionIdentifier = u64;
 
@@ -63,8 +63,7 @@ impl Reaction {
 	pub fn from_byond_reaction(reaction: &Value) -> Result<Self, Runtime> {
 		let priority = reaction
 			.get_number(byond_string!("priority"))
-			.map_err(|_| runtime!("Reaction priorty must be a number!"))?
-			.floor() as u32;
+			.map_err(|_| runtime!("Reaction priorty must be a number!"))? as i32;
 		let string_id = reaction
 			.get_string(byond_string!("id"))
 			.map_err(|_| runtime!("Reaction id must be a string!"))?;
@@ -91,9 +90,10 @@ impl Reaction {
 					}
 				}
 				if min_gas_reqs.len() == 0 {
-					return Err(runtime!(
-						"Tried to register a reaction with no valid requirements!"
-					));
+					return Err(runtime!(format!(
+						"Reaction {} has no valid requirements!",
+						string_id
+					)));
 				}
 				let min_temp_req = min_reqs
 					.get(byond_string!("TEMP"))
@@ -121,12 +121,15 @@ impl Reaction {
 					min_gas_reqs,
 				})
 			} else {
-				Err(runtime!("Reactions must have a gas requirements list!"))
+				Err(runtime!(format!(
+					"Reaction {} doesn't have a gas requirements list!",
+					string_id
+				)))
 			}
 		}?;
 
 		REACTION_VALUES.with(|r| -> Result<(), Runtime> {
-			let reaction_map = r.borrow_mut();
+			let mut reaction_map = r.borrow_mut();
 			if reaction_map.contains_key(&our_reaction.id) {
 				return Err(runtime!(format!(
 					"Duplicate reaction id {}, only one reaction of this id will be registered",
@@ -134,12 +137,12 @@ impl Reaction {
 				)));
 			}
 			match func {
-				Some(function) => r
-					.borrow_mut()
-					.insert(our_reaction.id, ReactionSide::RustSide(function)),
-				None => r
-					.borrow_mut()
-					.insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone())),
+				Some(function) => {
+					reaction_map.insert(our_reaction.id, ReactionSide::RustSide(function))
+				}
+				None => {
+					reaction_map.insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone()))
+				}
 			};
 			Ok(())
 		})?;

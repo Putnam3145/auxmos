@@ -674,10 +674,20 @@ impl Eq for Mixture {}
 
 #[cfg(test)]
 mod tests {
+
 	use super::*;
+	use crate::gas::types::{destroy_gas_statics, register_gas_manually, set_gas_statics_manually};
+
+	fn initialize_gases() {
+		set_gas_statics_manually();
+		register_gas_manually("o2", 20.0);
+		register_gas_manually("n2", 20.0);
+		register_gas_manually("n2o", 20.0);
+	}
 
 	#[test]
 	fn test_merge() {
+		initialize_gases();
 		let mut into = Mixture::new();
 		into.set_moles(0, 82.0);
 		into.set_moles(1, 22.0);
@@ -691,23 +701,25 @@ mod tests {
 		assert_eq!(source.get_moles(3), 100.0); // source is not modified by merge
 										/*
 										make sure that the merge successfuly changed the temperature of the mix merged into:
-										test gases have heat capacities of 2,080 and 20,000 respectively, so total thermal energies of
-										609,752 and 6,263,000 respectively once multiplied by temperatures. add those together,
+										test gases have heat capacities of (82 * 20 + 22 * 20) and (100 * 20) respectively, so total thermal energies of
+										(82 * 20 + 22 * 20) * 293.15 and (100 * 20) * 313.15 respectively once multiplied by temperatures. add those together,
 										then divide by new total heat capacity:
-										(609,752 + 6,263,000)/(2,080 + 20,000) =
-										6,872,752 / 2,2080 ~
-										311.265942
-										so we compare to see if it's relatively close to 311.266, cause of floating point precision
+										(609,752 + 626,300)/(2,080 + 2,000) =
+										~
+										302.953
+										so we compare to see if it's relatively close to 302.953, cause of floating point precision
 										*/
 		assert!(
-			(into.get_temperature() - 311.266).abs() < 0.01,
-			"{} should be near 311.266, is {}",
+			(into.get_temperature() - 302.953).abs() < 0.01,
+			"{} should be near 302.953, is {}",
 			into.get_temperature(),
-			(into.get_temperature() - 311.266)
+			(into.get_temperature() - 302.953)
 		);
+		destroy_gas_statics();
 	}
 	#[test]
 	fn test_remove() {
+		initialize_gases();
 		// also tests multiply, copy_from_mutable
 		let mut removed = Mixture::new();
 		removed.set_moles(0, 22.0);
@@ -725,5 +737,6 @@ mod tests {
 		assert_eq!(removed.get_moles(0), 11.0);
 		assert_eq!(removed.get_moles(1), 41.0);
 		assert_eq!(new_two.get_moles(0), 5.5);
+		destroy_gas_statics();
 	}
 }

@@ -28,3 +28,4 @@ Monstermos is now deprecated. Use katmos instead. It inherently has explosive de
 
 1. `equalization` feature flag renamed to `fastmos`, since that's what everyone calls it; if you used `equalization`, change it to `fastmos`
 2. `monstermos`, `putnamos`, `explosive_decompression`, `putnamos_decompression` feature flags have been removed entirely (this is why it's 2.0.0); use `fastmos` or `katmos` instead.
+3. New function: `/datum/gas_mixture/proc/__auxtools_parse_gas_string`. Call it from `parse_gas_string` with the string as the argument and it'll parse it much faster in Rust, which should reduce load times a bunch.

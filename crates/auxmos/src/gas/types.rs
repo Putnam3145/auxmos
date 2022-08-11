@@ -225,7 +225,7 @@ static GAS_INFO_BY_IDX: RwLock<Option<Vec<GasType>>> = const_rwlock(None);
 static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = const_rwlock(None);
 
 #[init(partial)]
-fn _create_gas_info_structs() -> Result<(), String> {
+fn _initialize_gas_info_structs() -> Result<(), String> {
 	unsafe {
 		GAS_INFO_BY_STRING = Some(DashMap::with_hasher(FxBuildHasher::default()));
 	};
@@ -489,4 +489,47 @@ pub fn gas_idx_to_id(idx: GasIDX) -> DMResult {
 				.unwrap_or_else(|| panic!("Invalid gas index: {}", idx)),
 		)
 	})
+}
+
+#[cfg(test)]
+pub fn register_gas_manually(gas_id: &'static str, specific_heat: f32) {
+	let gas_cache = GasType {
+		idx: total_num_gases(),
+		id: gas_id.into(),
+		name: gas_id.into(),
+		flags: 0,
+		specific_heat,
+		fusion_power: 0.0,
+		moles_visible: None,
+		enthalpy: 0.0,
+		fire_radiation_released: 0.0,
+		fire_info: FireInfo::None,
+		fire_products: None,
+	};
+	let cached_idx = gas_cache.idx;
+	unsafe { GAS_INFO_BY_STRING.as_ref() }
+		.unwrap()
+		.insert(gas_id.into(), gas_cache.clone());
+
+	GAS_SPECIFIC_HEATS
+		.write()
+		.as_mut()
+		.unwrap()
+		.push(gas_cache.specific_heat);
+	GAS_INFO_BY_IDX.write().as_mut().unwrap().push(gas_cache);
+	CACHED_IDX_TO_STRINGS.with(|gas_ids| {
+		let mut map = gas_ids.borrow_mut();
+		map.insert(cached_idx, gas_id.into())
+	});
+	TOTAL_NUM_GASES.fetch_add(1, Ordering::Release); // this is the only thing that stores it other than shutdown
+}
+
+#[cfg(test)]
+pub fn set_gas_statics_manually() {
+	_initialize_gas_info_structs().unwrap();
+}
+
+#[cfg(test)]
+pub fn destroy_gas_statics() {
+	_destroy_gas_info_structs();
 }

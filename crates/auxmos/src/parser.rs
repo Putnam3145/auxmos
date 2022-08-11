@@ -1,3 +1,4 @@
+use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::character::complete::alphanumeric1;
 use nom::combinator::recognize;
@@ -8,7 +9,7 @@ use nom::IResult;
 
 //parses gas id, must be an alphanumeric
 fn parse_gas_id(input: &str) -> IResult<&str, &str> {
-	recognize(many1_count(alphanumeric1))(input)
+	recognize(many1_count(alt((alphanumeric1, tag("_")))))(input)
 }
 
 //parses moles in floating point form

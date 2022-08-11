@@ -24,3 +24,7 @@ Monstermos is now deprecated. Use katmos instead. It inherently has explosive de
 
 `fire_products = "plasma_fire"` should be replaced with `fire_products = 0` or, preferably, `fire_products = FIRE_PRODUCT_PLASMA` or similar, with `FIRE_PRODUCT_PLASMA` being `#define FIRE_PRODUCT_PLASMA 0`. String conversion like this is why fires weren't working on linux before; this breaking change is required for it not to be a total hack.
 
+# 1.1 to 2.0
+
+1. `equalization` feature flag renamed to `fastmos`, since that's what everyone calls it; if you used `equalization`, change it to `fastmos`
+2. `monstermos`, `putnamos`, `explosive_decompression`, `putnamos_decompression` feature flags have been removed entirely (this is why it's 2.0.0); use `fastmos` or `katmos` instead.

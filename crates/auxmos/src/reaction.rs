@@ -89,12 +89,6 @@ impl Reaction {
 						min_gas_reqs.push((i, req_amount));
 					}
 				}
-				if min_gas_reqs.len() == 0 {
-					return Err(runtime!(format!(
-						"Reaction {} has no valid requirements!",
-						string_id
-					)));
-				}
 				let min_temp_req = min_reqs
 					.get(byond_string!("TEMP"))
 					.and_then(|v| v.as_number())

@@ -22,7 +22,8 @@ If you're using Auxmos's built-in tile-based atmos, auxgm also requires an `over
 				overlays[g][i] = new /obj/effect/overlay/gas(gas.gas_overlay, i * 255 / FACTOR_GAS_VISIBLE_MAX)
 		else
 			visibility[g] = 0
-			overlays[g] = 0```
+			overlays[g] = 0
+```
 
 Everything except the overlays lines are unnecessary. However, overlays does need to be organized as seen here, as auxgm handles gas overlays.
 

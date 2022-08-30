@@ -8,6 +8,8 @@ use atomic_float::AtomicF32;
 
 use tinyvec::TinyVec;
 
+use crate::reaction::{Reaction, ReactionPriority};
+
 use super::{
 	constants::*, gas_visibility, total_num_gases, with_reactions, with_specific_heats, GasIDX,
 };
@@ -454,7 +456,7 @@ impl Mixture {
 	}
 	pub fn can_react_with_reactions(
 		&self,
-		reactions: &BTreeMap<i32, crate::reaction::Reaction>,
+		reactions: &BTreeMap<ReactionPriority, Reaction>,
 	) -> bool {
 		//priorities are inversed because fuck you
 		reactions
@@ -468,7 +470,7 @@ impl Mixture {
 	}
 	pub fn all_reactable_with_slice(
 		&self,
-		reactions: &BTreeMap<i32, crate::reaction::Reaction>,
+		reactions: &BTreeMap<ReactionPriority, Reaction>,
 	) -> TinyVec<[u64; MAX_REACTION_TINYVEC_SIZE]> {
 		//priorities are inversed because fuck you
 		reactions

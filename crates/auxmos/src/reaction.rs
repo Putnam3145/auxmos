@@ -7,9 +7,11 @@ use crate::gas::{gas_idx_to_id, total_num_gases, GasIDX, Mixture};
 
 use std::cell::RefCell;
 
-type ReactionPriority = i32;
+use float_ord::FloatOrd;
 
-type ReactionIdentifier = u64;
+pub type ReactionPriority = FloatOrd<f32>;
+
+pub type ReactionIdentifier = u64;
 
 #[derive(Clone)]
 pub struct Reaction {
@@ -61,9 +63,11 @@ impl Reaction {
 	/// Takes a `/datum/gas_reaction` and makes a byond reaction out of it.
 	#[must_use]
 	pub fn from_byond_reaction(reaction: &Value) -> Result<Self, Runtime> {
-		let priority = reaction
-			.get_number(byond_string!("priority"))
-			.map_err(|_| runtime!("Reaction priorty must be a number!"))? as i32;
+		let priority = FloatOrd(
+			reaction
+				.get_number(byond_string!("priority"))
+				.map_err(|_| runtime!("Reaction priorty must be a number!"))?,
+		);
 		let string_id = reaction
 			.get_string(byond_string!("id"))
 			.map_err(|_| runtime!("Reaction id must be a string!"))?;

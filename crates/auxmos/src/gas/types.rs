@@ -5,7 +5,7 @@ use fxhash::FxBuildHasher;
 
 use parking_lot::{const_rwlock, RwLock};
 
-use crate::reaction::Reaction;
+use crate::reaction::{Reaction, ReactionPriority};
 
 use super::GasIDX;
 
@@ -19,7 +19,7 @@ use std::{
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
 
-static REACTION_INFO: RwLock<Option<BTreeMap<i32, Reaction>>> = const_rwlock(None);
+static REACTION_INFO: RwLock<Option<BTreeMap<ReactionPriority, Reaction>>> = const_rwlock(None);
 
 /// The temperature at which this gas can oxidize and how much fuel it can oxidize when it can.
 #[derive(Clone, Copy)]
@@ -304,13 +304,13 @@ fn _hook_init() {
 	Ok(Value::from(true))
 }
 
-fn get_reaction_info() -> BTreeMap<i32, Reaction> {
+fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
 	let gas_reactions = Value::globals()
 		.get(byond_string!("SSair"))
 		.unwrap()
 		.get_list(byond_string!("gas_reactions"))
 		.unwrap();
-	let mut reaction_cache: BTreeMap<i32, Reaction> = Default::default();
+	let mut reaction_cache: BTreeMap<ReactionPriority, Reaction> = Default::default();
 	let sender = byond_callback_sender();
 	for i in 1..=gas_reactions.len() {
 		match Reaction::from_byond_reaction(&gas_reactions.get(i).unwrap()) {
@@ -319,7 +319,7 @@ fn get_reaction_info() -> BTreeMap<i32, Reaction> {
 					drop(sender.try_send(Box::new(move || {
 						Err(runtime!(format!(
 							"Duplicate reaction priority {}, this reaction will be ignored!",
-							reaction.get_priority()
+							reaction.get_priority().0
 						)))
 					})));
 				} else {
@@ -346,7 +346,7 @@ fn _update_reactions() {
 /// If reactions aren't loaded yet.
 pub fn with_reactions<T, F>(mut f: F) -> T
 where
-	F: FnMut(&BTreeMap<i32, Reaction>) -> T,
+	F: FnMut(&BTreeMap<ReactionPriority, Reaction>) -> T,
 {
 	f(REACTION_INFO
 		.read()

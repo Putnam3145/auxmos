@@ -612,7 +612,7 @@ fn _equalize_all_hook() {
 				std::column!()
 			)
 		})?;
-	let gas_list: BTreeSet<usize> = (1..=value_list.len())
+	let gas_list: Vec<usize> = (1..=value_list.len())
 		.filter_map(|i| {
 			value_list
 				.get(i)

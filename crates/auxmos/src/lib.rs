@@ -599,7 +599,6 @@ fn _share_ratio_hook(other_gas: Value, ratio_val: Value, one_way_val: Value) {
 /// Args: (list). Takes every gas in the list and makes them all identical, scaled to their respective volumes. The total heat and amount of substance in all of the combined gases is conserved.
 #[hook("/proc/equalize_all_gases_in_list")]
 fn _equalize_all_hook() {
-	use std::collections::BTreeSet;
 	let value_list = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of args for equalize all: 0"))?
@@ -612,7 +611,7 @@ fn _equalize_all_hook() {
 				std::column!()
 			)
 		})?;
-	let gas_list: BTreeSet<usize> = (1..=value_list.len())
+	let gas_list: Vec<usize> = (1..=value_list.len())
 		.filter_map(|i| {
 			value_list
 				.get(i)

@@ -537,7 +537,7 @@ fn _fuel_amount_hook(temp: Value) {
 		Ok(Value::from(temp.as_number().ok().map_or_else(
 			|| air.get_fuel_amount(),
 			|new_temp| {
-				let mut test_air = air.clone();
+				let mut test_air = air.copy_to_mutable();
 				test_air.set_temperature(new_temp);
 				test_air.get_fuel_amount()
 			},

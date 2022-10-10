@@ -340,6 +340,12 @@ impl Mixture {
 		self.temperature = sample.temperature;
 		self.cached_heat_capacity = sample.cached_heat_capacity.clone();
 	}
+	/// Makes a copy of this gas mixture that is guaranteed mutable, regardless of whether this one is immutable
+	pub fn copy_to_mutable(&self) -> Self {
+		let mut new_mix = self.clone();
+		new_mix.immutable = false;
+		new_mix
+	}
 	/// A very simple finite difference solution to the heat transfer equation.
 	/// Works well enough for our purposes, though perhaps called less often
 	/// than it ought to be while we're working in Rust.
@@ -621,7 +627,7 @@ impl Add<&Mixture> for Mixture {
 	type Output = Self;
 
 	fn add(self, rhs: &Mixture) -> Self {
-		let mut ret = self;
+		let mut ret = self.copy_to_mutable();
 		ret.merge(rhs);
 		ret
 	}
@@ -632,7 +638,7 @@ impl<'a, 'b> Add<&'a Mixture> for &'b Mixture {
 	type Output = Mixture;
 
 	fn add(self, rhs: &Mixture) -> Mixture {
-		let mut ret = self.clone();
+		let mut ret = self.copy_to_mutable();
 		ret.merge(rhs);
 		ret
 	}
@@ -643,7 +649,7 @@ impl Mul<f32> for Mixture {
 	type Output = Self;
 
 	fn mul(self, rhs: f32) -> Self {
-		let mut ret = self;
+		let mut ret = self.copy_to_mutable();
 		ret.multiply(rhs);
 		ret
 	}
@@ -654,7 +660,7 @@ impl<'a> Mul<f32> for &'a Mixture {
 	type Output = Mixture;
 
 	fn mul(self, rhs: f32) -> Mixture {
-		let mut ret = self.clone();
+		let mut ret = self.copy_to_mutable();
 		ret.multiply(rhs);
 		ret
 	}

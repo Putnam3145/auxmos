@@ -594,23 +594,22 @@ fn flood_fill_zones(
 					if adj_mixture.enabled() {
 						border_turfs.push_back(adj_index);
 					}
+					if ignore_planet || ignore_decomp {
+						continue;
+					}
 					if adj_mixture.is_immutable() {
 						// Uh oh! looks like someone opened an airlock to space! TIME TO SUCK ALL THE AIR OUT!!!
 						// NOT ONE OF YOU IS GONNA SURVIVE THIS
 						// (I just made explosions less laggy, you're welcome)
-						if !ignore_decomp {
-							drop(sender.try_send(Box::new(move || {
-								explosively_depressurize(cur_index, equalize_hard_turf_limit)
-							})));
-						}
+						drop(sender.try_send(Box::new(move || {
+							explosively_depressurize(cur_index, equalize_hard_turf_limit)
+						})));
 						ignore_decomp = true;
 					}
 					if planet_enabled && cur_turf.planetary_atmos.is_some() {
-						if !ignore_planet {
-							drop(sender.try_send(Box::new(move || {
-								planet_equalize(cur_index, equalize_hard_turf_limit)
-							})));
-						}
+						drop(sender.try_send(Box::new(move || {
+							planet_equalize(cur_index, equalize_hard_turf_limit)
+						})));
 						ignore_planet = true;
 					}
 				}
@@ -678,10 +677,13 @@ fn planet_equalize(
 				break;
 			}
 		}
+		if planet_turfs.is_empty() {
+			planet_turfs.insert(initial_index);
+		}
 		(planet_turfs, warned_about_space)
 	};
 
-	if warned_about_space || planet_turfs.is_empty() {
+	if warned_about_space {
 		return Ok(()); // planet atmos > space
 	}
 

@@ -205,7 +205,7 @@ impl Mixture {
 			self.maybe_expand(
 				adjustments
 					.iter()
-					.filter_map(|&(i, _)| (i < num_gases).then(|| i))
+					.filter_map(|&(i, _)| (i < num_gases).then_some(i))
 					.max()
 					.unwrap_or(0) + 1,
 			);
@@ -596,7 +596,7 @@ impl Mixture {
 		let cur_hash = self.vis_hash(gas_visibility);
 		hash_holder
 			.fetch_update(Relaxed, Relaxed, |item| {
-				(item != cur_hash).then(|| cur_hash)
+				(item != cur_hash).then_some(cur_hash)
 			})
 			.is_ok()
 	}

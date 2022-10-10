@@ -61,7 +61,6 @@ pub fn react_by_id(id: ReactionIdentifier, src: &Value, holder: &Value) -> DMRes
 
 impl Reaction {
 	/// Takes a `/datum/gas_reaction` and makes a byond reaction out of it.
-	#[must_use]
 	pub fn from_byond_reaction(reaction: &Value) -> Result<Self, Runtime> {
 		let priority = FloatOrd(
 			reaction

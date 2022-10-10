@@ -279,26 +279,23 @@ impl TurfGases {
 		self.map.get(idx)
 	}
 
-	pub fn adjacent_node_ids<'a>(
-		&'a self,
+	pub fn adjacent_node_ids(
+		&self,
 		index: NodeIndex<usize>,
 	) -> impl Iterator<Item = NodeIndex<usize>> + '_ {
 		self.graph.neighbors(index)
 	}
 
 	#[allow(unused)]
-	pub fn adjacent_turf_ids<'a>(
-		&'a self,
-		index: NodeIndex<usize>,
-	) -> impl Iterator<Item = TurfID> + '_ {
+	pub fn adjacent_turf_ids(&self, index: NodeIndex<usize>) -> impl Iterator<Item = TurfID> + '_ {
 		self.graph
 			.neighbors(index)
 			.filter_map(|index| Some(self.get(index)?.id))
 	}
 
 	#[allow(unused)]
-	pub fn adjacent_node_ids_enabled<'a>(
-		&'a self,
+	pub fn adjacent_node_ids_enabled(
+		&self,
 		index: NodeIndex<usize>,
 	) -> impl Iterator<Item = NodeIndex<usize>> + '_ {
 		self.graph.neighbors(index).filter(|&adj_index| {

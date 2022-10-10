@@ -43,7 +43,7 @@ fn is_registered_mix(i: u32) -> bool {
 	REGISTERED_GAS_MIXES.with(|thin| {
 		thin.borrow()
 			.as_ref()
-			.and_then(|opt| Some(opt.contains(&i)))
+			.map(|opt| opt.contains(&i))
 			.unwrap_or(false)
 	})
 }
@@ -61,9 +61,7 @@ fn register_mix(v: &Value) {
 //this is allowed to fail because of that
 fn unregister_mix(i: u32) {
 	REGISTERED_GAS_MIXES.with(|thin| {
-		thin.borrow_mut()
-			.as_mut()
-			.and_then(|opt| Some(opt.remove(&i)));
+		thin.borrow_mut().as_mut().map(|opt| opt.remove(&i));
 	});
 }
 

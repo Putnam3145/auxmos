@@ -11,4 +11,4 @@ crate-type = ["lib"]
 
 [dependencies]
 auxtools = { git = "https://github.com/willox/auxtools" }
-flume = "0.10.13"
+flume = "0.10.14"

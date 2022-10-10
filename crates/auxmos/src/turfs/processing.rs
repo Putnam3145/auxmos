@@ -497,7 +497,7 @@ fn fdm(
 							let sender = byond_callback_sender();
 							drop(sender.try_send(Box::new(move || {
 								let turf = unsafe { Value::turf_by_id_unchecked(id) };
-								for (id, diff) in diffs.to_vec() {
+								for (id, diff) in diffs.iter().copied() {
 									if id != 0 {
 										let enemy_tile = unsafe { Value::turf_by_id_unchecked(id) };
 										if diff > 5.0 {
@@ -604,8 +604,11 @@ fn post_process_cell<'a>(
 		.and_then(|gas| {
 			let should_update_visuals = gas.vis_hash_changed(vis, &mixture.vis_hash);
 			let reactable = gas.can_react_with_reactions(reactions);
-			(should_update_visuals || reactable)
-				.then(|| (mixture, should_update_visuals, reactable))
+			(should_update_visuals || reactable).then_some((
+				mixture,
+				should_update_visuals,
+				reactable,
+			))
 		})
 }
 
@@ -621,7 +624,7 @@ fn post_process() {
 					.par_values()
 					.filter_map(|&node_index| {
 						let mix = arena.get(node_index).unwrap();
-						mix.enabled().then(|| mix)
+						mix.enabled().then_some(mix)
 					})
 					.filter_map(|mixture| post_process_cell(mixture, &vis, all_mixtures, reactions))
 					.collect::<Vec<_>>()
@@ -645,19 +648,18 @@ fn post_process() {
 					})));
 				}
 
-				if should_update_vis {
-					if sender
+				if should_update_vis
+					&& sender
 						.try_send(Box::new(move || {
 							let turf = unsafe { Value::turf_by_id_unchecked(id) };
 							update_visuals(turf)?;
 							Ok(())
 						}))
 						.is_err()
-					{
-						//this update failed, consider vis_cache to be bogus so it can send the
-						//update again later
-						tmix.invalidate_vis_cache();
-					}
+				{
+					//this update failed, consider vis_cache to be bogus so it can send the
+					//update again later
+					tmix.invalidate_vis_cache();
 				}
 			});
 	});

@@ -270,7 +270,7 @@ fn _process_heat_notify() {
 			std::column!()
 		)
 	})? / 10.0) as f64;
-	let _ = sender.try_send(SSheatInfo { time_delta });
+	_ = sender.try_send(SSheatInfo { time_delta });
 	Ok(Value::null())
 }
 
@@ -420,7 +420,7 @@ fn _process_heat_start() -> Result<(), String> {
 						})
 						.collect::<Vec<_>>();
 
-					let _ = adjacencies_to_consider
+					_ = adjacencies_to_consider
 						.par_iter()
 						.try_for_each(|&cur_index| {
 							let info = arena.get(cur_index).unwrap();

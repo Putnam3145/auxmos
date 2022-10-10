@@ -37,6 +37,10 @@ type DeferredFunc = Box<dyn FnOnce() -> Result<(), Runtime> + Send + Sync>;
 
 type CallbackChannel = (flume::Sender<DeferredFunc>, flume::Receiver<DeferredFunc>);
 
+pub type CallbackSender = flume::Sender<DeferredFunc>;
+
+pub type CallbackReceiver = flume::Receiver<DeferredFunc>;
+
 static mut CALLBACK_CHANNEL: Option<CallbackChannel> = None;
 
 #[init(partial)]
@@ -68,7 +72,7 @@ fn process_callbacks() {
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
-				let _ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
+				_ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
 			}
 		}
 	})
@@ -81,7 +85,7 @@ fn process_callbacks_for(duration: Duration) -> bool {
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
-				let _ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
+				_ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
 			}
 			if timer.check() {
 				return true;

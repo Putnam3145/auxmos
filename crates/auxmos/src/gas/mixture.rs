@@ -284,6 +284,28 @@ impl Mixture {
 		}
 		self.cached_heat_capacity.set(combined_heat_capacity);
 	}
+	/// Turns a gas mixture into the weighted average of us and the giver, with the weights being (1-ratio, ratio), for self and the giver respectively.
+	pub fn share_ratio(&mut self, giver: &Self, r: f32) {
+		if self.immutable {
+			return;
+		}
+		let ratio = r.clamp(0.0, 1.0);
+		self.multiply(1.0-ratio);
+		let our_heat_capacity = self.heat_capacity();
+		let other_heat_capacity = giver.heat_capacity() * ratio;
+		self.maybe_expand(giver.moles.len());
+		for (a, b) in self.moles.iter_mut().zip(giver.moles.iter()) {
+			*a += b*ratio;
+		}
+		let combined_heat_capacity = our_heat_capacity + other_heat_capacity;
+		if combined_heat_capacity > MINIMUM_HEAT_CAPACITY {
+			self.set_temperature(
+				(our_heat_capacity * self.temperature + other_heat_capacity * giver.temperature)
+					/ (combined_heat_capacity),
+			);
+		}
+		self.cached_heat_capacity.set(combined_heat_capacity);
+	}
 	/// Transfers only the given gases from us to another mix.
 	pub fn transfer_gases_to(&mut self, r: f32, gases: &[GasIDX], into: &mut Self) {
 		let ratio = r.clamp(0.0, 1.0);

@@ -295,8 +295,7 @@ fn planet_process() {
 								.flatten()
 							{
 								if comparison > 0.1 {
-									gas.multiply(1.0 - GAS_DIFFUSION_CONSTANT);
-									gas.merge(&(planet_atmos * GAS_DIFFUSION_CONSTANT));
+									gas.share_ratio(planet_atmos, GAS_DIFFUSION_CONSTANT);
 								} else {
 									gas.copy_from_mutable(planet_atmos);
 								}

@@ -4,8 +4,6 @@ use super::*;
 
 use indexmap::IndexSet;
 
-use ahash::RandomState;
-
 use fxhash::FxBuildHasher;
 
 use auxcallback::byond_callback_sender;
@@ -55,109 +53,52 @@ impl Default for ReducedInfo {
 }
 
 fn adjust_eq_movement(
-	this_turf: Option<NodeIndex<usize>>,
-	that_turf: Option<NodeIndex<usize>>,
+	this_turf: NodeIndex<usize>,
+	that_turf: NodeIndex<usize>,
 	amount: f32,
-	graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
+	graph: &mut DiGraphMap<NodeIndex<usize>, f32>,
 ) {
 	if graph.contains_edge(this_turf, that_turf) {
 		*graph.edge_weight_mut(this_turf, that_turf).unwrap() += amount;
 	} else {
 		graph.add_edge(this_turf, that_turf, amount);
 	}
-	if that_turf.is_some() {
-		if graph.contains_edge(that_turf, this_turf) {
-			*graph.edge_weight_mut(that_turf, this_turf).unwrap() -= amount;
-		} else {
-			graph.add_edge(that_turf, this_turf, -amount);
-		}
+	if graph.contains_edge(that_turf, this_turf) {
+		*graph.edge_weight_mut(that_turf, this_turf).unwrap() -= amount;
+	} else {
+		graph.add_edge(that_turf, this_turf, -amount);
 	}
 }
 
 fn finalize_eq(
 	index: NodeIndex<usize>,
 	arena: &TurfGases,
-	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
+	eq_movement_graph: &mut DiGraphMap<NodeIndex<usize>, f32>,
 	pressures: &mut Vec<(f32, u32, u32)>,
 ) {
-	let turf = arena.get(index).unwrap();
-	let transfer_dirs = {
-		let pairs = eq_movement_graph
-			.edges(Some(index))
-			.map(|(_, opt2, amt)| (opt2, *amt))
-			.collect::<HashMap<_, _, FxBuildHasher>>();
-
-		if pairs.is_empty() {
-			return;
-		}
-		// null it out to prevent infinite recursion.
-		pairs.iter().for_each(|(that_node, _)| {
-			eq_movement_graph.remove_edge(Some(index), *that_node);
-		});
-		pairs
-	};
-	if let Some(&planet_transfer_amount) = transfer_dirs.get(&None) {
-		if planet_transfer_amount > 0.0 {
-			if turf.total_moles() < planet_transfer_amount {
-				finalize_eq_neighbors(index, arena, &transfer_dirs, eq_movement_graph, pressures);
-			}
-			drop(GasArena::with_gas_mixture_mut(turf.mix, |gas| {
-				gas.add(-planet_transfer_amount);
-				Ok(())
-			}));
-		} else if planet_transfer_amount < 0.0 {
-			with_planetary_atmos(|map| {
-				if let Some(planet_air) = turf.planetary_atmos.and_then(|i| map.get(&i)) {
-					let planet_sum = planet_air.total_moles();
-					if planet_sum > 0.0 {
-						drop(GasArena::with_gas_mixture_mut(turf.mix, |gas| {
-							gas.merge(&(planet_air * (-planet_transfer_amount / planet_sum)));
-							Ok(())
-						}));
-					}
-				}
-			})
-		}
-	}
 	let cur_turf_id = arena.get(index).unwrap().id;
 	for adj_index in arena.adjacent_node_ids(index) {
-		let amount = *transfer_dirs.get(&Some(adj_index)).unwrap_or(&0.0);
-		if amount > 0.0 {
-			if turf.total_moles() < amount {
-				finalize_eq_neighbors(index, arena, &transfer_dirs, eq_movement_graph, pressures);
-			}
-			if let Some(adj_tmix) = arena.get(adj_index) {
-				if let Some(amt) = eq_movement_graph.edge_weight_mut(Some(adj_index), Some(index)) {
-					*amt = 0.0;
+		if let Some(&amount) = eq_movement_graph.edge_weight(index, adj_index) {
+			if amount > 0.0 {
+				if let Some(adj_tmix) = arena.get(adj_index) {
+					if let Some(amt) = eq_movement_graph.edge_weight_mut(adj_index, index) {
+						*amt = 0.0;
+					}
+					let turf = arena.get(index).unwrap();
+					if turf.mix != adj_tmix.mix {
+						drop(GasArena::with_gas_mixtures_mut(
+							turf.mix,
+							adj_tmix.mix,
+							|air, other_air| {
+								other_air.merge(&air.remove(amount));
+								Ok(())
+							},
+						));
+					}
+					let adj_turf_id = adj_tmix.id;
+					pressures.push((amount, cur_turf_id, adj_turf_id));
 				}
-				if turf.mix != adj_tmix.mix {
-					drop(GasArena::with_gas_mixtures_mut(
-						turf.mix,
-						adj_tmix.mix,
-						|air, other_air| {
-							other_air.merge(&air.remove(amount));
-							Ok(())
-						},
-					));
-				}
-				let adj_turf_id = adj_tmix.id;
-				pressures.push((amount, cur_turf_id, adj_turf_id));
 			}
-		}
-	}
-}
-
-fn finalize_eq_neighbors(
-	index: NodeIndex<usize>,
-	arena: &TurfGases,
-	transfer_dirs: &HashMap<Option<NodeIndex<usize>>, f32, FxBuildHasher>,
-	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
-	pressures: &mut Vec<(f32, u32, u32)>,
-) {
-	for adj_index in arena.adjacent_node_ids(index) {
-		let amount = *transfer_dirs.get(&Some(adj_index)).unwrap_or(&0.0);
-		if amount < 0.0 {
-			finalize_eq(adj_index, arena, eq_movement_graph, pressures);
 		}
 	}
 }
@@ -166,7 +107,7 @@ fn monstermos_fast_process(
 	cur_index: NodeIndex<usize>,
 	arena: &TurfGases,
 	info: &mut HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
-	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
+	eq_movement_graph: &mut DiGraphMap<NodeIndex<usize>, f32>,
 ) {
 	let mut cur_info = {
 		let mut cur_info = info.get_mut(&cur_index).unwrap();
@@ -189,12 +130,7 @@ fn monstermos_fast_process(
 		let moles_to_move = cur_info.mole_delta / eligible_adjacents.len() as f32;
 		eligible_adjacents.into_iter().for_each(|adj_index| {
 			if let Some(mut adj_info) = info.get_mut(&adj_index) {
-				adjust_eq_movement(
-					Some(cur_index),
-					Some(adj_index),
-					moles_to_move,
-					eq_movement_graph,
-				);
+				adjust_eq_movement(cur_index, adj_index, moles_to_move, eq_movement_graph);
 				cur_info.mole_delta -= moles_to_move;
 				adj_info.mole_delta += moles_to_move;
 			}
@@ -207,7 +143,7 @@ fn give_to_takers(
 	giver_turfs: &[NodeIndex<usize>],
 	arena: &TurfGases,
 	info: &mut HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
-	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
+	eq_movement_graph: &mut DiGraphMap<NodeIndex<usize>, f32>,
 ) {
 	let mut queue: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 	for &index in giver_turfs {
@@ -265,8 +201,8 @@ fn give_to_takers(
 			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir.is_some() {
 				if let Some(mut adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap()) {
 					adjust_eq_movement(
-						Some(cur_index),
-						turf_info.curr_transfer_dir,
+						cur_index,
+						turf_info.curr_transfer_dir.unwrap(),
 						turf_info.curr_transfer_amount,
 						eq_movement_graph,
 					);
@@ -284,7 +220,7 @@ fn take_from_givers(
 	taker_turfs: &[NodeIndex<usize>],
 	arena: &TurfGases,
 	info: &mut HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
-	eq_movement_graph: &mut DiGraphMap<Option<NodeIndex<usize>>, f32>,
+	eq_movement_graph: &mut DiGraphMap<NodeIndex<usize>, f32>,
 ) {
 	let mut queue: IndexSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
 	for &index in taker_turfs {
@@ -339,8 +275,8 @@ fn take_from_givers(
 			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir.is_some() {
 				if let Some(mut adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap()) {
 					adjust_eq_movement(
-						Some(cur_index),
-						turf_info.curr_transfer_dir,
+						cur_index,
+						turf_info.curr_transfer_dir.unwrap(),
 						turf_info.curr_transfer_amount,
 						eq_movement_graph,
 					);
@@ -426,14 +362,11 @@ fn explosively_depressurize(
 	with_turf_gases_read(move |arena| {
 		let mut info: HashMap<NodeIndex<usize>, Cell<ReducedInfo>, FxBuildHasher> =
 			Default::default();
-		let mut progression_order: IndexSet<NodeIndex<usize>, RandomState> = Default::default();
-		for &cur_index in space_turfs.iter() {
-			let maybe_turf = arena.get(cur_index);
-			if maybe_turf.is_none() {
-				continue;
-			}
-			progression_order.insert(cur_index);
-		}
+
+		let mut progression_order = space_turfs
+			.iter()
+			.filter_map(|item| arena.get(*item).map_or_else(|| None, |_| Some(*item)))
+			.collect::<IndexSet<_, FxBuildHasher>>();
 
 		let mut space_turf_len = 0;
 		let mut total_moles = 0.0;
@@ -591,12 +524,14 @@ fn flood_fill_zones(
 		for adj_index in arena.adjacent_node_ids(cur_index) {
 			if found_turfs.insert(adj_index) {
 				if let Some(adj_mixture) = arena.get(adj_index) {
-					if adj_mixture.enabled() {
+					if adj_mixture.enabled() && adj_mixture.planetary_atmos.is_none() {
 						border_turfs.push_back(adj_index);
 					}
-					if ignore_planet || ignore_decomp {
+
+					if ignore_decomp || ignore_planet {
 						continue;
 					}
+
 					if adj_mixture.is_immutable() {
 						// Uh oh! looks like someone opened an airlock to space! TIME TO SUCK ALL THE AIR OUT!!!
 						// NOT ONE OF YOU IS GONNA SURVIVE THIS
@@ -606,9 +541,10 @@ fn flood_fill_zones(
 						})));
 						ignore_decomp = true;
 					}
-					if planet_enabled && cur_turf.planetary_atmos.is_some() {
+
+					if planet_enabled && adj_mixture.planetary_atmos.is_some() {
 						drop(sender.try_send(Box::new(move || {
-							planet_equalize(cur_index, equalize_hard_turf_limit)
+							planet_equalize(adj_index, equalize_hard_turf_limit)
 						})));
 						ignore_planet = true;
 					}
@@ -617,7 +553,7 @@ fn flood_fill_zones(
 		}
 		turfs.insert(cur_index);
 	}
-	(!ignore_decomp && !ignore_planet).then_some((turfs, total_moles))
+	(!ignore_decomp).then_some((turfs, total_moles))
 }
 
 fn planet_equalize(
@@ -677,14 +613,11 @@ fn planet_equalize(
 				break;
 			}
 		}
-		if planet_turfs.is_empty() {
-			planet_turfs.insert(initial_index);
-		}
 		(planet_turfs, warned_about_space)
 	};
 
-	if warned_about_space {
-		return Ok(()); // planet atmos > space
+	if warned_about_space || planet_turfs.is_empty() {
+		return Ok(());
 	}
 
 	with_turf_gases_read(|arena| {
@@ -693,21 +626,11 @@ fn planet_equalize(
 			.filter_map(|item| arena.get(*item).map_or_else(|| None, |_| Some(*item)))
 			.collect::<IndexSet<_, FxBuildHasher>>();
 
-		let mut total_moles = 0.0;
 		let mut cur_queue_idx = 0;
-		let mut planet_len = 0;
 		//2nd floodfill
 		while cur_queue_idx < progression_order.len() {
 			let cur_index = progression_order[cur_queue_idx];
-			let cur_mixture = arena.get(cur_index).unwrap();
 			cur_queue_idx += 1;
-
-			total_moles += cur_mixture.total_moles();
-
-			cur_mixture
-				.planetary_atmos
-				.is_some()
-				.then(|| planet_len += 1);
 
 			if cur_queue_idx > equalize_hard_turf_limit {
 				continue;
@@ -720,38 +643,25 @@ fn planet_equalize(
 			}
 		}
 
-		let (progression_order, mut eq_movement_graph, mut info) =
-			process_zone(progression_order, total_moles, arena, None);
-
-		let average_moles = total_moles / (progression_order.len() - planet_len) as f32;
-
-		let planet_sum = with_planetary_atmos(|map| -> Option<f32> {
+		let average_moles = with_planetary_atmos(|map| -> Option<f32> {
 			Some(
 				map.get(&arena.get(planet_turfs[0])?.planetary_atmos?)?
 					.total_moles(),
 			)
 		});
 
-		if let Some(planet_sum) = planet_sum {
-			let target_delta = planet_sum - average_moles;
-
-			for &cur_index in planet_turfs.iter().rev() {
-				if arena.get(cur_index).is_none() {
-					continue;
-				}
-				if let Some(cur_info) = info.get_mut(&cur_index) {
-					let airflow = cur_info.mole_delta - target_delta;
-					adjust_eq_movement(Some(cur_index), None, airflow, &mut eq_movement_graph);
-					cur_info.mole_delta = target_delta;
-				}
-			}
+		if average_moles.is_none() {
+			return;
 		}
+		let average_moles = average_moles.unwrap();
 
-		let final_pressures = finalize_eq_zone(progression_order, arena, eq_movement_graph);
+		let (turf, graph) = process_zone(progression_order, average_moles, arena, None);
+
+		let final_pressures = finalize_eq_zone(turf, arena, graph);
 
 		if let Some(final_pressures) = final_pressures {
 			let sender = byond_callback_sender();
-			send_pressure_differences(final_pressures, &sender)
+			send_pressure_differences(final_pressures, &sender);
 		}
 	});
 	Ok(())
@@ -759,17 +669,14 @@ fn planet_equalize(
 
 fn process_zone(
 	turfs: IndexSet<NodeIndex<usize>, FxBuildHasher>,
-	total_moles: f32,
+	average_moles: f32,
 	arena: &TurfGases,
 	turfs_processed: Option<&AtomicUsize>,
 ) -> (
 	IndexSet<NodeIndex<usize>, FxBuildHasher>,
-	DiGraphMap<Option<NodeIndex<usize>>, f32>,
-	HashMap<NodeIndex<usize>, MonstermosInfo, FxBuildHasher>,
+	DiGraphMap<NodeIndex<usize>, f32>,
 ) {
-	let mut graph: DiGraphMap<Option<NodeIndex<usize>>, f32> = Default::default();
-
-	let average_moles = (total_moles / turfs.len() as f32) as f32;
+	let mut graph: DiGraphMap<NodeIndex<usize>, f32> = Default::default();
 
 	let mut info = turfs
 		.par_iter()
@@ -821,13 +728,13 @@ fn process_zone(
 		ctr.fetch_add(turfs.len(), Ordering::Relaxed);
 	}
 
-	(turfs, graph, info)
+	(turfs, graph)
 }
 
 fn finalize_eq_zone(
 	turf: IndexSet<NodeIndex<usize>, FxBuildHasher>,
 	arena: &TurfGases,
-	mut graph: DiGraphMap<Option<NodeIndex<usize>>, f32>,
+	mut graph: DiGraphMap<NodeIndex<usize>, f32>,
 ) -> Option<Vec<(f32, u32, u32)>> {
 	let mut pressures: Vec<(f32, u32, u32)> = Vec::new();
 	turf.iter().for_each(|&cur_index| {
@@ -909,8 +816,13 @@ pub fn equalize(
 		let turfs = zoned_turfs
 			.into_par_iter()
 			.map(|(turfs, total_moles)| {
-				let (turfs, graph, _) =
-					process_zone(turfs, total_moles, arena, Some(&turfs_processed));
+				let len = turfs.len();
+				let (turfs, graph) = process_zone(
+					turfs,
+					(total_moles / len as f32) as f32,
+					arena,
+					Some(&turfs_processed),
+				);
 				(turfs, graph)
 			})
 			.collect::<Vec<_>>();

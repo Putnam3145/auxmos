@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "auxmos"
-version = "2.0.0"
+version = "2.2.0"
 dependencies = [
  "ahash 0.8.0",
  "atomic_float",
@@ -104,7 +104,7 @@ dependencies = [
 [[package]]
 name = "auxtools"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#f31b2e1fa8e6b5d92a0bec73b74fe28147f63791"
+source = "git+https://github.com/willox/auxtools#9b34d37036cdf59cb15019421c4c6cfaac4762b2"
 dependencies = [
  "ahash 0.7.6",
  "auxtools-impl",
@@ -123,7 +123,7 @@ dependencies = [
 [[package]]
 name = "auxtools-impl"
 version = "0.1.0"
-source = "git+https://github.com/willox/auxtools#f31b2e1fa8e6b5d92a0bec73b74fe28147f63791"
+source = "git+https://github.com/willox/auxtools#9b34d37036cdf59cb15019421c4c6cfaac4762b2"
 dependencies = [
  "hex",
  "proc-macro2",
@@ -453,9 +453,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.134"
+version = "0.2.135"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "329c933548736bc49fd575ee68c89e8be4d260064184389a5b77517cddd99ffb"
+checksum = "68783febc7782c6c5cb401fbda4de5a9898be1762314da0bb2c10ced61f18b0c"
 
 [[package]]
 name = "libudis86-sys"
@@ -629,9 +629,9 @@ checksum = "dbf0c48bc1d91375ae5c3cd81e3722dff1abcf81a30960240640d223f59fe0e5"
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.46"
+version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94e2ef8dbfc347b10c094890f778ee2e36ca9bb4262e86dc99cd217e35f3470b"
+checksum = "5ea3d908b0e36316caf9e9e2c4625cdde190a7e6f440d794667ed17a1855e725"
 dependencies = [
  "unicode-ident",
 ]

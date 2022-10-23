@@ -154,6 +154,15 @@ impl TurfMixture {
 				.clear();
 		});
 	}
+	pub fn copy_from_mutable(&self, sample: &Mixture) {
+		GasArena::with_all_mixtures(|all_mixtures| {
+			all_mixtures
+				.get(self.mix)
+				.unwrap_or_else(|| panic!("Gas mixture not found for turf: {}", self.mix))
+				.write()
+				.copy_from_mutable(sample);
+		});
+	}
 	pub fn clear_vol(&self, amt: f32) {
 		GasArena::with_all_mixtures(|all_mixtures| {
 			let moles = all_mixtures
@@ -195,11 +204,11 @@ impl TurfMixture {
 	}
 }
 
-type TurfGraphMap = IndexMap<TurfID, NodeIndex<usize>, FxBuildHasher>;
+type TurfGraphMap = IndexMap<TurfID, NodeIndex, FxBuildHasher>;
 
 //adjacency/turf infos goes here
 struct TurfGases {
-	graph: StableDiGraph<TurfMixture, AdjacentFlags, usize>,
+	graph: StableDiGraph<TurfMixture, AdjacentFlags>,
 	map: TurfGraphMap,
 }
 
@@ -259,7 +268,7 @@ impl TurfGases {
 
 	//This isn't a useless collect(), we can't hold a mutable ref and an immutable ref at once on the graph
 	#[allow(clippy::needless_collect)]
-	pub fn remove_adjacencies(&mut self, index: NodeIndex<usize>) {
+	pub fn remove_adjacencies(&mut self, index: NodeIndex) {
 		let edges = self
 			.graph
 			.edges(index)
@@ -270,24 +279,21 @@ impl TurfGases {
 		});
 	}
 
-	pub fn get(&self, idx: NodeIndex<usize>) -> Option<&TurfMixture> {
+	pub fn get(&self, idx: NodeIndex) -> Option<&TurfMixture> {
 		self.graph.node_weight(idx)
 	}
 
 	#[allow(unused)]
-	pub fn get_id(&self, idx: &TurfID) -> Option<&NodeIndex<usize>> {
+	pub fn get_id(&self, idx: &TurfID) -> Option<&NodeIndex> {
 		self.map.get(idx)
 	}
 
-	pub fn adjacent_node_ids(
-		&self,
-		index: NodeIndex<usize>,
-	) -> impl Iterator<Item = NodeIndex<usize>> + '_ {
+	pub fn adjacent_node_ids(&self, index: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
 		self.graph.neighbors(index)
 	}
 
 	#[allow(unused)]
-	pub fn adjacent_turf_ids(&self, index: NodeIndex<usize>) -> impl Iterator<Item = TurfID> + '_ {
+	pub fn adjacent_turf_ids(&self, index: NodeIndex) -> impl Iterator<Item = TurfID> + '_ {
 		self.graph
 			.neighbors(index)
 			.filter_map(|index| Some(self.get(index)?.id))
@@ -296,8 +302,8 @@ impl TurfGases {
 	#[allow(unused)]
 	pub fn adjacent_node_ids_enabled(
 		&self,
-		index: NodeIndex<usize>,
-	) -> impl Iterator<Item = NodeIndex<usize>> + '_ {
+		index: NodeIndex,
+	) -> impl Iterator<Item = NodeIndex> + '_ {
 		self.graph.neighbors(index).filter(|&adj_index| {
 			self.graph
 				.node_weight(adj_index)
@@ -307,7 +313,7 @@ impl TurfGases {
 
 	pub fn adjacent_mixes<'a>(
 		&'a self,
-		index: NodeIndex<usize>,
+		index: NodeIndex,
 		all_mixtures: &'a [parking_lot::RwLock<Mixture>],
 	) -> impl Iterator<Item = &'a parking_lot::RwLock<Mixture>> {
 		self.graph
@@ -318,7 +324,7 @@ impl TurfGases {
 
 	pub fn adjacent_mixes_with_adj_ids<'a>(
 		&'a self,
-		index: NodeIndex<usize>,
+		index: NodeIndex,
 		all_mixtures: &'a [parking_lot::RwLock<Mixture>],
 		dir: Direction,
 	) -> impl Iterator<Item = (&'a TurfID, &'a parking_lot::RwLock<Mixture>)> {
@@ -331,7 +337,7 @@ impl TurfGases {
 	/*
 	pub fn adjacent_infos(
 		&self,
-		index: NodeIndex<usize>,
+		index: NodeIndex,
 		dir: Direction,
 	) -> impl Iterator<Item = &TurfMixture> {
 		self.graph

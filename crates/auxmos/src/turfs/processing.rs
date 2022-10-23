@@ -310,7 +310,7 @@ fn planet_process() {
 
 // Compares with neighbors, returning early if any of them are valid.
 fn should_process(
-	index: NodeIndex<usize>,
+	index: NodeIndex,
 	mixture: &TurfMixture,
 	all_mixtures: &[RwLock<Mixture>],
 	arena: &TurfGases,
@@ -340,10 +340,10 @@ fn should_process(
 // Clippy go away, this type is only used once
 #[allow(clippy::type_complexity)]
 fn process_cell(
-	index: NodeIndex<usize>,
+	index: NodeIndex,
 	all_mixtures: &[RwLock<Mixture>],
 	arena: &TurfGases,
-) -> Option<(NodeIndex<usize>, Mixture, TinyVec<[(TurfID, f32); 6]>, i32)> {
+) -> Option<(NodeIndex, Mixture, TinyVec<[(TurfID, f32); 6]>, i32)> {
 	let mut adj_amount = 0;
 	/*
 		Getting write locks is potential danger zone,
@@ -395,18 +395,15 @@ fn process_cell(
 }
 
 // Solving the heat equation using a Finite Difference Method, an iterative stencil loop.
-fn fdm(
-	fdm_max_steps: i32,
-	equalize_enabled: bool,
-) -> (BTreeSet<NodeIndex<usize>>, BTreeSet<NodeIndex<usize>>) {
+fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (BTreeSet<NodeIndex>, BTreeSet<NodeIndex>) {
 	/*
 		This is the replacement system for LINDA. LINDA requires a lot of bookkeeping,
 		which, when coefficient-wise operations are this fast, is all just unnecessary overhead.
 		This is a much simpler FDM system, basically like LINDA but without its most important feature,
 		sleeping turfs, which is why I've renamed it to fdm.
 	*/
-	let mut low_pressure_turfs: BTreeSet<NodeIndex<usize>> = Default::default();
-	let mut high_pressure_turfs: BTreeSet<NodeIndex<usize>> = Default::default();
+	let mut low_pressure_turfs: BTreeSet<NodeIndex> = Default::default();
+	let mut high_pressure_turfs: BTreeSet<NodeIndex> = Default::default();
 	let mut cur_count = 1;
 	with_turf_gases_read(|arena| {
 		loop {
@@ -524,18 +521,15 @@ fn fdm(
 }
 
 // Finds small differences in turf pressures and equalizes them.
-fn excited_group_processing(
-	pressure_goal: f32,
-	low_pressure_turfs: &BTreeSet<NodeIndex<usize>>,
-) -> usize {
-	let mut found_turfs: HashSet<NodeIndex<usize>, FxBuildHasher> = Default::default();
+fn excited_group_processing(pressure_goal: f32, low_pressure_turfs: &BTreeSet<NodeIndex>) -> usize {
+	let mut found_turfs: HashSet<NodeIndex, FxBuildHasher> = Default::default();
 	with_turf_gases_read(|arena| {
 		for &initial_turf in low_pressure_turfs.iter() {
 			if found_turfs.contains(&initial_turf) {
 				continue;
 			}
 			let initial_mix_ref = arena.get(initial_turf).unwrap();
-			let mut border_turfs: VecDeque<NodeIndex<usize>> = VecDeque::with_capacity(40);
+			let mut border_turfs: VecDeque<NodeIndex> = VecDeque::with_capacity(40);
 			let mut turfs: Vec<&TurfMixture> = Vec::with_capacity(200);
 			let mut min_pressure = initial_mix_ref.return_pressure();
 			let mut max_pressure = min_pressure;

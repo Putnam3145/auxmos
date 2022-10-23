@@ -290,12 +290,12 @@ impl Mixture {
 			return;
 		}
 		let ratio = r.clamp(0.0, 1.0);
-		self.multiply(1.0-ratio);
+		self.multiply(1.0 - ratio);
 		let our_heat_capacity = self.heat_capacity();
 		let other_heat_capacity = giver.heat_capacity() * ratio;
 		self.maybe_expand(giver.moles.len());
 		for (a, b) in self.moles.iter_mut().zip(giver.moles.iter()) {
-			*a += b*ratio;
+			*a += b * ratio;
 		}
 		let combined_heat_capacity = our_heat_capacity + other_heat_capacity;
 		if combined_heat_capacity > MINIMUM_HEAT_CAPACITY {

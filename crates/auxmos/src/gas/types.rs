@@ -315,15 +315,17 @@ fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
 	for i in 1..=gas_reactions.len() {
 		match Reaction::from_byond_reaction(&gas_reactions.get(i).unwrap()) {
 			Ok(reaction) => {
-				if reaction_cache.contains_key(&reaction.get_priority()) {
+				if let std::collections::btree_map::Entry::Vacant(e) =
+					reaction_cache.entry(reaction.get_priority())
+				{
+					e.insert(reaction);
+				} else {
 					drop(sender.try_send(Box::new(move || {
 						Err(runtime!(format!(
 							"Duplicate reaction priority {}, this reaction will be ignored!",
 							reaction.get_priority().0
 						)))
 					})));
-				} else {
-					reaction_cache.insert(reaction.get_priority(), reaction);
 				}
 			}
 			//maybe awful error handling

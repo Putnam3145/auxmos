@@ -127,12 +127,6 @@ impl Reaction {
 
 		REACTION_VALUES.with(|r| -> Result<(), Runtime> {
 			let mut reaction_map = r.borrow_mut();
-			if reaction_map.contains_key(&our_reaction.id) {
-				return Err(runtime!(format!(
-					"Duplicate reaction id {}, only one reaction of this id will be registered",
-					string_id
-				)));
-			}
 			match func {
 				Some(function) => {
 					reaction_map.insert(our_reaction.id, ReactionSide::RustSide(function))

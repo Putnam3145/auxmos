@@ -285,7 +285,9 @@ fn planet_process() {
 							.and_then(|lock| lock.try_upgradable_read())
 						{
 							let comparison = gas_read.compare(planet_atmos);
-							if let Some(mut gas) = (comparison > GAS_MIN_MOLES)
+							let has_temp_difference = gas_read.temperature_compare(planet_atmos);
+							if let Some(mut gas) = (has_temp_difference
+								|| (comparison > GAS_MIN_MOLES))
 								.then(|| {
 									parking_lot::lock_api::RwLockUpgradableReadGuard::try_upgrade(
 										gas_read,
@@ -294,7 +296,7 @@ fn planet_process() {
 								})
 								.flatten()
 							{
-								if comparison > 0.1 {
+								if comparison > 0.1 || has_temp_difference {
 									gas.share_ratio(planet_atmos, GAS_DIFFUSION_CONSTANT);
 								} else {
 									gas.copy_from_mutable(planet_atmos);

@@ -1,6 +1,6 @@
 [package]
 name = "auxmos"
-version = "2.2.0"
+version = "2.3.0"
 authors = ["Putnam <putnam3145@gmail.com>"]
 edition = "2021"
 

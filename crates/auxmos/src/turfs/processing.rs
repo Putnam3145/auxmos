@@ -187,48 +187,9 @@ fn _process_turf_start() -> Result<(), String> {
 			}
 			if info.equalize_enabled {
 				#[cfg(feature = "fastmos")]
-				_ = super::katmos::equalize_info_sender().try_send(high_pressure_turfs);
-				/*
-				let start_time = Instant::now();
-				let processed_turfs = {
-					#[cfg(feature = "fastmos")]
-					{
-						super::katmos::equalize(
-							info.equalize_hard_turf_limit,
-							&high_pressure_turfs,
-							info.planet_enabled,
-						)
-					}
-					#[cfg(not(feature = "fastmos"))]
-					{
-						0
-					}
-				};
-				let bench = start_time.elapsed().as_millis();
-				stats.push(Box::new(move || {
-					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-					let prev_cost =
-						ssair
-							.get_number(byond_string!("cost_equalize"))
-							.map_err(|_| {
-								runtime!(
-									"Attempt to interpret non-number value as number {} {}:{}",
-									std::file!(),
-									std::line!(),
-									std::column!()
-								)
-							})?;
-					ssair.set(
-						byond_string!("cost_equalize"),
-						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
-					)?;
-					ssair.set(
-						byond_string!("num_equalize_processed"),
-						Value::from(processed_turfs as f32),
-					)?;
-					Ok(())
-				}));
-				*/
+				{
+					_ = super::katmos::equalize_info_sender().try_send(high_pressure_turfs);
+				}
 			}
 			{
 				let start_time = Instant::now();

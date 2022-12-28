@@ -186,6 +186,9 @@ fn _process_turf_start() -> Result<(), String> {
 				}));
 			}
 			if info.equalize_enabled {
+				#[cfg(feature = "fastmos")]
+				_ = super::katmos::equalize_info_sender().try_send(high_pressure_turfs);
+				/*
 				let start_time = Instant::now();
 				let processed_turfs = {
 					#[cfg(feature = "fastmos")]
@@ -225,6 +228,7 @@ fn _process_turf_start() -> Result<(), String> {
 					)?;
 					Ok(())
 				}));
+				*/
 			}
 			{
 				let start_time = Instant::now();

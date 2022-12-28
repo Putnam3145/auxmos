@@ -12,11 +12,27 @@ use petgraph::{graph::NodeIndex, graphmap::DiGraphMap};
 
 use std::{
 	cell::Cell,
+	time::Instant,
 	{
-		collections::{HashMap, HashSet},
+		collections::{BTreeSet, HashMap, HashSet},
 		sync::atomic::{AtomicUsize, Ordering},
 	},
 };
+
+lazy_static::lazy_static! {
+	static ref EQUALIZE_CHANNEL: (
+		flume::Sender<BTreeSet<NodeIndex>>,
+		flume::Receiver<BTreeSet<NodeIndex>>
+	) = flume::bounded(1);
+}
+
+fn with_equalize_info_receiver<T>(f: impl Fn(&flume::Receiver<BTreeSet<NodeIndex>>) -> T) -> T {
+	f(&EQUALIZE_CHANNEL.1)
+}
+
+pub fn equalize_info_sender() -> flume::Sender<BTreeSet<NodeIndex>> {
+	EQUALIZE_CHANNEL.0.clone()
+}
 
 #[derive(Copy, Clone)]
 struct MonstermosInfo {
@@ -723,14 +739,66 @@ fn send_pressure_differences(
 	}
 }
 
-pub fn equalize(
+#[hook("/datum/controller/subsystem/air/proc/equalize_turfs_auxtools")]
+fn _equalize_hook(remaining: Value) {
+	let equalize_hard_turf_limit = src
+		.get_number(byond_string!("equalize_hard_turf_limit"))
+		.unwrap_or(2000.0) as usize;
+	let planet_enabled: bool = src
+		.get_number(byond_string!("planet_equalize_enabled"))
+		.unwrap_or(1.0)
+		!= 0.0;
+	let remaining_time = Duration::from_millis(remaining.as_number().unwrap_or(50.0) as u64);
+	let start_time = Instant::now();
+	let (num_eq, is_cancelled) = with_equalize_info_receiver(|recv| {
+		if let Ok(high_pressure_turfs) = recv.try_recv() {
+			equalize(
+				equalize_hard_turf_limit,
+				&high_pressure_turfs,
+				planet_enabled,
+				(&start_time, remaining_time),
+			)
+		} else {
+			(0, false)
+		}
+	});
+
+	let bench = start_time.elapsed().as_millis();
+	let prev_cost = src
+		.get_number(byond_string!("cost_equalize"))
+		.map_err(|_| {
+			runtime!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
+	src.set(
+		byond_string!("cost_equalize"),
+		Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+	)?;
+	src.set(
+		byond_string!("num_equalize_processed"),
+		Value::from(num_eq as f32),
+	)?;
+	Ok(Value::from(is_cancelled))
+}
+
+#[shutdown]
+fn flush_eq_channel() {
+	with_equalize_info_receiver(|recv| _ = recv.try_recv())
+}
+
+fn equalize(
 	equalize_hard_turf_limit: usize,
-	high_pressure_turfs: &std::collections::BTreeSet<NodeIndex>,
+	high_pressure_turfs: &BTreeSet<NodeIndex>,
 	_planet_enabled: bool,
-) -> usize {
+	(start_time, remaining_time): (&Instant, Duration),
+) -> (usize, bool) {
 	let turfs_processed: AtomicUsize = AtomicUsize::new(0);
 	let mut found_turfs: HashSet<NodeIndex, FxBuildHasher> = Default::default();
-	with_turf_gases_read(|arena| {
+	let is_cancelled = with_turf_gases_read(|arena| {
 		let zoned_turfs = high_pressure_turfs
 			.iter()
 			.filter_map(|&cur_index| {
@@ -763,9 +831,15 @@ pub fn equalize(
 			})
 			.collect::<Vec<_>>();
 
+		if start_time.elapsed() >= remaining_time {
+			return true;
+		}
+
+		/*
 		if check_turfs_dirty() {
 			return;
 		}
+		*/
 
 		let turfs = zoned_turfs
 			.into_par_iter()
@@ -779,9 +853,14 @@ pub fn equalize(
 				)
 			})
 			.collect::<Vec<_>>();
-
+		/*
 		if check_turfs_dirty() {
 			return;
+		}
+		*/
+
+		if start_time.elapsed() >= remaining_time {
+			return true;
 		}
 
 		let final_pressures = turfs
@@ -794,6 +873,7 @@ pub fn equalize(
 		final_pressures
 			.into_iter()
 			.for_each(|final_pressures| send_pressure_differences(final_pressures, &sender));
+		false
 	});
-	turfs_processed.load(Ordering::Relaxed)
+	(turfs_processed.load(Ordering::Relaxed), is_cancelled)
 }

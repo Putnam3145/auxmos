@@ -10,9 +10,7 @@ use parking_lot::{Once, RwLock};
 
 use tinyvec::TinyVec;
 
-use std::{
-	collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
-};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
 use coarsetime::Instant;
 

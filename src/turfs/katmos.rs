@@ -10,7 +10,7 @@ use auxcallback::byond_callback_sender;
 
 use petgraph::{graph::NodeIndex, graphmap::DiGraphMap};
 
-use coarsetime::{Instant, Duration};
+use coarsetime::{Duration, Instant};
 
 use std::{
 	cell::Cell,

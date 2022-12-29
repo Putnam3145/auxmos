@@ -12,8 +12,9 @@ use tinyvec::TinyVec;
 
 use std::{
 	collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
-	time::Instant,
 };
+
+use coarsetime::Instant;
 
 static INIT_TURF: Once = Once::new();
 

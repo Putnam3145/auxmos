@@ -12,7 +12,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["auxcleanup_gas_deletion", "turf_processing"]
+default = ["auxcleanup_gas_deletion", "turf_processing", "katmos"]
 auxcleanup_gas_deletion = ["auxcleanup"]
 zas_hooks = []
 turf_processing = []
@@ -49,6 +49,7 @@ atomic_float = "0.1.0"
 petgraph = "0.6.2"
 bitflags = "1.3.2"
 nom = "7.1.1"
+coarsetime = "0.1.22"
 
 [dependencies.tinyvec]
 version = "1.6.0"

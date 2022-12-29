@@ -10,9 +10,10 @@ use auxcallback::byond_callback_sender;
 
 use petgraph::{graph::NodeIndex, graphmap::DiGraphMap};
 
+use coarsetime::{Instant, Duration};
+
 use std::{
 	cell::Cell,
-	time::Instant,
 	{
 		collections::{BTreeSet, HashMap, HashSet},
 		sync::atomic::{AtomicUsize, Ordering},
@@ -835,12 +836,6 @@ fn equalize(
 			return true;
 		}
 
-		/*
-		if check_turfs_dirty() {
-			return;
-		}
-		*/
-
 		let turfs = zoned_turfs
 			.into_par_iter()
 			.map(|(graph, total_moles)| {
@@ -853,11 +848,6 @@ fn equalize(
 				)
 			})
 			.collect::<Vec<_>>();
-		/*
-		if check_turfs_dirty() {
-			return;
-		}
-		*/
 
 		if start_time.elapsed() >= remaining_time {
 			return true;

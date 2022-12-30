@@ -481,10 +481,10 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 			.get_number(byond_string!("_extools_pointer_gasmixture"))
 			.map_err(|_| {
 				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
+					"Open turf with no air at {} {} {}",
+					src.get_number(byond_string!("x")).unwrap_or(0.0),
+					src.get_number(byond_string!("y")).unwrap_or(0.0),
+					src.get_number(byond_string!("z")).unwrap_or(0.0)
 				)
 			})?
 			.to_bits() as usize;
@@ -540,7 +540,9 @@ fn determine_turf_flag(src: &Value) -> i32 {
 	let path = src
 		.get_type()
 		.unwrap_or_else(|_| "TYPPENOTFOUND".to_string());
-	if !path.as_str().starts_with("/turf/open") {
+	if src.get_number(byond_string!("blocks_air")).unwrap_or(0.0) == 0.0
+		|| !path.as_str().starts_with("/turf/open")
+	{
 		CLOSED_TURF
 	} else if src
 		.get_number(byond_string!("planetary_atmos"))

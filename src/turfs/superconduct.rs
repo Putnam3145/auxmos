@@ -10,7 +10,7 @@ use auxcallback::byond_callback_sender;
 
 use parking_lot::Once;
 
-use std::time::Instant;
+use coarsetime::Instant;
 
 static INIT_HEAT: Once = Once::new();
 

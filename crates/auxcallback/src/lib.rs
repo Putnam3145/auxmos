@@ -1,37 +1,6 @@
 use auxtools::*;
 
-use std::time::{Duration, Instant};
-
-use std::sync::{
-	atomic::{AtomicBool, Ordering::Relaxed},
-	Arc,
-};
-
-enum Timer {
-	Fast(Arc<AtomicBool>),
-	Slow(Instant, Duration),
-}
-
-impl Timer {
-	fn new(time: Duration) -> Self {
-		let done = Arc::new(AtomicBool::new(false));
-		let thread_done = Arc::clone(&done);
-		let builder = std::thread::Builder::new().name("auxcallback-timer".to_string());
-		match builder.spawn(move || {
-			std::thread::sleep(time);
-			thread_done.store(true, Relaxed);
-		}) {
-			Ok(_) => Self::Fast(done),
-			Err(_) => Self::Slow(Instant::now(), time),
-		}
-	}
-	fn check(&self) -> bool {
-		match self {
-			Self::Fast(done) => done.load(Relaxed),
-			Self::Slow(time, duration) => time.elapsed() >= *duration,
-		}
-	}
-}
+use coarsetime::{Duration, Instant};
 
 type DeferredFunc = Box<dyn FnOnce() -> Result<(), Runtime> + Send + Sync>;
 
@@ -81,13 +50,13 @@ fn process_callbacks() {
 /// Goes through every single outstanding callback and calls them, until a given time limit is reached.
 fn process_callbacks_for(duration: Duration) -> bool {
 	let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
-	let timer = Timer::new(duration);
+	let timer = Instant::now();
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
 				_ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
 			}
-			if timer.check() {
+			if timer.elapsed() >= duration {
 				return true;
 			}
 		}

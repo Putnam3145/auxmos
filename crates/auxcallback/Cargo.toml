@@ -12,3 +12,4 @@ crate-type = ["lib"]
 [dependencies]
 auxtools = { git = "https://github.com/willox/auxtools" }
 flume = "0.10.14"
+coarsetime = "0.1.22"

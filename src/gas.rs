@@ -217,25 +217,41 @@ impl GasArena {
 	/// If not called from the main thread
 	/// If `NEXT_GAS_IDS` is not initialized, somehow.
 	pub fn register_mix(mix: &Value) -> DMResult {
+		let init_volume = mix
+			.get_number(byond_string!("initial_volume"))
+			.map_err(|_| {
+				runtime!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})?;
 		if NEXT_GAS_IDS.read().as_ref().unwrap().is_empty() {
-			let mut lock = GAS_MIXTURES.write();
-			let gas_mixtures = lock.as_mut().unwrap();
+			let mut gas_lock = GAS_MIXTURES.write();
+			let gas_mixtures = gas_lock.as_mut().unwrap();
 			let next_idx = gas_mixtures.len();
-			gas_mixtures.push(RwLock::new(Mixture::from_vol(
-				mix.get_number(byond_string!("initial_volume"))
-					.map_err(|_| {
-						runtime!(
-							"Attempt to interpret non-number value as number {} {}:{}",
-							std::file!(),
-							std::line!(),
-							std::column!()
-						)
-					})?,
-			)));
+			gas_mixtures.push(RwLock::new(Mixture::from_vol(init_volume)));
+
 			mix.set(
 				byond_string!("_extools_pointer_gasmixture"),
 				f32::from_bits(next_idx as u32),
-			)?;
+			)
+			.unwrap();
+
+			let mut ids_lock = NEXT_GAS_IDS.write();
+			let cur_last = gas_mixtures.len();
+			let next_gas_ids = ids_lock.as_mut().unwrap();
+			let cap = {
+				let to_cap = gas_mixtures.capacity() - cur_last;
+				if to_cap == 0 {
+					next_gas_ids.capacity() - 100
+				} else {
+					(next_gas_ids.capacity() - 100).min(to_cap)
+				}
+			};
+			next_gas_ids.extend(cur_last..(cur_last + cap));
+			gas_mixtures.resize_with(cur_last + cap, Default::default);
 		} else {
 			let idx = {
 				let mut next_gas_ids = NEXT_GAS_IDS.write();
@@ -248,42 +264,14 @@ impl GasArena {
 				.get(idx)
 				.unwrap()
 				.write()
-				.clear_with_vol(
-					mix.get_number(byond_string!("initial_volume"))
-						.map_err(|_| {
-							runtime!(
-								"Attempt to interpret non-number value as number {} {}:{}",
-								std::file!(),
-								std::line!(),
-								std::column!()
-							)
-						})?,
-				);
+				.clear_with_vol(init_volume);
 			mix.set(
 				byond_string!("_extools_pointer_gasmixture"),
 				f32::from_bits(idx as u32),
-			)?;
+			)
+			.unwrap();
 		}
 		register_mix(mix);
-		rayon::spawn(|| {
-			if NEXT_GAS_IDS.read().as_ref().unwrap().is_empty() {
-				let mut gas_lock = GAS_MIXTURES.write();
-				let mut ids_lock = NEXT_GAS_IDS.write();
-				let gas_mixtures = gas_lock.as_mut().unwrap();
-				let cur_last = gas_mixtures.len();
-				let next_gas_ids = ids_lock.as_mut().unwrap();
-				let cap = {
-					let to_cap = gas_mixtures.capacity() - cur_last;
-					if to_cap == 0 {
-						next_gas_ids.capacity() - 100
-					} else {
-						(next_gas_ids.capacity() - 100).min(to_cap)
-					}
-				};
-				next_gas_ids.extend(cur_last..(cur_last + cap));
-				gas_mixtures.resize_with(cur_last + cap, Default::default);
-			}
-		});
 		Ok(Value::null())
 	}
 	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.

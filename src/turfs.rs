@@ -53,7 +53,6 @@ bitflags! {
 
 	#[derive(Default)]
 	pub struct AdjacentFlags: u8 {
-		const ATMOS_ADJACENT_ANY = 0b1;
 		const ATMOS_ADJACENT_FIRELOCK = 0b10;
 	}
 
@@ -257,9 +256,7 @@ impl TurfGases {
 							.and_then(|g| g.as_number())
 							.unwrap_or(0.0) as u8,
 					);
-					if flags.contains(AdjacentFlags::ATMOS_ADJACENT_ANY) {
-						self.graph.add_edge(this_index, adj_index, flags);
-					}
+					self.graph.add_edge(this_index, adj_index, flags);
 				}
 			}
 		};

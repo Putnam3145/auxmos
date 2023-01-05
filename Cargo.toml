@@ -51,6 +51,12 @@ bitflags = "1.3.2"
 nom = "7.1.1"
 coarsetime = "0.1.22"
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+jemallocator = "0.5"
+
+[target.'cfg(target_env = "msvc")'.dependencies]
+mimalloc = { version = "0.1.32", default-features = false }
+
 [dependencies.tinyvec]
 version = "1.6.0"
 features = ["rustc_1_57", "alloc"]

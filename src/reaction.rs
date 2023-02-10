@@ -119,8 +119,7 @@ impl Reaction {
 				})
 			} else {
 				Err(runtime!(format!(
-					"Reaction {} doesn't have a gas requirements list!",
-					string_id
+					"Reaction {string_id} doesn't have a gas requirements list!"
 				)))
 			}
 		}?;

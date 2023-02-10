@@ -181,7 +181,7 @@ impl Mixture {
 			&& idx < total_num_gases()
 			&& (idx <= self.moles.len() || (amt > GAS_MIN_MOLES && amt.is_normal()))
 		{
-			self.maybe_expand((idx + 1) as usize);
+			self.maybe_expand(idx + 1);
 			unsafe {
 				*self.moles.get_unchecked_mut(idx) = amt;
 			};
@@ -190,7 +190,7 @@ impl Mixture {
 	}
 	pub fn adjust_moles(&mut self, idx: GasIDX, amt: f32) {
 		if !self.immutable && amt.is_normal() && idx < total_num_gases() {
-			self.maybe_expand((idx + 1) as usize);
+			self.maybe_expand(idx + 1);
 			let r = unsafe { self.moles.get_unchecked_mut(idx) };
 			*r += amt;
 			if amt <= 0.0 {
@@ -599,7 +599,7 @@ impl Mixture {
 	/// Returns true if there's a visible gas in this mix.
 	pub fn is_visible(&self) -> bool {
 		self.enumerate()
-			.any(|(i, gas)| gas_visibility(i as usize).map_or(false, |amt| gas >= amt))
+			.any(|(i, gas)| gas_visibility(i).map_or(false, |amt| gas >= amt))
 	}
 	pub fn vis_hash(&self, gas_visibility: &[Option<f32>]) -> u64 {
 		use std::hash::Hasher;

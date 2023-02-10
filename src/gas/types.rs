@@ -392,7 +392,7 @@ pub fn gas_visibility(idx: usize) -> Option<f32> {
 		.read()
 		.as_ref()
 		.unwrap_or_else(|| panic!("Gases not loaded yet! Uh oh!"))
-		.get(idx as usize)
+		.get(idx)
 		.unwrap()
 		.moles_visible
 }
@@ -488,7 +488,7 @@ pub fn gas_idx_to_id(idx: GasIDX) -> DMResult {
 		Value::from_string(
 			stuff
 				.get(&idx)
-				.unwrap_or_else(|| panic!("Invalid gas index: {}", idx)),
+				.unwrap_or_else(|| panic!("Invalid gas index: {idx}")),
 		)
 	})
 }

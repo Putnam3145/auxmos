@@ -666,7 +666,7 @@ fn _parse_gas_string(string: Value) {
 	let actual_string = string.as_string()?;
 
 	let (_, vec) = parser::parse_gas_string(&actual_string)
-		.map_err(|_| runtime!(format!("Failed to parse gas string: {}", actual_string)))?;
+		.map_err(|_| runtime!(format!("Failed to parse gas string: {actual_string}")))?;
 
 	with_mix_mut(src, move |air| {
 		air.clear();
@@ -682,7 +682,7 @@ fn _parse_gas_string(string: Value) {
 				}
 				air.set_temperature(checked_temp)
 			} else {
-				return Err(runtime!(format!("Unknown gas id: {}", gas)));
+				return Err(runtime!(format!("Unknown gas id: {gas}")));
 			}
 		}
 		Ok(())

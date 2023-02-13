@@ -22,7 +22,7 @@ use fxhash::FxBuildHasher;
 
 use bitflags::bitflags;
 
-use parking_lot::{const_mutex, const_rwlock, Mutex, RwLock};
+use parking_lot::{const_rwlock, RwLock};
 
 use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef, Direction};
 
@@ -54,13 +54,6 @@ bitflags! {
 	#[derive(Default)]
 	pub struct AdjacentFlags: u8 {
 		const ATMOS_ADJACENT_FIRELOCK = 0b10;
-	}
-
-	#[derive(Default)]
-	pub struct DirtyFlags: u8 {
-		const DIRTY_MIX_REF = 0b1;
-		const DIRTY_ADJACENT = 0b10;
-		const DIRTY_ADJACENT_TO_SPACE = 0b100;
 	}
 }
 
@@ -369,11 +362,6 @@ static PLANETARY_ATMOS: RwLock<Option<IndexMap<u32, Mixture, FxBuildHasher>>> = 
 //whether there is any tasks running
 static TASKS: RwLock<()> = const_rwlock(());
 
-// Turfs need updating before the thread starts
-static DIRTY_TURFS: Mutex<Option<IndexMap<TurfID, DirtyFlags, FxBuildHasher>>> = const_mutex(None);
-
-static ANY_TURF_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 pub fn wait_for_tasks() {
 	match TASKS.try_write_for(Duration::from_secs(5)) {
 		Some(_) => (),
@@ -392,24 +380,14 @@ fn _initialize_turf_statics() -> Result<(), String> {
 		map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
 	});
 	*PLANETARY_ATMOS.write() = Some(Default::default());
-	*DIRTY_TURFS.lock() = Some(Default::default());
 	Ok(())
 }
 
 #[shutdown]
 fn _shutdown_turfs() {
 	wait_for_tasks();
-	*DIRTY_TURFS.lock() = None;
 	*TURF_GASES.write() = None;
 	*PLANETARY_ATMOS.write() = None;
-}
-
-fn set_turfs_dirty(b: bool) {
-	ANY_TURF_DIRTY.store(b, std::sync::atomic::Ordering::Relaxed);
-}
-
-fn check_turfs_dirty() -> bool {
-	ANY_TURF_DIRTY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 fn with_turf_gases_read<T, F>(f: F) -> T
@@ -426,14 +404,6 @@ where
 	f(TURF_GASES.write().as_mut().unwrap())
 }
 
-fn with_dirty_turfs<T, F>(f: F) -> T
-where
-	F: FnOnce(&mut IndexMap<TurfID, DirtyFlags, FxBuildHasher>) -> T,
-{
-	set_turfs_dirty(true);
-	f(DIRTY_TURFS.lock().as_mut().unwrap())
-}
-
 fn with_planetary_atmos<T, F>(f: F) -> T
 where
 	F: FnOnce(&IndexMap<u32, Mixture, FxBuildHasher>) -> T,
@@ -448,28 +418,9 @@ where
 	f(PLANETARY_ATMOS.write().as_mut().unwrap())
 }
 
-fn rebuild_turf_graph() -> Result<(), Runtime> {
-	with_dirty_turfs(|dirty_turfs| {
-		for (&t, _) in dirty_turfs
-			.iter()
-			.filter(|&(_, &flags)| flags.contains(DirtyFlags::DIRTY_MIX_REF))
-		{
-			register_turf(t)?;
-		}
-		for (t, _) in dirty_turfs
-			.drain(..)
-			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
-		{
-			update_adjacency_info(t)?;
-		}
-		Ok(())
-	})?;
-	set_turfs_dirty(false);
-	Ok(())
-}
-
-fn register_turf(id: u32) -> Result<(), Runtime> {
-	let src = unsafe { Value::turf_by_id_unchecked(id) };
+#[hook("/turf/proc/update_air_ref")]
+fn _hook_register_turf() {
+	let id = unsafe { src.raw.data.id };
 	let flag = determine_turf_flag(&src);
 	if flag >= 0 {
 		let mut to_insert: TurfMixture = TurfMixture::default();
@@ -513,17 +464,6 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 	#[cfg(feature = "superconductivity")]
 	superconduct::supercond_update_ref(src)?;
 
-	Ok(())
-}
-
-#[hook("/turf/proc/update_air_ref")]
-fn _hook_register_turf() {
-	with_dirty_turfs(|dirty_turfs| {
-		dirty_turfs
-			.entry(unsafe { src.raw.data.id })
-			.or_default()
-			.insert(DirtyFlags::DIRTY_MIX_REF);
-	});
 	Ok(Value::null())
 }
 
@@ -552,10 +492,11 @@ fn determine_turf_flag(src: &Value) -> i32 {
 	}
 }
 
-fn update_adjacency_info(id: u32) -> Result<(), Runtime> {
-	let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
+#[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
+fn _hook_infos() {
+	let id = unsafe { src.raw.data.id };
 	with_turf_gases_write(|arena| -> Result<(), Runtime> {
-		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
+		if let Ok(adjacent_list) = src.get_list(byond_string!("atmos_adjacent_turfs")) {
 			arena.update_adjacencies(id, adjacent_list)?;
 		} else if let Some(&idx) = arena.map.get(&id) {
 			arena.remove_adjacencies(idx);
@@ -565,16 +506,7 @@ fn update_adjacency_info(id: u32) -> Result<(), Runtime> {
 
 	#[cfg(feature = "superconductivity")]
 	superconduct::supercond_update_adjacencies(id)?;
-	Ok(())
-}
 
-#[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
-fn _hook_infos() {
-	with_dirty_turfs(|dirty_turfs| -> Result<(), Runtime> {
-		let e = dirty_turfs.entry(unsafe { src.raw.data.id }).or_default();
-		e.insert(DirtyFlags::DIRTY_ADJACENT);
-		Ok(())
-	})?;
 	Ok(Value::null())
 }
 

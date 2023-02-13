@@ -334,50 +334,59 @@ fn explosively_depressurize(
 		turfs.insert(initial_index);
 		while cur_queue_idx < turfs.len() {
 			let cur_index = turfs[cur_queue_idx];
-			let mut had_firelock = false;
 			cur_queue_idx += 1;
-			with_turf_gases_read(|arena| -> Result<(), Runtime> {
-				let cur_mixture = {
-					let maybe = arena.get(cur_index);
-					if maybe.is_none() {
-						return Ok(());
-					}
-					maybe.unwrap()
-				};
-				if cur_mixture.planetary_atmos.is_some() {
-					warned_about_planet_atmos = true;
-					return Ok(());
-				}
-				if cur_mixture.is_immutable() {
-					if space_turfs.insert(cur_index) {
-						unsafe { Value::turf_by_id_unchecked(cur_mixture.id) }
-							.set(byond_string!("pressure_specific_target"), &unsafe {
-								Value::turf_by_id_unchecked(cur_mixture.id)
-							})?;
-					}
-				} else if cur_mixture.enabled() {
-					if cur_queue_idx > equalize_hard_turf_limit {
-						return Ok(());
-					}
-					for (flags, adj_index, adj_mixture) in
-						arena.graph.edges(cur_index).filter_map(|edge| {
-							Some((edge.weight(), edge.target(), arena.get(edge.target())?))
-						}) {
-						if turfs.insert(adj_index)
-							&& flags.contains(AdjacentFlags::ATMOS_ADJACENT_FIRELOCK)
-						{
-							had_firelock = true;
-							unsafe { Value::turf_by_id_unchecked(cur_mixture.id) }.call(
-								"consider_firelocks",
-								&[&unsafe { Value::turf_by_id_unchecked(adj_mixture.id) }],
-							)?;
+			let (cur_id, adj_list) = with_turf_gases_read(
+				|arena| -> Result<(Option<u32>, Option<Vec<u32>>), Runtime> {
+					let cur_mixture = {
+						let maybe = arena.get(cur_index);
+						if maybe.is_none() {
+							return Ok((None, None));
 						}
+						maybe.unwrap()
+					};
+					if cur_mixture.planetary_atmos.is_some() {
+						warned_about_planet_atmos = true;
+						return Ok((None, None));
 					}
+					let ret = if cur_mixture.is_immutable() {
+						if space_turfs.insert(cur_index) {
+							unsafe { Value::turf_by_id_unchecked(cur_mixture.id) }
+								.set(byond_string!("pressure_specific_target"), &unsafe {
+									Value::turf_by_id_unchecked(cur_mixture.id)
+								})?;
+						}
+						None
+					} else if cur_mixture.enabled() {
+						if cur_queue_idx > equalize_hard_turf_limit {
+							return Ok((None, None));
+						}
+						Some(
+							arena
+								.graph
+								.edges(cur_index)
+								.filter_map(|edge| {
+									Some((edge.weight(), edge.target(), arena.get(edge.target())?))
+								})
+								.filter(|(flags, adj_index, _)| {
+									turfs.insert(*adj_index)
+										&& flags.contains(AdjacentFlags::ATMOS_ADJACENT_FIRELOCK)
+								})
+								.map(|(_, _, mix)| mix.id)
+								.collect::<Vec<_>>(),
+						)
+					} else {
+						None
+					};
+					Ok((Some(cur_mixture.id), ret))
+				},
+			)?;
+			if let Some(list) = adj_list {
+				for adj_id in list {
+					unsafe { Value::turf_by_id_unchecked(cur_id.unwrap()) }.call(
+						"consider_firelocks",
+						&[&unsafe { Value::turf_by_id_unchecked(adj_id) }],
+					)?;
 				}
-				Ok(())
-			})?;
-			if had_firelock {
-				rebuild_turf_graph()?; // consider_firelocks ought to dirtify it anyway
 			}
 			if warned_about_planet_atmos {
 				break;
@@ -603,47 +612,54 @@ fn planet_equalize(
 	turfs.insert(initial_index);
 	while cur_queue_idx < turfs.len() {
 		let cur_index = turfs[cur_queue_idx];
-		let mut had_firelock = false;
 		cur_queue_idx += 1;
-		with_turf_gases_read(|arena| -> Result<(), Runtime> {
-			let cur_mixture = {
-				let maybe = arena.get(cur_index);
-				if maybe.is_none() {
-					return Ok(());
+
+		let (cur_id, adj_list) = with_turf_gases_read(
+			|arena| -> Result<(Option<u32>, Option<Vec<u32>>), Runtime> {
+				let cur_mixture = {
+					let maybe = arena.get(cur_index);
+					if maybe.is_none() {
+						return Ok((None, None));
+					}
+					maybe.unwrap()
+				};
+				if cur_mixture.planetary_atmos.is_some() {
+					planet_turfs.insert(cur_index);
 				}
-				maybe.unwrap()
-			};
-			if cur_mixture.planetary_atmos.is_some() {
-				planet_turfs.insert(cur_index);
+				let ret = if cur_mixture.is_immutable() {
+					warned_about_space = true;
+					None
+				} else if cur_mixture.enabled() {
+					if cur_queue_idx > equalize_hard_turf_limit {
+						return Ok((None, None));
+					}
+					Some(
+						arena
+							.graph
+							.edges(cur_index)
+							.filter_map(|edge| {
+								Some((edge.weight(), edge.target(), arena.get(edge.target())?))
+							})
+							.filter(|(flags, adj_index, _)| {
+								turfs.insert(*adj_index)
+									&& flags.contains(AdjacentFlags::ATMOS_ADJACENT_FIRELOCK)
+							})
+							.map(|(_, _, mix)| mix.id)
+							.collect::<Vec<_>>(),
+					)
+				} else {
+					None
+				};
+				Ok((Some(cur_mixture.id), ret))
+			},
+		)?;
+		if let Some(list) = adj_list {
+			for adj_id in list {
+				unsafe { Value::turf_by_id_unchecked(cur_id.unwrap()) }.call(
+					"consider_firelocks",
+					&[&unsafe { Value::turf_by_id_unchecked(adj_id) }],
+				)?;
 			}
-			if cur_mixture.is_immutable() {
-				warned_about_space = true;
-				return Ok(());
-			} else if cur_mixture.enabled() {
-				if cur_queue_idx > equalize_hard_turf_limit {
-					return Ok(());
-				}
-				for (_, _, adj_mixture) in arena
-					.graph
-					.edges(cur_index)
-					.filter_map(|edge| {
-						Some((edge.weight(), edge.target(), arena.get(edge.target())?))
-					})
-					.filter(|(flags, adj_index, _)| {
-						turfs.insert(*adj_index)
-							&& flags.contains(AdjacentFlags::ATMOS_ADJACENT_FIRELOCK)
-					}) {
-					had_firelock = true;
-					unsafe { Value::turf_by_id_unchecked(cur_mixture.id) }.call(
-						"consider_firelocks",
-						&[&unsafe { Value::turf_by_id_unchecked(adj_mixture.id) }],
-					)?;
-				}
-			}
-			Ok(())
-		})?;
-		if had_firelock {
-			rebuild_turf_graph()?; // consider_firelocks ought to dirtify it anyway
 		}
 		if warned_about_space {
 			break;

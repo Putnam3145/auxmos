@@ -62,9 +62,6 @@ fn _finish_process_turfs() {
 			)
 		})?;
 	let processing_callbacks_unfinished = process_callbacks_for_millis(arg_limit as u64);
-	if TASKS.try_write().is_some() {
-		rebuild_turf_graph()?;
-	}
 	if processing_callbacks_unfinished {
 		Ok(Value::from(true))
 	} else {
@@ -371,11 +368,11 @@ fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (BTreeSet<NodeIndex>, BTre
 	let mut low_pressure_turfs: BTreeSet<NodeIndex> = Default::default();
 	let mut high_pressure_turfs: BTreeSet<NodeIndex> = Default::default();
 	let mut cur_count = 1;
-	with_turf_gases_read(|arena| {
-		loop {
-			if cur_count > fdm_max_steps || check_turfs_dirty() {
-				break;
-			}
+	loop {
+		if cur_count > fdm_max_steps {
+			break;
+		}
+		with_turf_gases_read(|arena| {
 			GasArena::with_all_mixtures(|all_mixtures| {
 				let turfs_to_save = arena
 					.map
@@ -481,18 +478,18 @@ fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (BTreeSet<NodeIndex>, BTre
 				}
 			});
 			cur_count += 1;
-		}
-	});
+		});
+	}
 	(low_pressure_turfs, high_pressure_turfs)
 }
 
 // Finds small differences in turf pressures and equalizes them.
 fn excited_group_processing(pressure_goal: f32, low_pressure_turfs: &BTreeSet<NodeIndex>) -> usize {
 	let mut found_turfs: HashSet<NodeIndex, FxBuildHasher> = Default::default();
-	with_turf_gases_read(|arena| {
-		for &initial_turf in low_pressure_turfs.iter() {
+	for &initial_turf in low_pressure_turfs.iter() {
+		with_turf_gases_read(|arena| {
 			if found_turfs.contains(&initial_turf) {
-				continue;
+				return;
 			}
 			let initial_mix_ref = arena.get(initial_turf).unwrap();
 			let mut border_turfs: VecDeque<NodeIndex> = VecDeque::with_capacity(40);
@@ -504,7 +501,7 @@ fn excited_group_processing(pressure_goal: f32, low_pressure_turfs: &BTreeSet<No
 			found_turfs.insert(initial_turf);
 			GasArena::with_all_mixtures(|all_mixtures| {
 				loop {
-					if turfs.len() >= 2500 || check_turfs_dirty() {
+					if turfs.len() >= 2500 {
 						break;
 					}
 					if let Some(idx) = border_turfs.pop_front() {
@@ -545,8 +542,8 @@ fn excited_group_processing(pressure_goal: f32, low_pressure_turfs: &BTreeSet<No
 					});
 				}
 			});
-		}
-	});
+		});
+	}
 	found_turfs.len()
 }
 

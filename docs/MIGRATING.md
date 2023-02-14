@@ -34,5 +34,6 @@ Monstermos is now deprecated. Use katmos instead. It inherently has explosive de
 
 # 2.3 - ?
 1. New hook `/datum/controller/subsystem/air/proc/equalize_turfs_auxtools` required for feature `katmos`
-2. `--package auxmos` flag is no longer needed
-3. Flag ATMOS_ADJACENT_ANY = 1 is no longer needed to be set for the adjacent turf to be added
+2. New hook `/datum/controller/subsystem/air/proc/process_excited_groups_auxtools` required for feature `processing`
+3. `--package auxmos` flag is no longer needed
+4. Flag ATMOS_ADJACENT_ANY = 1 is no longer needed to be set for the adjacent turf to be added

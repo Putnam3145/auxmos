@@ -27,6 +27,11 @@ lazy_static::lazy_static! {
 	) = flume::bounded(1);
 }
 
+#[shutdown]
+fn flush_eq_channel() {
+	with_equalize_info_receiver(|recv| _ = recv.try_recv())
+}
+
 fn with_equalize_info_receiver<T>(f: impl Fn(&flume::Receiver<BTreeSet<NodeIndex>>) -> T) -> T {
 	f(&EQUALIZE_CHANNEL.1)
 }
@@ -786,11 +791,6 @@ fn _equalize_hook(remaining: Value) {
 		Value::from(num_eq as f32),
 	)?;
 	Ok(Value::from(is_cancelled))
-}
-
-#[shutdown]
-fn flush_eq_channel() {
-	with_equalize_info_receiver(|recv| _ = recv.try_recv())
 }
 
 fn equalize(

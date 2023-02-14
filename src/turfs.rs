@@ -1,5 +1,7 @@
 mod processing;
 
+mod groups;
+
 #[cfg(feature = "monstermos")]
 mod monstermos;
 
@@ -471,6 +473,14 @@ fn rebuild_turf_graph() -> Result<(), Runtime> {
 fn register_turf(id: u32) -> Result<(), Runtime> {
 	let src = unsafe { Value::turf_by_id_unchecked(id) };
 	let flag = determine_turf_flag(&src);
+	if let Ok(blocks) = src.get_number(byond_string!("blocks_air")) {
+		if blocks > 0.0 {
+			with_turf_gases_write(|arena| arena.remove_turf(id));
+			#[cfg(feature = "superconductivity")]
+			superconduct::supercond_update_ref(src)?;
+			return Ok(());
+		}
+	}
 	if flag >= 0 {
 		let mut to_insert: TurfMixture = TurfMixture::default();
 		let air = src.get(byond_string!("air"))?;

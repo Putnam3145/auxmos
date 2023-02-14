@@ -10,7 +10,7 @@ use parking_lot::{Once, RwLock};
 
 use tinyvec::TinyVec;
 
-use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use coarsetime::Instant;
 
@@ -157,41 +157,6 @@ fn _process_turf_start() -> Result<(), String> {
 			};
 			{
 				let start_time = Instant::now();
-				let processed_turfs =
-					excited_group_processing(info.group_pressure_goal, &low_pressure_turfs);
-				let bench = start_time.elapsed().as_millis();
-				stats.push(Box::new(move || {
-					let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-					let prev_cost =
-						ssair
-							.get_number(byond_string!("cost_groups"))
-							.map_err(|_| {
-								runtime!(
-									"Attempt to interpret non-number value as number {} {}:{}",
-									std::file!(),
-									std::line!(),
-									std::column!()
-								)
-							})?;
-					ssair.set(
-						byond_string!("cost_groups"),
-						Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
-					)?;
-					ssair.set(
-						byond_string!("num_group_turfs_processed"),
-						Value::from(processed_turfs as f32),
-					)?;
-					Ok(())
-				}));
-			}
-			if info.equalize_enabled {
-				#[cfg(feature = "fastmos")]
-				{
-					_ = super::katmos::equalize_info_sender().try_send(high_pressure_turfs);
-				}
-			}
-			{
-				let start_time = Instant::now();
 				post_process();
 				let bench = start_time.elapsed().as_millis();
 				stats.push(Box::new(move || {
@@ -220,6 +185,15 @@ fn _process_turf_start() -> Result<(), String> {
 					}
 					Ok(())
 				})));
+			}
+			{
+				_ = super::groups::equalize_groups_sender().try_send(low_pressure_turfs);
+			}
+			if info.equalize_enabled {
+				#[cfg(feature = "fastmos")]
+				{
+					_ = super::katmos::equalize_info_sender().try_send(high_pressure_turfs);
+				}
 			}
 			{
 				//let it gooooo
@@ -484,70 +458,6 @@ fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (BTreeSet<NodeIndex>, BTre
 		}
 	});
 	(low_pressure_turfs, high_pressure_turfs)
-}
-
-// Finds small differences in turf pressures and equalizes them.
-fn excited_group_processing(pressure_goal: f32, low_pressure_turfs: &BTreeSet<NodeIndex>) -> usize {
-	let mut found_turfs: HashSet<NodeIndex, FxBuildHasher> = Default::default();
-	with_turf_gases_read(|arena| {
-		for &initial_turf in low_pressure_turfs.iter() {
-			if found_turfs.contains(&initial_turf) {
-				continue;
-			}
-			let initial_mix_ref = arena.get(initial_turf).unwrap();
-			let mut border_turfs: VecDeque<NodeIndex> = VecDeque::with_capacity(40);
-			let mut turfs: Vec<&TurfMixture> = Vec::with_capacity(200);
-			let mut min_pressure = initial_mix_ref.return_pressure();
-			let mut max_pressure = min_pressure;
-			let mut fully_mixed = Mixture::new();
-			border_turfs.push_back(initial_turf);
-			found_turfs.insert(initial_turf);
-			GasArena::with_all_mixtures(|all_mixtures| {
-				loop {
-					if turfs.len() >= 2500 || check_turfs_dirty() {
-						break;
-					}
-					if let Some(idx) = border_turfs.pop_front() {
-						let tmix = arena.get(idx).unwrap();
-						if let Some(lock) = all_mixtures.get(tmix.mix) {
-							let mix = lock.read();
-							let pressure = mix.return_pressure();
-							let this_max = max_pressure.max(pressure);
-							let this_min = min_pressure.min(pressure);
-							if (this_max - this_min).abs() >= pressure_goal {
-								continue;
-							}
-							min_pressure = this_min;
-							max_pressure = this_max;
-							turfs.push(tmix);
-							fully_mixed.merge(&mix);
-							fully_mixed.volume += mix.volume;
-							for loc in arena.adjacent_node_ids(idx) {
-								if found_turfs.contains(&loc) {
-									continue;
-								}
-								found_turfs.insert(loc);
-								if arena.get(loc).filter(|b| b.enabled()).is_some() {
-									border_turfs.push_back(loc);
-								}
-							}
-						}
-					} else {
-						break;
-					}
-				}
-				fully_mixed.multiply(1.0 / turfs.len() as f32);
-				if !fully_mixed.is_corrupt() {
-					turfs.par_iter().with_min_len(125).for_each(|turf| {
-						if let Some(mix_lock) = all_mixtures.get(turf.mix) {
-							mix_lock.write().copy_from_mutable(&fully_mixed);
-						}
-					});
-				}
-			});
-		}
-	});
-	found_turfs.len()
 }
 
 // Checks if the gas can react or can update visuals, returns None if not.

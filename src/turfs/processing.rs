@@ -187,6 +187,9 @@ fn _process_turf_start() -> Result<(), String> {
 				})));
 			}
 			{
+				planet_process();
+			}
+			{
 				_ = super::groups::equalize_groups_sender().try_send(low_pressure_turfs);
 			}
 			if info.equalize_enabled {
@@ -195,10 +198,6 @@ fn _process_turf_start() -> Result<(), String> {
 					_ = super::katmos::equalize_info_sender().try_send(high_pressure_turfs);
 				}
 			}
-			{
-				//let it gooooo
-				rayon::spawn(planet_process);
-			}
 			drop(task_lock);
 		});
 	});
@@ -206,7 +205,6 @@ fn _process_turf_start() -> Result<(), String> {
 }
 
 fn planet_process() {
-	let task_lock = TASKS.read();
 	with_turf_gases_read(|arena| {
 		GasArena::with_all_mixtures(|all_mixtures| {
 			with_planetary_atmos(|map| {
@@ -245,7 +243,6 @@ fn planet_process() {
 			})
 		})
 	});
-	drop(task_lock)
 }
 
 // Compares with neighbors, returning early if any of them are valid.

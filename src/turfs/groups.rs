@@ -26,6 +26,7 @@ pub fn equalize_groups_sender() -> flume::Sender<BTreeSet<NodeIndex>> {
 
 #[hook("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
 fn _groups_hook(remaining: Value) {
+	rebuild_turf_graph()?;
 	let group_pressure_goal = src
 		.get_number(byond_string!("excited_group_pressure_goal"))
 		.unwrap_or(0.5);

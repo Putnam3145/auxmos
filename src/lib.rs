@@ -147,11 +147,11 @@ fn _temperature_share_hook() {
 				args[1].as_number().unwrap_or_default(),
 			)))
 		}),
-		4 => with_mix_mut(src, |mix| {
+		3 => with_mix_mut(src, |mix| {
 			Ok(Value::from(mix.temperature_share_non_gas(
+				args[0].as_number().unwrap_or_default(),
 				args[1].as_number().unwrap_or_default(),
 				args[2].as_number().unwrap_or_default(),
-				args[3].as_number().unwrap_or_default(),
 			)))
 		}),
 		_ => Err(runtime!("Invalid args for temperature_share")),

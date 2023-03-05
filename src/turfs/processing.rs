@@ -24,14 +24,9 @@ lazy_static::lazy_static! {
 }
 
 #[derive(Copy, Clone)]
-#[allow(unused)]
 struct SSairInfo {
 	fdm_max_steps: i32,
-	equalize_turf_limit: usize,
-	equalize_hard_turf_limit: usize,
 	equalize_enabled: bool,
-	group_pressure_goal: f32,
-	planet_enabled: bool,
 }
 
 fn with_processing_callback_receiver<T>(f: impl Fn(&flume::Receiver<Box<SSairInfo>>) -> T) -> T {
@@ -78,12 +73,6 @@ fn _process_turf_notify() {
 	let fdm_max_steps = src
 		.get_number(byond_string!("share_max_steps"))
 		.unwrap_or(1.0) as i32;
-	let equalize_turf_limit = src
-		.get_number(byond_string!("equalize_turf_limit"))
-		.unwrap_or(100.0) as usize;
-	let equalize_hard_turf_limit = src
-		.get_number(byond_string!("equalize_hard_turf_limit"))
-		.unwrap_or(2000.0) as usize;
 	let equalize_enabled = cfg!(feature = "fastmos")
 		&& src
 			.get_number(byond_string!("equalize_enabled"))
@@ -95,20 +84,9 @@ fn _process_turf_notify() {
 					std::column!()
 				)
 			})? != 0.0;
-	let group_pressure_goal = src
-		.get_number(byond_string!("excited_group_pressure_goal"))
-		.unwrap_or(0.5);
-	let planet_enabled: bool = src
-		.get_number(byond_string!("planet_equalize_enabled"))
-		.unwrap_or(1.0)
-		!= 0.0;
 	drop(sender.try_send(Box::new(SSairInfo {
 		fdm_max_steps,
-		equalize_turf_limit,
-		equalize_hard_turf_limit,
 		equalize_enabled,
-		group_pressure_goal,
-		planet_enabled,
 	})));
 	Ok(Value::null())
 }
@@ -205,8 +183,10 @@ fn _process_turf_start() -> Result<(), String> {
 }
 
 fn planet_process() {
-	with_turf_gases_read(|arena| {
-		GasArena::with_all_mixtures(|all_mixtures| {
+	with_turf_gases_read_fallible(|arena| {
+		let Some(arena) = arena else {return;};
+		GasArena::with_all_mixtures_fallible(|all_mixtures| {
+			let Some(all_mixtures) = all_mixtures else {return;};
 			with_planetary_atmos(|map| {
 				arena
 					.map
@@ -342,12 +322,14 @@ fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (BTreeSet<NodeIndex>, BTre
 	let mut low_pressure_turfs: BTreeSet<NodeIndex> = Default::default();
 	let mut high_pressure_turfs: BTreeSet<NodeIndex> = Default::default();
 	let mut cur_count = 1;
-	with_turf_gases_read(|arena| {
-		loop {
-			if cur_count > fdm_max_steps || check_turfs_dirty() {
-				break;
-			}
-			GasArena::with_all_mixtures(|all_mixtures| {
+	loop {
+		if cur_count > fdm_max_steps || check_turfs_dirty() {
+			break;
+		}
+		with_turf_gases_read_fallible(|arena| {
+			let Some(arena) = arena else {return;};
+			GasArena::with_all_mixtures_fallible(|all_mixtures| {
+				let Some(all_mixtures) = all_mixtures else {return;};
 				let turfs_to_save = arena
 					.map
 					/*
@@ -451,9 +433,9 @@ fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (BTreeSet<NodeIndex>, BTre
 						});
 				}
 			});
-			cur_count += 1;
-		}
-	});
+		});
+		cur_count += 1;
+	}
 	(low_pressure_turfs, high_pressure_turfs)
 }
 
@@ -482,23 +464,31 @@ fn post_process_cell<'a>(
 // update visuals, if it should react, sends a callback if it should.
 fn post_process() {
 	let vis = crate::gas::visibility_copies();
-	with_turf_gases_read(|arena| {
+	with_turf_gases_read_fallible(|arena| {
+		let Some(arena) = arena else {return;};
 		let processables = crate::gas::types::with_reactions(|reactions| {
-			GasArena::with_all_mixtures(|all_mixtures| {
-				arena
-					.map
-					.par_values()
-					.filter_map(|&node_index| {
-						let mix = arena.get(node_index).unwrap();
-						mix.enabled().then_some(mix)
-					})
-					.filter_map(|mixture| post_process_cell(mixture, &vis, all_mixtures, reactions))
-					.collect::<Vec<_>>()
+			GasArena::with_all_mixtures_fallible(|all_mixtures| {
+				let Some(all_mixtures) = all_mixtures else {return None;};
+				Some(
+					arena
+						.map
+						.par_values()
+						.filter_map(|&node_index| {
+							let mix = arena.get(node_index).unwrap();
+							mix.enabled().then_some(mix)
+						})
+						.filter_map(|mixture| {
+							post_process_cell(mixture, &vis, all_mixtures, reactions)
+						})
+						.collect::<Vec<_>>(),
+				)
 			})
 		});
-		processables
-			.into_par_iter()
-			.for_each(|(tmix, should_update_vis, should_react)| {
+		if processables.is_none() {
+			return;
+		}
+		processables.unwrap().into_par_iter().for_each(
+			|(tmix, should_update_vis, should_react)| {
 				let sender = byond_callback_sender();
 				let id = tmix.id;
 
@@ -527,6 +517,7 @@ fn post_process() {
 					//update again later
 					tmix.invalidate_vis_cache();
 				}
-			});
+			},
+		);
 	});
 }

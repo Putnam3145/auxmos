@@ -91,6 +91,17 @@ impl GasArena {
 	{
 		f(GAS_MIXTURES.read().as_ref().unwrap())
 	}
+
+	/// Locks the gas arena and and runs the given closure with it locked, fails if it can't acquire a lock in 30ms.
+	/// # Panics
+	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
+	pub fn with_all_mixtures_fallible<T, F>(f: F) -> T
+	where
+		F: FnOnce(Option<&[RwLock<Mixture>]>) -> T,
+	{
+		let gases = GAS_MIXTURES.try_read_for(std::time::Duration::from_millis(30));
+		f(gases.as_ref().unwrap().as_ref().map(|vec| vec.as_slice()))
+	}
 	/// Read locks the given gas mixture and runs the given closure on it.
 	/// # Errors
 	/// If no such gas mixture exists or the closure itself errors.

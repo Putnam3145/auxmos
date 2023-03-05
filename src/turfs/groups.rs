@@ -72,20 +72,20 @@ fn excited_group_processing(
 ) -> (usize, bool) {
 	let mut found_turfs: HashSet<NodeIndex, FxBuildHasher> = Default::default();
 	let mut is_cancelled = false;
-	with_turf_gases_read(|arena| {
-		for initial_turf in low_pressure_turfs {
-			if found_turfs.contains(&initial_turf) {
-				continue;
-			}
+	for initial_turf in low_pressure_turfs {
+		if found_turfs.contains(&initial_turf) {
+			continue;
+		}
 
-			if start_time.elapsed() >= remaining_time || check_turfs_dirty() {
-				is_cancelled = true;
-				return;
-			}
+		if start_time.elapsed() >= remaining_time || check_turfs_dirty() {
+			is_cancelled = true;
+			break;
+		}
 
-			let Some(initial_mix_ref) = arena.get(initial_turf) else { continue; };
+		with_turf_gases_read(|arena| {
+			let Some(initial_mix_ref) = arena.get(initial_turf) else { return; };
 			if !initial_mix_ref.enabled() {
-				continue;
+				return;
 			}
 
 			let mut border_turfs: VecDeque<NodeIndex> = VecDeque::with_capacity(40);
@@ -134,7 +134,7 @@ fn excited_group_processing(
 						.for_each(|mix_lock| mix_lock.write().copy_from_mutable(&fully_mixed));
 				}
 			});
-		}
-	});
+		});
+	}
 	(found_turfs.len(), is_cancelled)
 }

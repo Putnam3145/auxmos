@@ -24,7 +24,7 @@ use fxhash::FxBuildHasher;
 
 use bitflags::bitflags;
 
-use parking_lot::{const_mutex, const_rwlock, Mutex, RwLock};
+use parking_lot::{const_mutex, const_rwlock, Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef, Direction};
 
@@ -421,6 +421,14 @@ where
 	f(TURF_GASES.read().as_ref().unwrap())
 }
 
+fn with_turf_gases_read_fallible<T, F>(f: F) -> T
+where
+	F: FnOnce(Option<&TurfGases>) -> T,
+{
+	let turfs = TURF_GASES.try_read_for(std::time::Duration::from_millis(30));
+	f(turfs.as_ref().unwrap().as_ref())
+}
+
 fn with_turf_gases_write<T, F>(f: F) -> T
 where
 	F: FnOnce(&mut TurfGases) -> T,
@@ -443,11 +451,11 @@ where
 	f(PLANETARY_ATMOS.read().as_ref().unwrap())
 }
 
-fn with_planetary_atmos_write<T, F>(f: F) -> T
+fn with_planetary_atmos_upgradeable_read<T, F>(f: F) -> T
 where
-	F: FnOnce(&mut IndexMap<u32, Mixture, FxBuildHasher>) -> T,
+	F: FnOnce(RwLockUpgradableReadGuard<Option<IndexMap<u32, Mixture, FxBuildHasher>>>) -> T,
 {
-	f(PLANETARY_ATMOS.write().as_mut().unwrap())
+	f(PLANETARY_ATMOS.upgradable_read())
 }
 
 fn rebuild_turf_graph() -> Result<(), Runtime> {
@@ -501,16 +509,27 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
 			if is_planet != 0.0 {
 				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
-					with_planetary_atmos_write(|map| {
+					with_planetary_atmos_upgradeable_read(|lock| {
 						to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
-						let entry = map
-							.entry(to_insert.planetary_atmos.unwrap())
-							.or_insert_with(|| {
+						if lock
+							.as_ref()
+							.unwrap()
+							.contains_key(&to_insert.planetary_atmos.unwrap())
+						{
+							return;
+						}
+
+						let mut write =
+							parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(lock);
+
+						write
+							.as_mut()
+							.unwrap()
+							.insert(to_insert.planetary_atmos.unwrap(), {
 								let mut gas = to_insert.get_gas_copy();
 								gas.mark_immutable();
 								gas
 							});
-						entry.mark_immutable();
 					});
 				}
 			}

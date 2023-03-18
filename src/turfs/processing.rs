@@ -44,6 +44,7 @@ fn _thread_running_hook() {
 
 #[hook("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
 fn _finish_process_turfs() {
+	rebuild_turf_graph()?;
 	let arg_limit = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf finishing: 0"))?
@@ -56,11 +57,7 @@ fn _finish_process_turfs() {
 				std::column!()
 			)
 		})?;
-	let processing_callbacks_unfinished = process_callbacks_for_millis(arg_limit as u64);
-	if TASKS.try_write().is_some() {
-		rebuild_turf_graph()?;
-	}
-	if processing_callbacks_unfinished {
+	if process_callbacks_for_millis(arg_limit as u64) {
 		Ok(Value::from(true))
 	} else {
 		Ok(Value::from(false))
@@ -168,12 +165,12 @@ fn _process_turf_start() -> Result<(), String> {
 				planet_process();
 			}
 			{
-				_ = super::groups::equalize_groups_sender().try_send(low_pressure_turfs);
+				_ = super::groups::send_to_groups(low_pressure_turfs);
 			}
 			if info.equalize_enabled {
 				#[cfg(feature = "fastmos")]
 				{
-					_ = super::katmos::equalize_info_sender().try_send(high_pressure_turfs);
+					_ = super::katmos::send_to_equalize(high_pressure_turfs);
 				}
 			}
 			drop(task_lock);
@@ -312,15 +309,15 @@ fn process_cell(
 }
 
 // Solving the heat equation using a Finite Difference Method, an iterative stencil loop.
-fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (BTreeSet<NodeIndex>, BTreeSet<NodeIndex>) {
+fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (BTreeSet<TurfID>, BTreeSet<TurfID>) {
 	/*
 		This is the replacement system for LINDA. LINDA requires a lot of bookkeeping,
 		which, when coefficient-wise operations are this fast, is all just unnecessary overhead.
 		This is a much simpler FDM system, basically like LINDA but without its most important feature,
 		sleeping turfs, which is why I've renamed it to fdm.
 	*/
-	let mut low_pressure_turfs: BTreeSet<NodeIndex> = Default::default();
-	let mut high_pressure_turfs: BTreeSet<NodeIndex> = Default::default();
+	let mut low_pressure_turfs: BTreeSet<TurfID> = Default::default();
+	let mut high_pressure_turfs: BTreeSet<TurfID> = Default::default();
 	let mut cur_count = 1;
 	loop {
 		if cur_count > fdm_max_steps || check_turfs_dirty() {
@@ -394,18 +391,18 @@ fn fdm(fdm_max_steps: i32, equalize_enabled: bool) -> (BTreeSet<NodeIndex>, BTre
 								to do any more and we don't need to send the
 								value to byond, so we don't. However, if we do...
 							*/
-							(i, pressure_diffs, max_diff)
+							(m.id, pressure_diffs, max_diff, i)
 						})
 					})
-					.partition(|&(_, _, max_diff)| max_diff <= 5.0);
+					.partition(|&(_, _, max_diff, _)| max_diff <= 5.0);
 
-				high_pressure_turfs.par_extend(high_pressure.par_iter().map(|(i, _, _)| i));
-				low_pressure_turfs.par_extend(low_pressure.par_iter().map(|(i, _, _)| i));
+				high_pressure_turfs.par_extend(high_pressure.par_iter().map(|(i, _, _, _)| i));
+				low_pressure_turfs.par_extend(low_pressure.par_iter().map(|(i, _, _, _)| i));
 				//tossing things around is already handled by katmos, so we don't need to do it here.
 				if !equalize_enabled {
 					high_pressure
 						.into_par_iter()
-						.filter_map(|(node_id, pressures, _)| {
+						.filter_map(|(_, pressures, _, node_id)| {
 							Some((arena.get(node_id)?.id, pressures))
 						})
 						.for_each(|(id, diffs)| {

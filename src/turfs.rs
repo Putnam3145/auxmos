@@ -34,7 +34,7 @@ use std::time::Duration;
 use std::{mem::drop, sync::atomic::AtomicU64};
 
 bitflags! {
-	#[derive(Default)]
+	#[derive(Default, Clone, Copy, PartialEq, Eq)]
 	pub struct Directions: u8 {
 		const NORTH = 0b1;
 		const SOUTH = 0b10;
@@ -42,15 +42,15 @@ bitflags! {
 		const WEST	= 0b1000;
 		const UP 	= 0b10000;
 		const DOWN 	= 0b100000;
-		const ALL_CARDINALS = Self::NORTH.bits | Self::SOUTH.bits | Self::EAST.bits | Self::WEST.bits;
-		const ALL_CARDINALS_MULTIZ = Self::NORTH.bits | Self::SOUTH.bits | Self::EAST.bits | Self::WEST.bits | Self::UP.bits | Self::DOWN.bits;
+		const ALL_CARDINALS = Self::NORTH.bits() | Self::SOUTH.bits() | Self::EAST.bits() | Self::WEST.bits();
+		const ALL_CARDINALS_MULTIZ = Self::NORTH.bits() | Self::SOUTH.bits() | Self::EAST.bits() | Self::WEST.bits() | Self::UP.bits() | Self::DOWN.bits();
 	}
 
 	#[derive(Default)]
 	pub struct SimulationFlags: u8 {
 		const SIMULATION_DIFFUSE = 0b1;
 		const SIMULATION_ALL = 0b10;
-		const SIMULATION_ANY = Self::SIMULATION_DIFFUSE.bits | Self::SIMULATION_ALL.bits;
+		const SIMULATION_ANY = Self::SIMULATION_DIFFUSE.bits() | Self::SIMULATION_ALL.bits();
 	}
 
 	#[derive(Default)]
@@ -58,7 +58,7 @@ bitflags! {
 		const ATMOS_ADJACENT_FIRELOCK = 0b10;
 	}
 
-	#[derive(Default)]
+	#[derive(Default, Clone, Copy)]
 	pub struct DirtyFlags: u8 {
 		const DIRTY_MIX_REF = 0b1;
 		const DIRTY_ADJACENT = 0b10;
@@ -283,8 +283,16 @@ impl TurfGases {
 	}
 
 	#[allow(unused)]
-	pub fn get_id(&self, idx: &TurfID) -> Option<&NodeIndex> {
-		self.map.get(idx)
+	pub fn get_from_id(&self, idx: TurfID) -> Option<&TurfMixture> {
+		self.map
+			.get(&idx)
+			.map(|&idx| self.graph.node_weight(idx))
+			.flatten()
+	}
+
+	#[allow(unused)]
+	pub fn get_id(&self, idx: TurfID) -> Option<NodeIndex> {
+		self.map.get(&idx).map(|idx| *idx)
 	}
 
 	pub fn adjacent_node_ids(&self, index: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
@@ -686,7 +694,7 @@ impl Iterator for AdjacentTileIDs {
 				return None;
 			}
 			//SAFETY: count can never be invalid
-			let dir = unsafe { Directions::from_bits_unchecked(1 << self.count) };
+			let dir = Directions::from_bits_retain(1 << self.count);
 			self.count += 1;
 			if self.adj.contains(dir) {
 				return Some((

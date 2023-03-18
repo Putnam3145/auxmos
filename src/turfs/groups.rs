@@ -4,24 +4,21 @@ use coarsetime::{Duration, Instant};
 
 use std::collections::{BTreeSet, HashSet, VecDeque};
 
-lazy_static::lazy_static! {
-	static ref GROUPS_CHANNEL: (
-		flume::Sender<BTreeSet<NodeIndex>>,
-		flume::Receiver<BTreeSet<NodeIndex>>
-	) = flume::bounded(1);
-}
+use parking_lot::{const_mutex, Mutex};
+
+static GROUPS_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = const_mutex(None);
 
 #[shutdown]
 fn flush_groups_channel() {
-	with_groups_info_receiver(|recv| _ = recv.try_recv())
+	*GROUPS_CHANNEL.lock() = None;
 }
 
-fn with_groups_info_receiver<T>(f: impl Fn(&flume::Receiver<BTreeSet<NodeIndex>>) -> T) -> T {
-	f(&GROUPS_CHANNEL.1)
+fn with_groups<T>(f: impl Fn(Option<BTreeSet<TurfID>>) -> T) -> T {
+	f(GROUPS_CHANNEL.lock().take())
 }
 
-pub fn equalize_groups_sender() -> flume::Sender<BTreeSet<NodeIndex>> {
-	GROUPS_CHANNEL.0.clone()
+pub fn send_to_groups(sent: BTreeSet<TurfID>) {
+	GROUPS_CHANNEL.lock().replace(sent);
 }
 
 #[hook("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
@@ -32,8 +29,8 @@ fn _groups_hook(remaining: Value) {
 		.unwrap_or(0.5);
 	let remaining_time = Duration::from_millis(remaining.as_number().unwrap_or(50.0) as u64);
 	let start_time = Instant::now();
-	let (num_eq, is_cancelled) = with_groups_info_receiver(|recv| {
-		if let Ok(high_pressure_turfs) = recv.try_recv() {
+	let (num_eq, is_cancelled) = with_groups(|thing| {
+		if let Some(high_pressure_turfs) = thing {
 			excited_group_processing(
 				group_pressure_goal,
 				high_pressure_turfs,
@@ -67,10 +64,10 @@ fn _groups_hook(remaining: Value) {
 // Finds small differences in turf pressures and equalizes them.
 fn excited_group_processing(
 	pressure_goal: f32,
-	low_pressure_turfs: BTreeSet<NodeIndex>,
+	low_pressure_turfs: BTreeSet<TurfID>,
 	(start_time, remaining_time): (&Instant, Duration),
 ) -> (usize, bool) {
-	let mut found_turfs: HashSet<NodeIndex, FxBuildHasher> = Default::default();
+	let mut found_turfs: HashSet<TurfID, FxBuildHasher> = Default::default();
 	let mut is_cancelled = false;
 	for initial_turf in low_pressure_turfs {
 		if found_turfs.contains(&initial_turf) {
@@ -83,12 +80,12 @@ fn excited_group_processing(
 		}
 
 		with_turf_gases_read(|arena| {
-			let Some(initial_mix_ref) = arena.get(initial_turf) else { return; };
+			let Some(initial_mix_ref) = arena.get_from_id(initial_turf) else { return; };
 			if !initial_mix_ref.enabled() {
 				return;
 			}
 
-			let mut border_turfs: VecDeque<NodeIndex> = VecDeque::with_capacity(40);
+			let mut border_turfs: VecDeque<TurfID> = VecDeque::with_capacity(40);
 			let mut turfs: Vec<&TurfMixture> = Vec::with_capacity(200);
 			let mut min_pressure = initial_mix_ref.return_pressure();
 			let mut max_pressure = min_pressure;
@@ -102,7 +99,7 @@ fn excited_group_processing(
 						break;
 					}
 					if let Some(idx) = border_turfs.pop_front() {
-						let tmix = arena.get(idx).unwrap();
+						let Some(tmix) = arena.get_from_id(idx) else { break; };
 						if let Some(lock) = all_mixtures.get(tmix.mix) {
 							let mix = lock.read();
 							let pressure = mix.return_pressure();
@@ -117,9 +114,11 @@ fn excited_group_processing(
 							fully_mixed.merge(&mix);
 							fully_mixed.volume += mix.volume;
 							arena
-								.adjacent_node_ids(idx)
+								.adjacent_turf_ids(arena.get_id(idx).unwrap())
 								.filter(|&loc| found_turfs.insert(loc))
-								.filter(|&loc| arena.get(loc).filter(|b| b.enabled()).is_some())
+								.filter(|&loc| {
+									arena.get_from_id(loc).filter(|b| b.enabled()).is_some()
+								})
 								.for_each(|loc| border_turfs.push_back(loc));
 						}
 					} else {

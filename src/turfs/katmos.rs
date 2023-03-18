@@ -20,24 +20,21 @@ use std::{
 	},
 };
 
-lazy_static::lazy_static! {
-	static ref EQUALIZE_CHANNEL: (
-		flume::Sender<BTreeSet<NodeIndex>>,
-		flume::Receiver<BTreeSet<NodeIndex>>
-	) = flume::bounded(1);
-}
+use parking_lot::{const_mutex, Mutex};
+
+static EQUALIZE_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = const_mutex(None);
 
 #[shutdown]
-fn flush_eq_channel() {
-	with_equalize_info_receiver(|recv| _ = recv.try_recv())
+fn flush_groups_channel() {
+	*EQUALIZE_CHANNEL.lock() = None;
 }
 
-fn with_equalize_info_receiver<T>(f: impl Fn(&flume::Receiver<BTreeSet<NodeIndex>>) -> T) -> T {
-	f(&EQUALIZE_CHANNEL.1)
+fn with_equalizes<T>(f: impl Fn(Option<BTreeSet<TurfID>>) -> T) -> T {
+	f(EQUALIZE_CHANNEL.lock().take())
 }
 
-pub fn equalize_info_sender() -> flume::Sender<BTreeSet<NodeIndex>> {
-	EQUALIZE_CHANNEL.0.clone()
+pub fn send_to_equalize(sent: BTreeSet<TurfID>) {
+	EQUALIZE_CHANNEL.lock().replace(sent);
 }
 
 #[derive(Copy, Clone)]
@@ -538,18 +535,19 @@ fn explosively_depressurize(
 // Clippy go away, this type is only used once
 #[allow(clippy::type_complexity)]
 fn flood_fill_zones(
-	index: NodeIndex,
+	index_node: NodeIndex,
+	index_turf: TurfID,
 	equalize_hard_turf_limit: usize,
-	found_turfs: &mut HashSet<NodeIndex, FxBuildHasher>,
+	found_turfs: &mut HashSet<TurfID, FxBuildHasher>,
 	arena: &TurfGases,
 ) -> Option<(DiGraphMap<NodeIndex, Cell<f32>>, f32)> {
 	let mut turf_graph: DiGraphMap<NodeIndex, Cell<f32>> = Default::default();
 	let mut border_turfs: std::collections::VecDeque<NodeIndex> = Default::default();
 	let sender = byond_callback_sender();
 	let mut total_moles = 0.0_f32;
-	turf_graph.add_node(index);
-	border_turfs.push_back(index);
-	found_turfs.insert(index);
+	turf_graph.add_node(index_node);
+	border_turfs.push_back(index_node);
+	found_turfs.insert(index_turf);
 	let mut ignore_zone = false;
 	while let Some(cur_index) = border_turfs.pop_front() {
 		let cur_turf = arena.get(cur_index).unwrap();
@@ -564,7 +562,7 @@ fn flood_fill_zones(
 			if adj_mixture.enabled() {
 				turf_graph.add_edge(cur_index, adj_index, Cell::new(0.0));
 			}
-			if found_turfs.insert(adj_index) {
+			if found_turfs.insert(adj_mixture.id) {
 				if adj_mixture.enabled() {
 					border_turfs.push_back(adj_index);
 				}
@@ -759,8 +757,8 @@ fn _equalize_hook(remaining: Value) {
 		!= 0.0;
 	let remaining_time = Duration::from_millis(remaining.as_number().unwrap_or(50.0) as u64);
 	let start_time = Instant::now();
-	let (num_eq, is_cancelled) = with_equalize_info_receiver(|recv| {
-		if let Ok(high_pressure_turfs) = recv.try_recv() {
+	let (num_eq, is_cancelled) = with_equalizes(|thing| {
+		if let Some(high_pressure_turfs) = thing {
 			equalize(
 				equalize_hard_turf_limit,
 				&high_pressure_turfs,
@@ -796,34 +794,39 @@ fn _equalize_hook(remaining: Value) {
 
 fn equalize(
 	equalize_hard_turf_limit: usize,
-	high_pressure_turfs: &BTreeSet<NodeIndex>,
+	high_pressure_turfs: &BTreeSet<TurfID>,
 	_planet_enabled: bool,
 	(start_time, remaining_time): (&Instant, Duration),
 ) -> (usize, bool) {
 	let turfs_processed: AtomicUsize = AtomicUsize::new(0);
 	let is_cancelled = with_turf_gases_read(|arena| {
-		let mut found_turfs: HashSet<NodeIndex, FxBuildHasher> = Default::default();
+		let mut found_turfs: HashSet<TurfID, FxBuildHasher> = Default::default();
 		let zoned_turfs = high_pressure_turfs
 			.iter()
-			.filter_map(|&cur_index| {
+			.filter_map(|&cur_index_turf| {
 				//is this turf already visited?
-				if found_turfs.contains(&cur_index) {
+				if found_turfs.contains(&cur_index_turf) {
 					return None;
 				};
 
 				//does this turf exists/enabled/have adjacencies?
-				let cur_mixture = arena.get(cur_index)?;
-				if !cur_mixture.enabled() || arena.adjacent_node_ids(cur_index).next().is_none() {
+				let cur_mixture = arena.get_from_id(cur_index_turf)?;
+				let cur_index_node = arena.get_id(cur_index_turf)?;
+				if !cur_mixture.enabled()
+					|| arena.adjacent_node_ids(cur_index_node).next().is_none()
+				{
 					return None;
 				}
 
 				let is_unshareable = GasArena::with_all_mixtures(|all_mixtures| {
 					let our_moles = all_mixtures[cur_mixture.mix].read().total_moles();
 					our_moles < 10.0
-						|| arena.adjacent_mixes(cur_index, all_mixtures).all(|lock| {
-							(lock.read().total_moles() - our_moles).abs()
-								< MINIMUM_MOLES_DELTA_TO_MOVE
-						})
+						|| arena
+							.adjacent_mixes(cur_index_node, all_mixtures)
+							.all(|lock| {
+								(lock.read().total_moles() - our_moles).abs()
+									< MINIMUM_MOLES_DELTA_TO_MOVE
+							})
 				});
 
 				//does this turf or its adjacencies have enough moles to share?
@@ -831,7 +834,13 @@ fn equalize(
 					return None;
 				}
 
-				flood_fill_zones(cur_index, equalize_hard_turf_limit, &mut found_turfs, arena)
+				flood_fill_zones(
+					cur_index_node,
+					cur_index_turf,
+					equalize_hard_turf_limit,
+					&mut found_turfs,
+					arena,
+				)
 			})
 			.collect::<Vec<_>>();
 

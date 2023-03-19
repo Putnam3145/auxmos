@@ -18,7 +18,7 @@ fn with_groups<T>(f: impl Fn(Option<BTreeSet<TurfID>>) -> T) -> T {
 }
 
 pub fn send_to_groups(sent: BTreeSet<TurfID>) {
-	GROUPS_CHANNEL.lock().replace(sent);
+	GROUPS_CHANNEL.try_lock().map(|mut opt| opt.replace(sent));
 }
 
 #[hook("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]

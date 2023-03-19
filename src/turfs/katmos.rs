@@ -34,7 +34,7 @@ fn with_equalizes<T>(f: impl Fn(Option<BTreeSet<TurfID>>) -> T) -> T {
 }
 
 pub fn send_to_equalize(sent: BTreeSet<TurfID>) {
-	EQUALIZE_CHANNEL.lock().replace(sent);
+	EQUALIZE_CHANNEL.try_lock().map(|mut opt| opt.replace(sent));
 }
 
 #[derive(Copy, Clone)]

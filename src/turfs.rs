@@ -286,13 +286,12 @@ impl TurfGases {
 	pub fn get_from_id(&self, idx: TurfID) -> Option<&TurfMixture> {
 		self.map
 			.get(&idx)
-			.map(|&idx| self.graph.node_weight(idx))
-			.flatten()
+			.and_then(|&idx| self.graph.node_weight(idx))
 	}
 
 	#[allow(unused)]
 	pub fn get_id(&self, idx: TurfID) -> Option<NodeIndex> {
-		self.map.get(&idx).map(|idx| *idx)
+		self.map.get(&idx).copied()
 	}
 
 	pub fn adjacent_node_ids(&self, index: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {

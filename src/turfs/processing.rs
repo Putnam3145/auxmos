@@ -165,12 +165,12 @@ fn _process_turf_start() -> Result<(), String> {
 				planet_process();
 			}
 			{
-				_ = super::groups::send_to_groups(low_pressure_turfs);
+				super::groups::send_to_groups(low_pressure_turfs);
 			}
 			if info.equalize_enabled {
 				#[cfg(feature = "fastmos")]
 				{
-					_ = super::katmos::send_to_equalize(high_pressure_turfs);
+					super::katmos::send_to_equalize(high_pressure_turfs);
 				}
 			}
 			drop(task_lock);

@@ -10,7 +10,7 @@ edition = "2018"
 proc-macro = true
 
 [dependencies]
-inventory = "0.3.4"
+inventory = "0.3.6"
 quote = "1.0"
 proc-macro2 = "1.0"
 

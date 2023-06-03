@@ -745,7 +745,7 @@ fn send_pressure_differences(
 	}
 }
 
-#[hook("/datum/controller/subsystem/air/proc/equalize_turfs_auxtools")]
+#[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
 fn _equalize_hook(remaining: Value) {
 	rebuild_turf_graph()?;
 	let equalize_hard_turf_limit = src

@@ -66,6 +66,7 @@ fn _finish_process_turfs() {
 
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
 fn _process_turf_notify() {
+	rebuild_turf_graph()?;
 	let sender = processing_callbacks_sender();
 	let fdm_max_steps = src
 		.get_number(byond_string!("share_max_steps"))

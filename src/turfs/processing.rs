@@ -42,9 +42,14 @@ fn _thread_running_hook() {
 	Ok(Value::from(TASKS.try_write().is_none()))
 }
 
+#[hook("/datum/controller/subsystem/air/proc/update_adjacency_graph")]
+fn _rebuild_turf_graph_hook() {
+	rebuild_turf_graph()?;
+	Ok(Value::null())
+}
+
 #[hook("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
 fn _finish_process_turfs() {
-	rebuild_turf_graph()?;
 	let arg_limit = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf finishing: 0"))?
@@ -66,7 +71,6 @@ fn _finish_process_turfs() {
 
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
 fn _process_turf_notify() {
-	rebuild_turf_graph()?;
 	let sender = processing_callbacks_sender();
 	let fdm_max_steps = src
 		.get_number(byond_string!("share_max_steps"))

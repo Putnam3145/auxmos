@@ -22,7 +22,7 @@ lazy_static::lazy_static! {
 }
 
 #[init(partial)]
-fn _initialize_heat_statics() -> Result<(), String> {
+fn initialize_heat_statics() -> Result<(), String> {
 	*TURF_HEAT.write() = Some(TurfHeat {
 		graph: StableDiGraph::with_capacity(650_250, 1_300_500),
 		map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
@@ -31,7 +31,7 @@ fn _initialize_heat_statics() -> Result<(), String> {
 }
 
 #[shutdown]
-fn _shutdown_turfs() {
+fn shutdown_turfs() {
 	wait_for_tasks();
 	*TURF_HEAT.write() = None;
 }
@@ -225,7 +225,7 @@ pub fn supercond_update_adjacencies(id: u32) -> Result<(), Runtime> {
 }
 
 #[hook("/turf/proc/return_temperature")]
-fn _hook_turf_temperature() {
+fn hook_turf_temperature() {
 	with_turf_heat_read(|arena| -> DMResult {
 		if let Some(&node_index) = arena.get_id(&unsafe { src.raw.data.id }) {
 			let info = arena.get(node_index).unwrap();
@@ -244,7 +244,7 @@ fn _hook_turf_temperature() {
 // Expected function call: process_turf_heat()
 // Returns: TRUE if thread not done, FALSE otherwise
 #[hook("/datum/controller/subsystem/air/proc/process_turf_heat")]
-fn _process_heat_notify() {
+fn process_heat_notify() {
 	/*
 		Replacing LINDA's superconductivity system is this much more brute-force
 		system--it shares heat between turfs and their neighbors,
@@ -280,7 +280,7 @@ fn get_share_energy(delta: f32, cap_1: f32, cap_2: f32) -> f32 {
 
 //Fires the task into the thread pool, once
 #[init(full)]
-fn _process_heat_start() -> Result<(), String> {
+fn process_heat_start() -> Result<(), String> {
 	INIT_HEAT.call_once(|| {
 		rayon::spawn(|| loop {
 			//this will block until process_turf_heat is called

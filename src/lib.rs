@@ -26,13 +26,13 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// Args: (ms). Runs callbacks until time limit is reached. If time limit is omitted, runs all callbacks.
 #[hook("/proc/process_atmos_callbacks")]
-fn _atmos_callback_handle() {
+fn atmos_callback_handle() {
 	auxcallback::callback_processing_hook(&mut args)
 }
 
 /// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
 #[hook("/datum/gas_mixture/proc/__gasmixture_register")]
-fn _register_gasmixture_hook() {
+fn register_gasmixture_hook() {
 	gas::GasArena::register_mix(src)
 }
 
@@ -40,7 +40,7 @@ fn _register_gasmixture_hook() {
 /// This version is only if auxcleanup is not being used; it should be called from /datum/gas_mixture/Del.
 #[cfg(not(feature = "auxcleanup_gas_deletion"))]
 #[hook("/datum/gas_mixture/proc/__gasmixture_unregister")]
-fn _unregister_gasmixture_hook() {
+fn unregister_gasmixture_hook() {
 	gas::GasMixtures::unregister_mix(unsafe { src.raw.data.id });
 	Ok(Value::null())
 }
@@ -48,19 +48,19 @@ fn _unregister_gasmixture_hook() {
 /// Adds the gas mixture's ID to the queue of mixtures that have been deleted, to be reused later. Called automatically on all datum deletion.
 #[cfg(feature = "auxcleanup_gas_deletion")]
 #[datum_del]
-fn _unregister_gasmixture_hook(v: u32) {
+fn unregister_gasmixture_hook(v: u32) {
 	gas::GasArena::unregister_mix(v);
 }
 
 /// Returns: Heat capacity, in J/K (probably).
 #[hook("/datum/gas_mixture/proc/heat_capacity")]
-fn _heat_cap_hook() {
+fn heat_cap_hook() {
 	with_mix(src, |mix| Ok(Value::from(mix.heat_capacity())))
 }
 
 /// Args: (min_heat_cap). Sets the mix's minimum heat capacity.
 #[hook("/datum/gas_mixture/proc/set_min_heat_capacity")]
-fn _min_heat_cap_hook(arg_min: Value) {
+fn min_heat_cap_hook(arg_min: Value) {
 	let min = arg_min.as_number()?;
 	with_mix_mut(src, |mix| {
 		mix.set_min_heat_capacity(min);
@@ -70,37 +70,37 @@ fn _min_heat_cap_hook(arg_min: Value) {
 
 /// Returns: Amount of substance, in moles.
 #[hook("/datum/gas_mixture/proc/total_moles")]
-fn _total_moles_hook() {
+fn total_moles_hook() {
 	with_mix(src, |mix| Ok(Value::from(mix.total_moles())))
 }
 
 /// Returns: the mix's pressure, in kilopascals.
 #[hook("/datum/gas_mixture/proc/return_pressure")]
-fn _return_pressure_hook() {
+fn return_pressure_hook() {
 	with_mix(src, |mix| Ok(Value::from(mix.return_pressure())))
 }
 
 /// Returns: the mix's temperature, in kelvins.
 #[hook("/datum/gas_mixture/proc/return_temperature")]
-fn _return_temperature_hook() {
+fn return_temperature_hook() {
 	with_mix(src, |mix| Ok(Value::from(mix.get_temperature())))
 }
 
 /// Returns: the mix's volume, in liters.
 #[hook("/datum/gas_mixture/proc/return_volume")]
-fn _return_volume_hook() {
+fn return_volume_hook() {
 	with_mix(src, |mix| Ok(Value::from(mix.volume)))
 }
 
 /// Returns: the mix's thermal energy, the product of the mixture's heat capacity and its temperature.
 #[hook("/datum/gas_mixture/proc/thermal_energy")]
-fn _thermal_energy_hook() {
+fn thermal_energy_hook() {
 	with_mix(src, |mix| Ok(Value::from(mix.thermal_energy())))
 }
 
 /// Args: (mixture). Merges the gas from the giver into src, without modifying the giver mix.
 #[hook("/datum/gas_mixture/proc/merge")]
-fn _merge_hook(giver: Value) {
+fn merge_hook(giver: Value) {
 	with_mixes_custom(src, giver, |src_mix, giver_mix| {
 		src_mix.write().merge(&giver_mix.read());
 		Ok(Value::null())
@@ -109,7 +109,7 @@ fn _merge_hook(giver: Value) {
 
 /// Args: (mixture, ratio). Takes the given ratio of gas from src and puts it into the argument mixture. Ratio is a number between 0 and 1.
 #[hook("/datum/gas_mixture/proc/__remove_ratio")]
-fn _remove_ratio_hook(into: Value, ratio_arg: Value) {
+fn remove_ratio_hook(into: Value, ratio_arg: Value) {
 	let ratio = ratio_arg.as_number().unwrap_or_default();
 	with_mixes_mut(src, into, |src_mix, into_mix| {
 		src_mix.remove_ratio_into(ratio, into_mix);
@@ -119,7 +119,7 @@ fn _remove_ratio_hook(into: Value, ratio_arg: Value) {
 
 /// Args: (mixture, amount). Takes the given amount of gas from src and puts it into the argument mixture. Amount is amount of substance in moles.
 #[hook("/datum/gas_mixture/proc/__remove")]
-fn _remove_hook(into: Value, amount_arg: Value) {
+fn remove_hook(into: Value, amount_arg: Value) {
 	let amount = amount_arg.as_number().unwrap_or_default();
 	with_mixes_mut(src, into, |src_mix, into_mix| {
 		src_mix.remove_into(amount, into_mix);
@@ -129,7 +129,7 @@ fn _remove_hook(into: Value, amount_arg: Value) {
 
 /// Arg: (mixture). Makes src into a copy of the argument mixture.
 #[hook("/datum/gas_mixture/proc/copy_from")]
-fn _copy_from_hook(giver: Value) {
+fn copy_from_hook(giver: Value) {
 	with_mixes_custom(src, giver, |src_mix, giver_mix| {
 		src_mix.write().copy_from_mutable(&giver_mix.read());
 		Ok(Value::null())
@@ -138,7 +138,7 @@ fn _copy_from_hook(giver: Value) {
 
 /// Args: (mixture, conductivity) or (null, conductivity, temperature, heat_capacity). Adjusts temperature of src based on parameters. Returns: temperature of sharer after sharing is complete.
 #[hook("/datum/gas_mixture/proc/temperature_share")]
-fn _temperature_share_hook() {
+fn temperature_share_hook() {
 	let arg_num = args.len();
 	match arg_num {
 		2 => with_mixes_mut(src, &args[0], |src_mix, share_mix| {
@@ -160,7 +160,7 @@ fn _temperature_share_hook() {
 
 /// Returns: a list of the gases in the mixture, associated with their IDs.
 #[hook("/datum/gas_mixture/proc/get_gases")]
-fn _get_gases_hook() {
+fn get_gases_hook() {
 	with_mix(src, |mix| {
 		let gases_list: List = List::new();
 		mix.for_each_gas(|idx, gas| {
@@ -175,7 +175,7 @@ fn _get_gases_hook() {
 
 /// Args: (temperature). Sets the temperature of the mixture. Will be set to 2.7 if it's too low.
 #[hook("/datum/gas_mixture/proc/set_temperature")]
-fn _set_temperature_hook(arg_temp: Value) {
+fn set_temperature_hook(arg_temp: Value) {
 	let v = arg_temp.as_number().map_err(|_| {
 		runtime!(
 			"Attempt to interpret non-number value as number {} {}:{}",
@@ -198,7 +198,7 @@ fn _set_temperature_hook(arg_temp: Value) {
 
 /// Args: (gas_id). Returns the heat capacity from the given gas, in J/K (probably).
 #[hook("/datum/gas_mixture/proc/partial_heat_capacity")]
-fn _partial_heat_capacity(gas_id: Value) {
+fn partial_heat_capacity(gas_id: Value) {
 	with_mix(src, |mix| {
 		Ok(Value::from(
 			mix.partial_heat_capacity(gas_idx_from_value(gas_id)?),
@@ -208,7 +208,7 @@ fn _partial_heat_capacity(gas_id: Value) {
 
 /// Args: (volume). Sets the volume of the gas.
 #[hook("/datum/gas_mixture/proc/set_volume")]
-fn _set_volume_hook(vol_arg: Value) {
+fn set_volume_hook(vol_arg: Value) {
 	let volume = vol_arg.as_number().map_err(|_| {
 		runtime!(
 			"Attempt to interpret non-number value as number {} {}:{}",
@@ -225,7 +225,7 @@ fn _set_volume_hook(vol_arg: Value) {
 
 /// Args: (gas_id). Returns: the amount of substance of the given gas, in moles.
 #[hook("/datum/gas_mixture/proc/get_moles")]
-fn _get_moles_hook(gas_id: Value) {
+fn get_moles_hook(gas_id: Value) {
 	with_mix(src, |mix| {
 		Ok(Value::from(mix.get_moles(gas_idx_from_value(gas_id)?)))
 	})
@@ -233,7 +233,7 @@ fn _get_moles_hook(gas_id: Value) {
 
 /// Args: (gas_id, moles). Sets the amount of substance of the given gas, in moles.
 #[hook("/datum/gas_mixture/proc/set_moles")]
-fn _set_moles_hook(gas_id: Value, amt_val: Value) {
+fn set_moles_hook(gas_id: Value, amt_val: Value) {
 	let vf = amt_val.as_number()?;
 	if !vf.is_finite() {
 		return Err(runtime!("Attempted to set moles to NaN or infinity."));
@@ -248,7 +248,7 @@ fn _set_moles_hook(gas_id: Value, amt_val: Value) {
 }
 /// Args: (gas_id, moles). Adjusts the given gas's amount by the given amount, e.g. (GAS_O2, -0.1) will remove 0.1 moles of oxygen from the mixture.
 #[hook("/datum/gas_mixture/proc/adjust_moles")]
-fn _adjust_moles_hook(id_val: Value, num_val: Value) {
+fn adjust_moles_hook(id_val: Value, num_val: Value) {
 	let vf = num_val.as_number().unwrap_or_default();
 	with_mix_mut(src, |mix| {
 		mix.adjust_moles(gas_idx_from_value(id_val)?, vf);
@@ -258,7 +258,7 @@ fn _adjust_moles_hook(id_val: Value, num_val: Value) {
 
 /// Args: (gas_id, moles, temp). Adjusts the given gas's amount by the given amount, with that gas being treated as if it is at the given temperature.
 #[hook("/datum/gas_mixture/proc/adjust_moles_temp")]
-fn _adjust_moles_temp_hook(id_val: Value, num_val: Value, temp_val: Value) {
+fn adjust_moles_temp_hook(id_val: Value, num_val: Value, temp_val: Value) {
 	let vf = num_val.as_number().unwrap_or_default();
 	let temp = temp_val.as_number().unwrap_or(2.7);
 	if vf < 0.0 {
@@ -280,7 +280,7 @@ fn _adjust_moles_temp_hook(id_val: Value, num_val: Value, temp_val: Value) {
 
 /// Args: (gas_id_1, amount_1, gas_id_2, amount_2, ...). As adjust_moles, but with variadic arguments.
 #[hook("/datum/gas_mixture/proc/adjust_multi")]
-fn _adjust_multi_hook() {
+fn adjust_multi_hook() {
 	if args.len() % 2 != 0 {
 		Err(runtime!(
 			"Incorrect arg len for adjust_multi (not divisible by 2)."
@@ -307,7 +307,7 @@ fn _adjust_multi_hook() {
 
 ///Args: (amount). Adds the given amount to each gas.
 #[hook("/datum/gas_mixture/proc/add")]
-fn _add_hook(num_val: Value) {
+fn add_hook(num_val: Value) {
 	let vf = num_val.as_number().unwrap_or_default();
 	with_mix_mut(src, |mix| {
 		mix.add(vf);
@@ -317,7 +317,7 @@ fn _add_hook(num_val: Value) {
 
 ///Args: (amount). Subtracts the given amount from each gas.
 #[hook("/datum/gas_mixture/proc/subtract")]
-fn _subtract_hook(num_val: Value) {
+fn subtract_hook(num_val: Value) {
 	let vf = num_val.as_number().unwrap_or_default();
 	with_mix_mut(src, |mix| {
 		mix.add(-vf);
@@ -327,7 +327,7 @@ fn _subtract_hook(num_val: Value) {
 
 ///Args: (coefficient). Multiplies all gases by this amount.
 #[hook("/datum/gas_mixture/proc/multiply")]
-fn _multiply_hook(num_val: Value) {
+fn multiply_hook(num_val: Value) {
 	let vf = num_val.as_number().unwrap_or(1.0);
 	with_mix_mut(src, |mix| {
 		mix.multiply(vf);
@@ -337,7 +337,7 @@ fn _multiply_hook(num_val: Value) {
 
 ///Args: (coefficient). Divides all gases by this amount.
 #[hook("/datum/gas_mixture/proc/divide")]
-fn _divide_hook(num_val: Value) {
+fn divide_hook(num_val: Value) {
 	let vf = num_val.as_number().unwrap_or(1.0).recip();
 	with_mix_mut(src, |mix| {
 		mix.multiply(vf);
@@ -347,7 +347,7 @@ fn _divide_hook(num_val: Value) {
 
 ///Args: (mixture, flag, amount). Takes `amount` from src that have the given `flag` and puts them into the given `mixture`. Returns: 0 if gas didn't have any with that flag, 1 if it did.
 #[hook("/datum/gas_mixture/proc/__remove_by_flag")]
-fn _remove_by_flag_hook(into: Value, flag_val: Value, amount_val: Value) {
+fn remove_by_flag_hook(into: Value, flag_val: Value, amount_val: Value) {
 	let flag = flag_val.as_number().map_or(0, |n| n as u32);
 	let amount = amount_val.as_number().unwrap_or(0.0);
 	let pertinent_gases = with_gas_info(|gas_info| {
@@ -391,7 +391,7 @@ fn get_by_flag_hook(flag_val: Value) {
 
 /// Args: (mixture, ratio, gas_list). Takes gases given by `gas_list` and moves `ratio` amount of those gases from `src` into `mixture`.
 #[hook("/datum/gas_mixture/proc/scrub_into")]
-fn _scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
+fn scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
 	let ratio = ratio_v.as_number().map_err(|_| {
 		runtime!(
 			"Attempt to interpret non-number value as number {} {}:{}",
@@ -422,7 +422,7 @@ fn _scrub_into_hook(into: Value, ratio_v: Value, gas_list: Value) {
 
 /// Marks the mix as immutable, meaning it will never change. This cannot be undone.
 #[hook("/datum/gas_mixture/proc/mark_immutable")]
-fn _mark_immutable_hook() {
+fn mark_immutable_hook() {
 	with_mix_mut(src, |mix| {
 		mix.mark_immutable();
 		Ok(Value::null())
@@ -431,7 +431,7 @@ fn _mark_immutable_hook() {
 
 /// Clears the gas mixture my removing all of its gases.
 #[hook("/datum/gas_mixture/proc/clear")]
-fn _clear_hook() {
+fn clear_hook() {
 	with_mix_mut(src, |mix| {
 		mix.clear();
 		Ok(Value::null())
@@ -440,7 +440,7 @@ fn _clear_hook() {
 
 /// Returns: true if the two mixtures are different enough for processing, false otherwise.
 #[hook("/datum/gas_mixture/proc/compare")]
-fn _compare_hook(other: Value) {
+fn compare_hook(other: Value) {
 	with_mixes(src, other, |gas_one, gas_two| {
 		Ok(Value::from(
 			gas_one.temperature_compare(gas_two)
@@ -451,7 +451,7 @@ fn _compare_hook(other: Value) {
 
 /// Args: (holder). Runs all reactions on this gas mixture. Holder is used by the reactions, and can be any arbitrary datum or null.
 #[hook("/datum/gas_mixture/proc/react")]
-fn _react_hook(holder: Value) {
+fn react_hook(holder: Value) {
 	let mut ret = ReactionReturn::NO_REACTION;
 	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
 	for reaction in reactions {
@@ -469,7 +469,7 @@ fn _react_hook(holder: Value) {
 
 /// Args: (heat). Adds a given amount of heat to the mixture, i.e. in joules taking into account capacity.
 #[hook("/datum/gas_mixture/proc/adjust_heat")]
-fn _adjust_heat_hook() {
+fn adjust_heat_hook() {
 	with_mix_mut(src, |mix| {
 		mix.adjust_heat(
 			args.get(0)
@@ -490,7 +490,7 @@ fn _adjust_heat_hook() {
 
 /// Args: (mixture, amount). Takes the `amount` given and transfers it from `src` to `mixture`.
 #[hook("/datum/gas_mixture/proc/transfer_to")]
-fn _transfer_hook(other: Value, moles: Value) {
+fn transfer_hook(other: Value, moles: Value) {
 	with_mixes_mut(src, other, |our_mix, other_mix| {
 		other_mix.merge(&our_mix.remove(moles.as_number().map_err(|_| {
 			runtime!(
@@ -506,7 +506,7 @@ fn _transfer_hook(other: Value, moles: Value) {
 
 /// Args: (mixture, ratio). Transfers `ratio` of `src` to `mixture`.
 #[hook("/datum/gas_mixture/proc/transfer_ratio_to")]
-fn _transfer_ratio_hook(other: Value, ratio: Value) {
+fn transfer_ratio_hook(other: Value, ratio: Value) {
 	with_mixes_mut(src, other, |our_mix, other_mix| {
 		other_mix.merge(&our_mix.remove_ratio(ratio.as_number().map_err(|_| {
 			runtime!(
@@ -522,7 +522,7 @@ fn _transfer_ratio_hook(other: Value, ratio: Value) {
 
 /// Args: (mixture). Makes `src` a copy of `mixture`, with volumes taken into account.
 #[hook("/datum/gas_mixture/proc/equalize_with")]
-fn _equalize_with_hook(total: Value) {
+fn equalize_with_hook(total: Value) {
 	with_mixes_custom(src, total, |src_lock, total_lock| {
 		let src_gas = &mut src_lock.write();
 		let vol = src_gas.volume;
@@ -535,7 +535,7 @@ fn _equalize_with_hook(total: Value) {
 
 /// Args: (temperature). Returns: how much fuel for fire is in the mixture at the given temperature. If temperature is omitted, just uses current temperature instead.
 #[hook("/datum/gas_mixture/proc/get_fuel_amount")]
-fn _fuel_amount_hook(temp: Value) {
+fn fuel_amount_hook(temp: Value) {
 	with_mix(src, |air| {
 		Ok(Value::from(temp.as_number().ok().map_or_else(
 			|| air.get_fuel_amount(),
@@ -550,7 +550,7 @@ fn _fuel_amount_hook(temp: Value) {
 
 /// Args: (temperature). Returns: how much oxidizer for fire is in the mixture at the given temperature. If temperature is omitted, just uses current temperature instead.
 #[hook("/datum/gas_mixture/proc/get_oxidation_power")]
-fn _oxidation_power_hook(temp: Value) {
+fn oxidation_power_hook(temp: Value) {
 	with_mix(src, |air| {
 		Ok(Value::from(temp.as_number().ok().map_or_else(
 			|| air.get_oxidation_power(),
@@ -566,7 +566,7 @@ fn _oxidation_power_hook(temp: Value) {
 /// Args: (mixture, ratio, one_way). Shares the given `ratio` of `src` with `mixture`, and, unless `one_way` is truthy, vice versa.
 #[cfg(feature = "zas_hooks")]
 #[hook("/datum/gas_mixture/proc/share_ratio")]
-fn _share_ratio_hook(other_gas: Value, ratio_val: Value, one_way_val: Value) {
+fn share_ratio_hook(other_gas: Value, ratio_val: Value, one_way_val: Value) {
 	let one_way = one_way_val.as_bool().unwrap_or(false);
 	let ratio = ratio_val.as_number().ok().map_or(0.6);
 	let mut inbetween = Mixture::new();
@@ -601,7 +601,7 @@ fn _share_ratio_hook(other_gas: Value, ratio_val: Value, one_way_val: Value) {
 
 /// Args: (list). Takes every gas in the list and makes them all identical, scaled to their respective volumes. The total heat and amount of substance in all of the combined gases is conserved.
 #[hook("/proc/equalize_all_gases_in_list")]
-fn _equalize_all_hook() {
+fn equalize_all_hook() {
 	use std::collections::BTreeSet;
 	let value_list = args
 		.get(0)
@@ -651,18 +651,18 @@ fn _equalize_all_hook() {
 
 /// Returns: the amount of gas mixtures that are attached to a byond gas mixture.
 #[hook("/datum/controller/subsystem/air/proc/get_amt_gas_mixes")]
-fn _hook_amt_gas_mixes() {
+fn hook_amt_gas_mixes() {
 	Ok(Value::from(amt_gases() as f32))
 }
 
 /// Returns: the total amount of gas mixtures in the arena, including "free" ones.
 #[hook("/datum/controller/subsystem/air/proc/get_max_gas_mixes")]
-fn _hook_max_gas_mixes() {
+fn hook_max_gas_mixes() {
 	Ok(Value::from(tot_gases() as f32))
 }
 
 #[hook("/datum/gas_mixture/proc/__auxtools_parse_gas_string")]
-fn _parse_gas_string(string: Value) {
+fn parse_gas_string(string: Value) {
 	let actual_string = string.as_string()?;
 
 	let (_, vec) = parser::parse_gas_string(&actual_string)

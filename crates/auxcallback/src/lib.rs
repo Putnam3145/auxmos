@@ -13,7 +13,7 @@ pub type CallbackReceiver = flume::Receiver<DeferredFunc>;
 static mut CALLBACK_CHANNEL: Option<CallbackChannel> = None;
 
 #[init(partial)]
-fn _start_callbacks() -> Result<(), String> {
+fn start_callbacks() -> Result<(), String> {
 	unsafe {
 		CALLBACK_CHANNEL = Some(flume::bounded(100_000));
 	}
@@ -21,7 +21,7 @@ fn _start_callbacks() -> Result<(), String> {
 }
 
 #[shutdown]
-fn _clean_callbacks() {
+fn clean_callbacks() {
 	unsafe { CALLBACK_CHANNEL = None }
 }
 
@@ -76,7 +76,7 @@ pub fn process_callbacks_for_millis(millis: u64) -> bool {
 /// This has to be manually hooked in the code, e.g.
 /// ```
 /// #[hook("/proc/process_atmos_callbacks")]
-/// fn _atmos_callback_handle() {
+/// fn atmos_callback_handle() {
 ///     auxcallback::callback_processing_hook(args)
 /// }
 /// ```

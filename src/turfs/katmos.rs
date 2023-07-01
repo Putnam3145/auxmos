@@ -746,7 +746,7 @@ fn send_pressure_differences(
 }
 
 #[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
-fn _equalize_hook(remaining: Value) {
+fn equalize_hook(remaining: Value) {
 	let equalize_hard_turf_limit = src
 		.get_number(byond_string!("equalize_hard_turf_limit"))
 		.unwrap_or(2000.0) as usize;

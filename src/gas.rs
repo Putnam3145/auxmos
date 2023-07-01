@@ -66,7 +66,7 @@ fn unregister_mix(i: u32) {
 }
 
 #[init(partial)]
-fn _initialize_gas_mixtures() -> Result<(), String> {
+fn initialize_gas_mixtures() -> Result<(), String> {
 	*GAS_MIXTURES.write() = Some(Vec::with_capacity(240_000));
 	*NEXT_GAS_IDS.write() = Some(Vec::with_capacity(2000));
 	REGISTERED_GAS_MIXES.with(|thing| *thing.borrow_mut() = Some(Default::default()));
@@ -74,7 +74,7 @@ fn _initialize_gas_mixtures() -> Result<(), String> {
 }
 
 #[shutdown]
-fn _shut_down_gases() {
+fn shut_down_gases() {
 	crate::turfs::wait_for_tasks();
 	GAS_MIXTURES.write().as_mut().unwrap().clear();
 	NEXT_GAS_IDS.write().as_mut().unwrap().clear();

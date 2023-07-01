@@ -225,7 +225,7 @@ static GAS_INFO_BY_IDX: RwLock<Option<Vec<GasType>>> = const_rwlock(None);
 static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = const_rwlock(None);
 
 #[init(partial)]
-fn _initialize_gas_info_structs() -> Result<(), String> {
+fn initialize_gas_info_structs() -> Result<(), String> {
 	unsafe {
 		GAS_INFO_BY_STRING = Some(DashMap::with_hasher(FxBuildHasher::default()));
 	};
@@ -235,7 +235,7 @@ fn _initialize_gas_info_structs() -> Result<(), String> {
 }
 
 #[shutdown]
-fn _destroy_gas_info_structs() {
+fn destroy_gas_info_structs() {
 	crate::turfs::wait_for_tasks();
 	unsafe {
 		GAS_INFO_BY_STRING = None;
@@ -252,7 +252,7 @@ fn _destroy_gas_info_structs() {
 }
 
 #[hook("/proc/_auxtools_register_gas")]
-fn _hook_register_gas(gas: Value) {
+fn hook_register_gas(gas: Value) {
 	let gas_id = gas.get_string(byond_string!("id"))?;
 	match {
 		unsafe { GAS_INFO_BY_STRING.as_ref() }
@@ -289,12 +289,12 @@ fn _hook_register_gas(gas: Value) {
 }
 
 #[hook("/proc/auxtools_atmos_init")]
-fn _hook_init() {
+fn hook_init() {
 	let data = Value::globals()
 		.get(byond_string!("gas_data"))?
 		.get_list(byond_string!("datums"))?;
 	for i in 1..=data.len() {
-		_hook_register_gas(
+		hook_register_gas(
 			&Value::null(),
 			&Value::null(),
 			vec![data.get(data.get(i)?)?],
@@ -338,7 +338,7 @@ fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
 }
 
 #[hook("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
-fn _update_reactions() {
+fn update_reactions() {
 	*REACTION_INFO.write() = Some(get_reaction_info());
 	Ok(Value::from(true))
 }
@@ -441,7 +441,7 @@ pub fn update_gas_refs() {
 }
 
 #[hook("/proc/finalize_gas_refs")]
-fn _finalize_gas_refs() {
+fn finalize_gas_refs() {
 	update_gas_refs();
 	Ok(Value::null())
 }
@@ -528,10 +528,10 @@ pub fn register_gas_manually(gas_id: &'static str, specific_heat: f32) {
 
 #[cfg(test)]
 pub fn set_gas_statics_manually() {
-	_initialize_gas_info_structs().unwrap();
+	initialize_gas_info_structs().unwrap();
 }
 
 #[cfg(test)]
 pub fn destroy_gas_statics() {
-	_destroy_gas_info_structs();
+	destroy_gas_info_structs();
 }

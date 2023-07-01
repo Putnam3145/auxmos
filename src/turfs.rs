@@ -393,7 +393,7 @@ pub fn wait_for_tasks() {
 }
 
 #[init(partial)]
-fn _initialize_turf_statics() -> Result<(), String> {
+fn initialize_turf_statics() -> Result<(), String> {
 	// 10x 255x255 zlevels
 	// double that for edges since each turf can have up to 6 edges but eehhhh
 	*TURF_GASES.write() = Some(TurfGases {
@@ -406,7 +406,7 @@ fn _initialize_turf_statics() -> Result<(), String> {
 }
 
 #[shutdown]
-fn _shutdown_turfs() {
+fn shutdown_turfs() {
 	wait_for_tasks();
 	*DIRTY_TURFS.lock() = None;
 	*TURF_GASES.write() = None;
@@ -553,7 +553,7 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 }
 
 #[hook("/turf/proc/update_air_ref")]
-fn _hook_register_turf() {
+fn hook_register_turf() {
 	with_dirty_turfs(|dirty_turfs| {
 		dirty_turfs
 			.entry(unsafe { src.raw.data.id })
@@ -605,7 +605,7 @@ fn update_adjacency_info(id: u32) -> Result<(), Runtime> {
 }
 
 #[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
-fn _hook_infos() {
+fn hook_infos() {
 	with_dirty_turfs(|dirty_turfs| -> Result<(), Runtime> {
 		let e = dirty_turfs.entry(unsafe { src.raw.data.id }).or_default();
 		e.insert(DirtyFlags::DIRTY_ADJACENT);

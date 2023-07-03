@@ -336,8 +336,8 @@ fn explosively_depressurize(
 		turfs.insert(initial_index);
 		while cur_queue_idx < turfs.len() {
 			let cur_index = turfs[cur_queue_idx];
-			let mut had_firelock = false;
 			cur_queue_idx += 1;
+			let mut firelock_considerations = vec![];
 			with_turf_gases_read(|arena| -> Result<(), Runtime> {
 				let cur_mixture = {
 					let maybe = arena.get(cur_index);
@@ -368,19 +368,19 @@ fn explosively_depressurize(
 						if turfs.insert(adj_index)
 							&& flags.contains(AdjacentFlags::ATMOS_ADJACENT_FIRELOCK)
 						{
-							had_firelock = true;
-							unsafe { Value::turf_by_id_unchecked(cur_mixture.id) }.call(
-								"consider_firelocks",
-								&[&unsafe { Value::turf_by_id_unchecked(adj_mixture.id) }],
-							)?;
+							firelock_considerations.push((cur_mixture.id, adj_mixture.id));
 						}
 					}
 				}
 				Ok(())
 			})?;
-			if had_firelock {
-				rebuild_turf_graph()?; // consider_firelocks ought to dirtify it anyway
+			for (cur, adj) in firelock_considerations {
+				unsafe { Value::turf_by_id_unchecked(cur) }.call(
+					"consider_firelocks",
+					&[&unsafe { Value::turf_by_id_unchecked(adj) }],
+				)?;
 			}
+
 			if warned_about_planet_atmos {
 				break;
 			}
@@ -392,8 +392,9 @@ fn explosively_depressurize(
 		return Ok(()); // planet atmos > space
 	}
 
-	with_turf_gases_read(move |arena| {
+	let floor_rip_turfs = with_turf_gases_read(move |arena| {
 		let mut info: HashMap<NodeIndex, Cell<ReducedInfo>, FxBuildHasher> = Default::default();
+		let mut floor_rip_turfs = vec![];
 
 		let mut progression_order = space_turfs
 			.iter()
@@ -524,10 +525,13 @@ fn explosively_depressurize(
 				)?;
 			}
 
-			byond_turf.call("handle_decompression_floor_rip", &[&Value::from(sum)])?;
+			floor_rip_turfs.push((byond_turf, Value::from(sum)));
 		}
-		Ok(())
+		Ok(floor_rip_turfs)
 	})?;
+	for (turf, sum) in floor_rip_turfs {
+		turf.call("handle_decompression_floor_rip", &[&sum])?;
+	}
 
 	Ok(())
 }
@@ -606,8 +610,8 @@ fn planet_equalize(
 	turfs.insert(initial_index);
 	while cur_queue_idx < turfs.len() {
 		let cur_index = turfs[cur_queue_idx];
-		let mut had_firelock = false;
 		cur_queue_idx += 1;
+		let mut firelock_considerations = vec![];
 		with_turf_gases_read(|arena| -> Result<(), Runtime> {
 			let cur_mixture = {
 				let maybe = arena.get(cur_index);
@@ -636,17 +640,16 @@ fn planet_equalize(
 						turfs.insert(*adj_index)
 							&& flags.contains(AdjacentFlags::ATMOS_ADJACENT_FIRELOCK)
 					}) {
-					had_firelock = true;
-					unsafe { Value::turf_by_id_unchecked(cur_mixture.id) }.call(
-						"consider_firelocks",
-						&[&unsafe { Value::turf_by_id_unchecked(adj_mixture.id) }],
-					)?;
+					firelock_considerations.push((cur_mixture.id, adj_mixture.id));
 				}
 			}
 			Ok(())
 		})?;
-		if had_firelock {
-			rebuild_turf_graph()?; // consider_firelocks ought to dirtify it anyway
+		for (cur, adj) in firelock_considerations {
+			unsafe { Value::turf_by_id_unchecked(cur) }.call(
+				"consider_firelocks",
+				&[&unsafe { Value::turf_by_id_unchecked(adj) }],
+			)?;
 		}
 		if warned_about_space {
 			break;
@@ -747,7 +750,6 @@ fn send_pressure_differences(
 
 #[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
 fn equalize_hook(remaining: Value) {
-	rebuild_turf_graph()?;
 	let equalize_hard_turf_limit = src
 		.get_number(byond_string!("equalize_hard_turf_limit"))
 		.unwrap_or(2000.0) as usize;

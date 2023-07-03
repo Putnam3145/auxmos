@@ -408,10 +408,6 @@ fn shutdown_turfs() {
 	*PLANETARY_ATMOS.write() = None;
 }
 
-fn set_turfs_dirty(b: bool) {
-	ANY_TURF_DIRTY.store(b, std::sync::atomic::Ordering::Relaxed);
-}
-
 fn check_turfs_dirty() -> bool {
 	ANY_TURF_DIRTY.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -423,27 +419,11 @@ where
 	f(TURF_GASES.read().as_ref().unwrap())
 }
 
-fn with_turf_gases_read_fallible<T, F>(f: F) -> T
-where
-	F: FnOnce(Option<&TurfGases>) -> T,
-{
-	let turfs = TURF_GASES.try_read_for(std::time::Duration::from_millis(30));
-	f(turfs.as_ref().unwrap().as_ref())
-}
-
 fn with_turf_gases_write<T, F>(f: F) -> T
 where
 	F: FnOnce(&mut TurfGases) -> T,
 {
 	f(TURF_GASES.write().as_mut().unwrap())
-}
-
-fn with_dirty_turfs<T, F>(f: F) -> T
-where
-	F: FnOnce(&mut IndexMap<TurfID, DirtyFlags, FxBuildHasher>) -> T,
-{
-	set_turfs_dirty(true);
-	f(DIRTY_TURFS.lock().as_mut().unwrap())
 }
 
 fn with_planetary_atmos<T, F>(f: F) -> T
@@ -460,35 +440,16 @@ where
 	f(PLANETARY_ATMOS.upgradable_read())
 }
 
-fn rebuild_turf_graph() -> Result<(), Runtime> {
-	with_dirty_turfs(|dirty_turfs| {
-		for (&t, _) in dirty_turfs
-			.iter()
-			.filter(|&(_, &flags)| flags.contains(DirtyFlags::DIRTY_MIX_REF))
-		{
-			register_turf(t)?;
-		}
-		for (t, _) in dirty_turfs
-			.drain(..)
-			.filter(|&(_, flags)| flags.contains(DirtyFlags::DIRTY_ADJACENT))
-		{
-			update_adjacency_info(t)?;
-		}
-		Ok(())
-	})?;
-	set_turfs_dirty(false);
-	Ok(())
-}
-
-fn register_turf(id: u32) -> Result<(), Runtime> {
-	let src = unsafe { Value::turf_by_id_unchecked(id) };
+#[hook("/turf/proc/update_air_ref")]
+fn hook_register_turf() {
+	let id = unsafe { src.raw.data.id };
 	let flag = determine_turf_flag(&src);
 	if let Ok(blocks) = src.get_number(byond_string!("blocks_air")) {
 		if blocks > 0.0 {
 			with_turf_gases_write(|arena| arena.remove_turf(id));
 			#[cfg(feature = "superconductivity")]
 			superconduct::supercond_update_ref(src)?;
-			return Ok(());
+			return Ok(Value::null());
 		}
 	}
 	if flag >= 0 {
@@ -543,18 +504,6 @@ fn register_turf(id: u32) -> Result<(), Runtime> {
 
 	#[cfg(feature = "superconductivity")]
 	superconduct::supercond_update_ref(src)?;
-
-	Ok(())
-}
-
-#[hook("/turf/proc/update_air_ref")]
-fn hook_register_turf() {
-	with_dirty_turfs(|dirty_turfs| {
-		dirty_turfs
-			.entry(unsafe { src.raw.data.id })
-			.or_default()
-			.insert(DirtyFlags::DIRTY_MIX_REF);
-	});
 	Ok(Value::null())
 }
 
@@ -583,10 +532,11 @@ fn determine_turf_flag(src: &Value) -> i32 {
 	}
 }
 
-fn update_adjacency_info(id: u32) -> Result<(), Runtime> {
-	let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
+#[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
+fn hook_infos() {
+	let id = unsafe { src.raw.data.id };
 	with_turf_gases_write(|arena| -> Result<(), Runtime> {
-		if let Ok(adjacent_list) = src_turf.get_list(byond_string!("atmos_adjacent_turfs")) {
+		if let Ok(adjacent_list) = src.get_list(byond_string!("atmos_adjacent_turfs")) {
 			arena.update_adjacencies(id, adjacent_list)?;
 		} else if let Some(&idx) = arena.map.get(&id) {
 			arena.remove_adjacencies(idx);
@@ -596,16 +546,6 @@ fn update_adjacency_info(id: u32) -> Result<(), Runtime> {
 
 	#[cfg(feature = "superconductivity")]
 	superconduct::supercond_update_adjacencies(id)?;
-	Ok(())
-}
-
-#[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
-fn hook_infos() {
-	with_dirty_turfs(|dirty_turfs| -> Result<(), Runtime> {
-		let e = dirty_turfs.entry(unsafe { src.raw.data.id }).or_default();
-		e.insert(DirtyFlags::DIRTY_ADJACENT);
-		Ok(())
-	})?;
 	Ok(Value::null())
 }
 

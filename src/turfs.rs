@@ -443,7 +443,7 @@ where
 #[hook("/turf/proc/update_air_ref")]
 fn hook_register_turf() {
 	let id = unsafe { src.raw.data.id };
-	let flag = determine_turf_flag(&src);
+	let flag = determine_turf_flag(src);
 	if let Ok(blocks) = src.get_number(byond_string!("blocks_air")) {
 		if blocks > 0.0 {
 			with_turf_gases_write(|arena| arena.remove_turf(id));

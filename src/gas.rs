@@ -465,10 +465,16 @@ where
 	)
 }
 
+/// Gets the amount of gases that are active in byond.
+/// # Panics
+/// if `GAS_MIXTURES` hasn't been initialized, somehow.
 pub fn amt_gases() -> usize {
 	GAS_MIXTURES.read().as_ref().unwrap().len() - NEXT_GAS_IDS.read().as_ref().unwrap().len()
 }
 
+/// Gets the amount of gases that are allocated, but not necessarily active in byond.
+/// # Panics
+/// if `GAS_MIXTURES` hasn't been initialized, somehow.
 pub fn tot_gases() -> usize {
 	GAS_MIXTURES.read().as_ref().unwrap().len()
 }

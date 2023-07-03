@@ -138,6 +138,7 @@ impl Reaction {
 		})?;
 		Ok(our_reaction)
 	}
+	/// Gets the reaction's identifier.
 	#[must_use]
 	pub fn get_id(&self) -> ReactionIdentifier {
 		self.id

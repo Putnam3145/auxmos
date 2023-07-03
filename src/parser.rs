@@ -17,7 +17,8 @@ fn parse_moles(input: &str) -> IResult<&str, f32> {
 	float(input)
 }
 
-//parses the gas string, invalid patterns will be ignored
+/// Parses gas strings, invalid patterns will be ignored
+/// E.g: "o2=2500;plasma=5000;TEMP=370" will return vec![("o2", 2500_f32), ("plasma", 5000_f32), ("TEMP", 370_f32)]
 pub fn parse_gas_string(input: &str) -> IResult<&str, Vec<(&str, f32)>> {
 	separated_list0(
 		tag(";"),

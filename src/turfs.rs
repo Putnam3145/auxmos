@@ -106,10 +106,12 @@ struct TurfMixture {
 
 #[allow(dead_code)]
 impl TurfMixture {
+	/// Whether the turf is processed at all or not
 	pub fn enabled(&self) -> bool {
 		self.flags.intersects(SimulationFlags::SIMULATION_ANY)
 	}
 
+	/// Whether the turf's gas is immutable or not, see [`super::gas::Mixture`]
 	pub fn is_immutable(&self) -> bool {
 		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
@@ -119,6 +121,7 @@ impl TurfMixture {
 				.is_immutable()
 		})
 	}
+	/// Returns the pressure of the turf's gas, see [`super::gas::Mixture`]
 	pub fn return_pressure(&self) -> f32 {
 		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
@@ -128,6 +131,7 @@ impl TurfMixture {
 				.return_pressure()
 		})
 	}
+	/// Returns the temperature of the turf's gas, see [`super::gas::Mixture`]
 	pub fn return_temperature(&self) -> f32 {
 		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
@@ -137,6 +141,7 @@ impl TurfMixture {
 				.get_temperature()
 		})
 	}
+	/// Returns the total moles of the turf's gas, see [`super::gas::Mixture`]
 	pub fn total_moles(&self) -> f32 {
 		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
@@ -146,6 +151,7 @@ impl TurfMixture {
 				.total_moles()
 		})
 	}
+	/// Clears the turf's airs, see [`super::gas::Mixture`]
 	pub fn clear_air(&self) {
 		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
@@ -155,6 +161,7 @@ impl TurfMixture {
 				.clear();
 		});
 	}
+	/// Copies from a given gas mixture to the turf's airs, see [`super::gas::Mixture`]
 	pub fn copy_from_mutable(&self, sample: &Mixture) {
 		GasArena::with_all_mixtures(|all_mixtures| {
 			all_mixtures
@@ -164,7 +171,9 @@ impl TurfMixture {
 				.copy_from_mutable(sample);
 		});
 	}
-	pub fn clear_vol(&self, amt: f32) {
+	/// Clears a number of moles from the turf's air
+	/// If the number of moles is greater than the turf's total moles, just clears the turf
+	pub fn clear_moles(&self, amt: f32) {
 		GasArena::with_all_mixtures(|all_mixtures| {
 			let moles = all_mixtures
 				.get(self.mix)
@@ -188,6 +197,7 @@ impl TurfMixture {
 			}
 		});
 	}
+	/// Gets a copy of the turf's airs, see [`super::gas::Mixture`]
 	pub fn get_gas_copy(&self) -> Mixture {
 		let mut ret: Mixture = Mixture::new();
 		GasArena::with_all_mixtures(|all_mixtures| {
@@ -200,6 +210,9 @@ impl TurfMixture {
 		});
 		ret
 	}
+	/// Invalidates the turf's visibility cache
+	/// This turf will most likely be visually updated the next processing cycle
+	/// If that is even running
 	pub fn invalidate_vis_cache(&self) {
 		self.vis_hash.store(0, std::sync::atomic::Ordering::Relaxed);
 	}
@@ -227,24 +240,6 @@ impl TurfGases {
 			self.graph.remove_node(index);
 		}
 	}
-	/*
-	pub fn invalidate(&mut self) {
-		*self.map.lock() = None;
-	}
-	*/
-	/*
-	pub fn turf_id_map(&self) -> TurfGraphMap {
-		self.map
-			.lock()
-			.get_or_insert_with(|| {
-				self.graph.
-					.enumerate()
-					.map(|(i, n)| (n.weight.id, NodeIndex::from(i)))
-					.collect()
-			})
-			.clone()
-	}
-	*/
 	pub fn update_adjacencies(&mut self, idx: TurfID, adjacent_list: List) -> Result<(), Runtime> {
 		if let Some(&this_index) = self.map.get(&idx) {
 			self.remove_adjacencies(this_index);

@@ -245,6 +245,7 @@ fn hook_turf_temperature() {
 // Returns: TRUE if thread not done, FALSE otherwise
 #[hook("/datum/controller/subsystem/air/proc/process_turf_heat")]
 fn process_heat_notify() {
+	rebuild_turf_graph()?;
 	/*
 		Replacing LINDA's superconductivity system is this much more brute-force
 		system--it shares heat between turfs and their neighbors,

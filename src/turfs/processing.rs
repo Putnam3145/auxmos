@@ -50,6 +50,7 @@ fn rebuild_turf_graph_hook() {
 
 #[hook("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
 fn finish_process_turfs() {
+	rebuild_turf_graph()?;
 	let arg_limit = args
 		.get(0)
 		.ok_or_else(|| runtime!("Wrong number of arguments to turf finishing: 0"))?
@@ -71,6 +72,7 @@ fn finish_process_turfs() {
 
 #[hook("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
 fn process_turf_notify() {
+	rebuild_turf_graph()?;
 	let sender = processing_callbacks_sender();
 	let fdm_max_steps = src
 		.get_number(byond_string!("share_max_steps"))

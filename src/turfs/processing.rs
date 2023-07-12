@@ -130,8 +130,7 @@ fn process_turf(
 
 fn planet_process() {
 	with_turf_gases_read(|arena| {
-		GasArena::with_all_mixtures_fallible(|all_mixtures| {
-			let Some(all_mixtures) = all_mixtures else {return;};
+		GasArena::with_all_mixtures(|all_mixtures| {
 			with_planetary_atmos(|map| {
 				arena
 					.map
@@ -276,8 +275,7 @@ fn fdm(
 			break;
 		}
 		with_turf_gases_read(|arena| {
-			GasArena::with_all_mixtures_fallible(|all_mixtures| {
-				let Some(all_mixtures) = all_mixtures else {return;};
+			GasArena::with_all_mixtures(|all_mixtures| {
 				let turfs_to_save = arena
 					.map
 					/*
@@ -414,8 +412,7 @@ fn post_process() {
 	let vis = crate::gas::visibility_copies();
 	with_turf_gases_read(|arena| {
 		let processables = crate::gas::types::with_reactions(|reactions| {
-			GasArena::with_all_mixtures_fallible(|all_mixtures| {
-				let Some(all_mixtures) = all_mixtures else {return None;};
+			GasArena::with_all_mixtures(|all_mixtures| {
 				Some(
 					arena
 						.map

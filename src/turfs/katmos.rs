@@ -15,10 +15,12 @@ use coarsetime::{Duration, Instant};
 use std::{
 	cell::Cell,
 	{
-		collections::{BTreeSet, HashMap, HashSet},
+		collections::BTreeSet,
 		sync::atomic::{AtomicUsize, Ordering},
 	},
 };
+
+use hashbrown::{HashMap, HashSet};
 
 use parking_lot::{const_mutex, Mutex};
 

@@ -25,7 +25,7 @@ pub struct Reaction {
 }
 
 use fxhash::FxBuildHasher;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 enum ReactionSide {
 	ByondSide(Value),

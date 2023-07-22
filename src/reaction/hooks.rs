@@ -338,7 +338,7 @@ fn fusion(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 #[cfg(feature = "generic_fire_hook")]
 fn generic_fire(byond_air: &Value, holder: &Value) -> DMResult<Value> {
 	use fxhash::FxBuildHasher;
-	use std::collections::HashMap;
+	use hashbrown::HashMap;
 	let mut burn_results: HashMap<GasIDX, f32, FxBuildHasher> = HashMap::with_capacity_and_hasher(
 		super::total_num_gases() as usize,
 		FxBuildHasher::default(),

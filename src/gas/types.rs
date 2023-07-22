@@ -13,9 +13,11 @@ use dashmap::DashMap;
 
 use std::{
 	cell::RefCell,
-	collections::{BTreeMap, HashMap},
+	collections::BTreeMap,
 	sync::atomic::{AtomicUsize, Ordering},
 };
+
+use hashbrown::HashMap;
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
 

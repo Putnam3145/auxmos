@@ -12,7 +12,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["auxcleanup_gas_deletion", "turf_processing"]
+default = ["auxcleanup_gas_deletion", "turf_processing", "katmos"]
 auxcleanup_gas_deletion = ["auxcleanup"]
 zas_hooks = []
 turf_processing = []
@@ -40,11 +40,10 @@ float-ord = "0.3.2"
 flume = "0.10.14"
 parking_lot = "0.12.1"
 fxhash = "0.2.1"
-nonmax = "0.5.3"
 ahash = "0.8.3"
 lazy_static = "1.4.0"
 indexmap = { version = "2.0.0", features = ["rayon"] }
-dashmap = { version = "5.4.0", features = ["rayon"] }
+dashmap = { version = "5.5.0", features = ["rayon"] }
 atomic_float = "0.1.0"
 petgraph = "0.6.3"
 bitflags = "2.3.3"

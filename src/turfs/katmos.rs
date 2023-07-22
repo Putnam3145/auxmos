@@ -77,14 +77,13 @@ fn adjust_eq_movement(
 	amount: f32,
 	graph: &DiGraphMap<NodeIndex, Cell<f32>>,
 ) {
-	if graph.contains_edge(this_turf, that_turf) {
-		let cell = graph.edge_weight(this_turf, that_turf).unwrap();
-		cell.set(cell.get() + amount);
-	}
-	if graph.contains_edge(that_turf, this_turf) {
-		let cell = graph.edge_weight(that_turf, this_turf).unwrap();
-		cell.set(cell.get() - amount)
-	}
+	graph
+		.edge_weight(this_turf, that_turf)
+		.map(|cell| cell.set(cell.get() + amount));
+
+	graph
+		.edge_weight(that_turf, this_turf)
+		.map(|cell| cell.set(cell.get() - amount));
 }
 
 fn finalize_eq(
@@ -145,7 +144,7 @@ fn monstermos_fast_process(
 	eq_movement_graph: &DiGraphMap<NodeIndex, Cell<f32>>,
 ) {
 	let mut cur_info = {
-		let mut cur_info = info.get_mut(&cur_index).unwrap();
+		let cur_info = info.get_mut(&cur_index).unwrap();
 		cur_info.fast_done = true;
 		*cur_info
 	};
@@ -164,7 +163,7 @@ fn monstermos_fast_process(
 		}
 		let moles_to_move = cur_info.mole_delta / eligible_adjacents.len() as f32;
 		eligible_adjacents.into_iter().for_each(|adj_index| {
-			if let Some(mut adj_info) = info.get_mut(&adj_index) {
+			if let Some(adj_info) = info.get_mut(&adj_index) {
 				adjust_eq_movement(cur_index, adj_index, moles_to_move, eq_movement_graph);
 				cur_info.mole_delta -= moles_to_move;
 				adj_info.mole_delta += moles_to_move;
@@ -198,7 +197,7 @@ fn give_to_takers(
 				if giver_info.mole_delta <= 0.0 {
 					break;
 				}
-				if let Some(mut adj_info) = info.get_mut(&adj_idx) {
+				if let Some(adj_info) = info.get_mut(&adj_idx) {
 					if queue.insert(adj_idx) {
 						adj_info.curr_transfer_dir = Some(cur_index);
 						adj_info.curr_transfer_amount = 0.0;
@@ -233,7 +232,7 @@ fn give_to_takers(
 				*opt.unwrap()
 			};
 			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir.is_some() {
-				if let Some(mut adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap()) {
+				if let Some(adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap()) {
 					adjust_eq_movement(
 						cur_index,
 						turf_info.curr_transfer_dir.unwrap(),
@@ -273,7 +272,7 @@ fn take_from_givers(
 				if taker_info.mole_delta >= 0.0 {
 					break;
 				}
-				if let Some(mut adj_info) = info.get_mut(&adj_index) {
+				if let Some(adj_info) = info.get_mut(&adj_index) {
 					if queue.insert(adj_index) {
 						adj_info.curr_transfer_dir = Some(cur_index);
 						adj_info.curr_transfer_amount = 0.0;
@@ -306,7 +305,7 @@ fn take_from_givers(
 				*opt.unwrap()
 			};
 			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir.is_some() {
-				if let Some(mut adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap()) {
+				if let Some(adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap()) {
 					adjust_eq_movement(
 						cur_index,
 						turf_info.curr_transfer_dir.unwrap(),

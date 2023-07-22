@@ -604,15 +604,17 @@ impl Mixture {
 	pub fn vis_hash(&self, gas_visibility: &[Option<f32>]) -> u64 {
 		use std::hash::Hasher;
 		let mut hasher: ahash::AHasher = ahash::AHasher::default();
-		for (i, gas_amt) in self.enumerate() {
-			if unsafe { gas_visibility.get_unchecked(i) }
-				.filter(|&amt| gas_amt > amt)
-				.is_some()
-			{
+
+		self.enumerate()
+			.filter(|&(i, gas_amt)| {
+				unsafe { gas_visibility.get_unchecked(i) }
+					.filter(|&amt| gas_amt > amt)
+					.is_some()
+			})
+			.for_each(|(i, gas_amt)| {
 				hasher.write_usize(i);
 				hasher.write_usize(visibility_step(gas_amt) as usize)
-			}
-		}
+			});
 		hasher.finish()
 	}
 	/// Compares the current vis hash to the provided one; returns true if they are
@@ -622,11 +624,8 @@ impl Mixture {
 		hash_holder: &AtomicU64,
 	) -> bool {
 		let cur_hash = self.vis_hash(gas_visibility);
-		hash_holder
-			.fetch_update(Relaxed, Relaxed, |item| {
-				(item != cur_hash).then_some(cur_hash)
-			})
-			.is_ok()
+		let old_hash = hash_holder.swap(cur_hash, Relaxed);
+		old_hash == 0 || old_hash != cur_hash
 	}
 	// Removes all redundant zeroes from the gas mixture.
 	pub fn garbage_collect(&mut self) {

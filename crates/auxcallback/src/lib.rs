@@ -15,7 +15,7 @@ static mut CALLBACK_CHANNEL: Option<CallbackChannel> = None;
 #[init(partial)]
 fn start_callbacks() -> Result<(), String> {
 	unsafe {
-		CALLBACK_CHANNEL = Some(flume::bounded(100_000));
+		CALLBACK_CHANNEL = Some(flume::bounded(1_000_000));
 	}
 	Ok(())
 }

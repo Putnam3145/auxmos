@@ -270,11 +270,11 @@ fn fdm(
 	let mut low_pressure_turfs: BTreeSet<TurfID> = Default::default();
 	let mut high_pressure_turfs: BTreeSet<TurfID> = Default::default();
 	let mut cur_count = 1;
-	loop {
-		if cur_count > fdm_max_steps || start_time.elapsed() >= remaining_time {
-			break;
-		}
-		with_turf_gases_read(|arena| {
+	with_turf_gases_read(|arena| {
+		loop {
+			if cur_count > fdm_max_steps || start_time.elapsed() >= remaining_time {
+				break;
+			}
 			GasArena::with_all_mixtures(|all_mixtures| {
 				let turfs_to_save = arena
 					.map
@@ -379,9 +379,10 @@ fn fdm(
 						});
 				}
 			});
-		});
-		cur_count += 1;
-	}
+
+			cur_count += 1;
+		}
+	});
 	(low_pressure_turfs, high_pressure_turfs)
 }
 

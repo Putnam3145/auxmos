@@ -32,8 +32,16 @@ Monstermos is now deprecated. Use katmos instead. It inherently has explosive de
 4. New function: `/datum/gas_mixture/proc/__auxtools_parse_gas_string`. Call it from `parse_gas_string` with the string as the argument and it'll parse it much faster in Rust, which should reduce load times a bunch.
 5. **Adjacencies list has been reworked**. Instead of being a bitfield reference to the direction of the adjacency, it is now flags. The flags should be ATMOS_ADJACENT_ANY = 1 and ATMOS_ADJACENT_FIRELOCK = 2. **Adjacency code must be rewritten with this in mind for auxmos to work.** You're going to have to do some weird stuff with firelock code. If you're not using katmos, you can get away with just replacing instances of `= dir` or similar in ImmediateCalculateAdjacentTurfs with `= 1`. **You will need both flags set for it to work when there's a firelock (1 | )**
 
-# 2.3 - ?
+# 2.3 - 2.4.0
 1. New hook `/datum/controller/subsystem/air/proc/equalize_turfs_auxtools` required for feature `katmos`
 2. New hook `/datum/controller/subsystem/air/proc/process_excited_groups_auxtools` required for feature `processing`
 3. `--package auxmos` flag is no longer needed
 4. Flag ATMOS_ADJACENT_ANY = 1 is no longer needed to be set for the adjacent turf to be added
+
+5. The following functions now only take one argument, `TICK_REMAINING_MS` of the master controller
+`/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools()`
+`/datum/controller/subsystem/air/proc/equalize_turfs_auxtools()`
+`/datum/controller/subsystem/air/proc/process_turfs_auxtools()`
+`/datum/controller/subsystem/air/proc/post_process_turfs_auxtools()`
+`/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools()`
+`/datum/controller/subsystem/air/proc/process_excited_groups_auxtools()`

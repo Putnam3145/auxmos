@@ -11,7 +11,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-20.04
             target_name: i686-unknown-linux-gnu
             artifact_name: libauxmos.so
           - os: windows-latest
@@ -34,14 +34,14 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install build-essential g++-multilib libc6-i386 libstdc++6:i386
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-20.04'
 
       - name: Setup Toolchains (Ubuntu)
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           target: i686-unknown-linux-gnu
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-20.04'
 
       - name: Build auxmos (Windows)
         uses: actions-rs/cargo@v1
@@ -57,7 +57,7 @@ jobs:
           toolchain: stable
           command: build
           args: --target i686-unknown-linux-gnu --release --features "generic_fire_hook katmos"
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-20.04'
 
       - name: Upload binary to release
         uses: svenstaro/upload-release-action@v1-release

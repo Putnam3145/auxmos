@@ -1,4 +1,4 @@
-use auxtools::*;
+use byondapi::prelude::*;
 
 use super::*;
 
@@ -14,19 +14,19 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use coarsetime::{Duration, Instant};
 
-#[hook("/datum/controller/subsystem/air/proc/thread_running")]
+#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/thread_running")]
 fn thread_running_hook() {
-	Ok(Value::from(TASKS.try_write().is_none()))
+	Ok(ByondValue::from(TASKS.try_write().is_none()))
 }
 
-#[hook("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
+#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
 fn finish_process_turfs() {
 	let arg_limit = args
 		.get(0)
-		.ok_or_else(|| runtime!("Wrong number of arguments to turf finishing: 0"))?
+		.ok_or_else(|| eyre::eyre!("Wrong number of arguments to turf finishing: 0"))?
 		.as_number()
 		.map_err(|_| {
-			runtime!(
+			eyre::eyre!(
 				"Attempt to interpret non-number value as number {} {}:{}",
 				std::file!(),
 				std::line!(),
@@ -34,31 +34,27 @@ fn finish_process_turfs() {
 			)
 		})?;
 	if process_callbacks_for_millis(arg_limit as u64) {
-		Ok(Value::from(true))
+		Ok(ByondValue::from(true))
 	} else {
-		Ok(Value::from(false))
+		Ok(ByondValue::from(false))
 	}
 }
 
-#[hook("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
-fn process_turf_hook(remaining: Value) {
+#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
+fn process_turf_hook(remaining: ByondValue) {
 	let remaining_time = Duration::from_millis(remaining.as_number().unwrap_or(50.0) as u64);
-	let fdm_max_steps = src
-		.get_number(byond_string!("share_max_steps"))
-		.unwrap_or(1.0) as i32;
+	let fdm_max_steps = src.read_number("share_max_steps").unwrap_or(1.0) as i32;
 	let equalize_enabled = cfg!(feature = "fastmos")
-		&& src
-			.get_number(byond_string!("equalize_enabled"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})? != 0.0;
+		&& src.read_number("equalize_enabled").map_err(|_| {
+			eyre::eyre!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})? != 0.0;
 	process_turf(remaining_time, fdm_max_steps, equalize_enabled)?;
-	Ok(Value::null())
+	Ok(ByondValue::null())
 }
 
 fn process_turf(
@@ -73,9 +69,9 @@ fn process_turf(
 			fdm((&start_time, remaining), fdm_max_steps, equalize_enabled);
 		let bench = start_time.elapsed().as_millis();
 		let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
-		let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-		let prev_cost = ssair.get_number(byond_string!("cost_turfs")).map_err(|_| {
-			runtime!(
+		let ssair = auxtools::ByondValue::globals().get("SSair")?;
+		let prev_cost = ssair.read_number("cost_turfs").map_err(|_| {
+			eyre::eyre!(
 				"Attempt to interpret non-number value as number {} {}:{}",
 				std::file!(),
 				std::line!(),
@@ -83,34 +79,29 @@ fn process_turf(
 			)
 		})?;
 		ssair.set(
-			byond_string!("cost_turfs"),
-			Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+			"cost_turfs",
+			ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
 		)?;
-		ssair.set(byond_string!("low_pressure_turfs"), Value::from(lpt as f32))?;
-		ssair.set(
-			byond_string!("high_pressure_turfs"),
-			Value::from(hpt as f32),
-		)?;
+		ssair.set("low_pressure_turfs", ByondValue::from(lpt as f32))?;
+		ssair.set("high_pressure_turfs", ByondValue::from(hpt as f32))?;
 		(low_pressure_turfs, high_pressure_turfs)
 	};
 	{
 		let start_time = Instant::now();
 		post_process();
 		let bench = start_time.elapsed().as_millis();
-		let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-		let prev_cost = ssair
-			.get_number(byond_string!("cost_post_process"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?;
+		let ssair = auxtools::ByondValue::globals().get("SSair")?;
+		let prev_cost = ssair.read_number("cost_post_process").map_err(|_| {
+			eyre::eyre!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 		ssair.set(
-			byond_string!("cost_post_process"),
-			Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+			"cost_post_process",
+			ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
 		)?;
 	}
 	{
@@ -357,19 +348,20 @@ fn fdm(
 						.for_each(|(id, diffs)| {
 							let sender = byond_callback_sender();
 							drop(sender.try_send(Box::new(move || {
-								let turf = unsafe { Value::turf_by_id_unchecked(id) };
+								let turf = unsafe { ByondValue::turf_by_id_unchecked(id) };
 								for (id, diff) in diffs.iter().copied() {
 									if id != 0 {
-										let enemy_tile = unsafe { Value::turf_by_id_unchecked(id) };
+										let enemy_tile =
+											unsafe { ByondValue::turf_by_id_unchecked(id) };
 										if diff > 5.0 {
 											turf.call(
 												"consider_pressure_difference",
-												&[&enemy_tile, &Value::from(diff)],
+												&[&enemy_tile, &ByondValue::from(diff)],
 											)?;
 										} else if diff < -5.0 {
 											enemy_tile.call(
 												"consider_pressure_difference",
-												&[&turf.clone(), &Value::from(-diff)],
+												&[&turf.clone(), &ByondValue::from(-diff)],
 											)?;
 										}
 									}
@@ -439,11 +431,11 @@ fn post_process() {
 
 				if should_react {
 					drop(sender.try_send(Box::new(move || {
-						let turf = unsafe { Value::turf_by_id_unchecked(id) };
+						let turf = unsafe { ByondValue::turf_by_id_unchecked(id) };
 						if cfg!(target_os = "linux") {
-							turf.get(byond_string!("air"))?.call("vv_react", &[&turf])?;
+							turf.get("air")?.call("vv_react", &[&turf])?;
 						} else {
-							turf.get(byond_string!("air"))?.call("react", &[&turf])?;
+							turf.get("air")?.call("react", &[&turf])?;
 						}
 						Ok(())
 					})));
@@ -452,7 +444,7 @@ fn post_process() {
 				if should_update_vis
 					&& sender
 						.try_send(Box::new(move || {
-							let turf = unsafe { Value::turf_by_id_unchecked(id) };
+							let turf = unsafe { ByondValue::turf_by_id_unchecked(id) };
 							update_visuals(turf)?;
 							Ok(())
 						}))

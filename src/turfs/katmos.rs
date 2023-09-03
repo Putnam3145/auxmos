@@ -353,9 +353,9 @@ fn explosively_depressurize(
 				}
 				if cur_mixture.is_immutable() {
 					if space_turfs.insert(cur_index) {
-						unsafe { Value::turf_by_id_unchecked(cur_mixture.id) }
-							.set(byond_string!("pressure_specific_target"), &unsafe {
-								Value::turf_by_id_unchecked(cur_mixture.id)
+						unsafe { ByondValue::turf_by_id_unchecked(cur_mixture.id) }
+							.set("pressure_specific_target", &unsafe {
+								ByondValue::turf_by_id_unchecked(cur_mixture.id)
 							})?;
 					}
 				} else if cur_mixture.enabled() {
@@ -376,9 +376,9 @@ fn explosively_depressurize(
 				Ok(())
 			})?;
 			for (cur, adj) in firelock_considerations {
-				unsafe { Value::turf_by_id_unchecked(cur) }.call(
+				unsafe { ByondValue::turf_by_id_unchecked(cur) }.call(
 					"consider_firelocks",
-					&[&unsafe { Value::turf_by_id_unchecked(adj) }],
+					&[&unsafe { ByondValue::turf_by_id_unchecked(adj) }],
 				)?;
 			}
 
@@ -427,10 +427,10 @@ fn explosively_depressurize(
 						adj_info.curr_transfer_dir = Some(cur_index);
 
 						let cur_target_turf =
-							unsafe { Value::turf_by_id_unchecked(cur_mixture.id) }
-								.get(byond_string!("pressure_specific_target"))?;
-						unsafe { Value::turf_by_id_unchecked(adj_mixture.id) }
-							.set(byond_string!("pressure_specific_target"), &cur_target_turf)?;
+							unsafe { ByondValue::turf_by_id_unchecked(cur_mixture.id) }
+								.get("pressure_specific_target")?;
+						unsafe { ByondValue::turf_by_id_unchecked(adj_mixture.id) }
+							.set("pressure_specific_target", &cur_target_turf)?;
 						adj_orig.set(adj_info);
 					}
 				}
@@ -439,11 +439,11 @@ fn explosively_depressurize(
 
 		let _average_moles = total_moles / (progression_order.len() - space_turf_len) as f32;
 
-		let hpd = auxtools::Value::globals()
-			.get(byond_string!("SSair"))?
-			.get_list(byond_string!("high_pressure_delta"))
+		let hpd = auxtools::ByondValue::globals()
+			.get("SSair")?
+			.get_list("high_pressure_delta")
 			.map_err(|_| {
-				runtime!(
+				eyre::eyre!(
 					"Attempt to interpret non-list value as list {} {}:{}",
 					std::file!(),
 					std::line!(),
@@ -451,8 +451,8 @@ fn explosively_depressurize(
 				)
 			})?;
 
-		let get_dir = Proc::find(byond_string!("/proc/get_dir_multiz")).map_or(
-			Err(runtime!(
+		let get_dir = Proc::find("/proc/get_dir_multiz").map_or(
+			Err(eyre::eyre!(
 				"Proc get_dir_multiz not found! {} {}:{}",
 				std::file!(),
 				std::line!(),
@@ -480,14 +480,14 @@ fn explosively_depressurize(
 			let mut in_hpd = false;
 			for k in 1..=hpd.len() {
 				if let Ok(hpd_val) = hpd.get(k) {
-					if hpd_val == unsafe { Value::turf_by_id_unchecked(cur_mixture.id) } {
+					if hpd_val == unsafe { ByondValue::turf_by_id_unchecked(cur_mixture.id) } {
 						in_hpd = true;
 						break;
 					}
 				}
 			}
 			if !in_hpd {
-				hpd.append(&unsafe { Value::turf_by_id_unchecked(cur_mixture.id) });
+				hpd.append(&unsafe { ByondValue::turf_by_id_unchecked(cur_mixture.id) });
 			}
 			let adj_index = cur_info.curr_transfer_dir.unwrap();
 
@@ -503,30 +503,30 @@ fn explosively_depressurize(
 			adj_info.curr_transfer_amount += cur_info.curr_transfer_amount;
 			adj_orig.set(adj_info);
 
-			let byond_turf = unsafe { Value::turf_by_id_unchecked(cur_mixture.id) };
-			let byond_turf_adj = unsafe { Value::turf_by_id_unchecked(adj_mixture.id) };
+			let byond_turf = unsafe { ByondValue::turf_by_id_unchecked(cur_mixture.id) };
+			let byond_turf_adj = unsafe { ByondValue::turf_by_id_unchecked(adj_mixture.id) };
 
 			byond_turf.set(
-				byond_string!("pressure_difference"),
-				Value::from(cur_info.curr_transfer_amount),
+				"pressure_difference",
+				ByondValue::from(cur_info.curr_transfer_amount),
 			)?;
 			byond_turf.set(
-				byond_string!("pressure_direction"),
+				"pressure_direction",
 				get_dir.call(&[&byond_turf, &byond_turf_adj])?,
 			)?;
 
 			if adj_info.curr_transfer_dir.is_none() {
 				byond_turf_adj.set(
-					byond_string!("pressure_difference"),
-					Value::from(adj_info.curr_transfer_amount),
+					"pressure_difference",
+					ByondValue::from(adj_info.curr_transfer_amount),
 				)?;
 				byond_turf_adj.set(
-					byond_string!("pressure_direction"),
+					"pressure_direction",
 					get_dir.call(&[&byond_turf_adj, &byond_turf])?,
 				)?;
 			}
 
-			floor_rip_turfs.push((byond_turf, Value::from(sum)));
+			floor_rip_turfs.push((byond_turf, ByondValue::from(sum)));
 		}
 		Ok(floor_rip_turfs)
 	})?;
@@ -647,9 +647,9 @@ fn planet_equalize(
 			Ok(())
 		})?;
 		for (cur, adj) in firelock_considerations {
-			unsafe { Value::turf_by_id_unchecked(cur) }.call(
+			unsafe { ByondValue::turf_by_id_unchecked(cur) }.call(
 				"consider_firelocks",
-				&[&unsafe { Value::turf_by_id_unchecked(adj) }],
+				&[&unsafe { ByondValue::turf_by_id_unchecked(adj) }],
 			)?;
 		}
 		if warned_about_space {
@@ -735,29 +735,26 @@ fn send_pressure_differences(
 ) {
 	for (amt, cur_turf, adj_turf) in pressures {
 		drop(sender.try_send(Box::new(move || {
-			let real_amount = Value::from(amt);
-			let turf = unsafe { Value::turf_by_id_unchecked(cur_turf) };
-			let other_turf = unsafe { Value::turf_by_id_unchecked(adj_turf) };
+			let real_amount = ByondValue::from(amt);
+			let turf = unsafe { ByondValue::turf_by_id_unchecked(cur_turf) };
+			let other_turf = unsafe { ByondValue::turf_by_id_unchecked(adj_turf) };
 			if let Err(e) = turf.call("consider_pressure_difference", &[&other_turf, &real_amount])
 			{
-				Proc::find(byond_string!("/proc/stack_trace"))
-					.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
-					.call(&[&Value::from_string(e.message.as_str())?])?;
+				Proc::find("/proc/stack_trace")
+					.ok_or_else(|| eyre::eyre!("Couldn't find stack_trace!"))?
+					.call(&[&ByondValue::from_string(e.message.as_str())?])?;
 			}
 			Ok(())
 		})));
 	}
 }
 
-#[hook("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
-fn equalize_hook(remaining: Value) {
+#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
+fn equalize_hook(remaining: ByondValue) {
 	let equalize_hard_turf_limit = src
-		.get_number(byond_string!("equalize_hard_turf_limit"))
+		.read_number("equalize_hard_turf_limit")
 		.unwrap_or(2000.0) as usize;
-	let planet_enabled: bool = src
-		.get_number(byond_string!("planet_equalize_enabled"))
-		.unwrap_or(1.0)
-		!= 0.0;
+	let planet_enabled: bool = src.read_number("planet_equalize_enabled").unwrap_or(1.0) != 0.0;
 	let remaining_time = Duration::from_millis(remaining.as_number().unwrap_or(50.0) as u64);
 	let start_time = Instant::now();
 	let (num_eq, is_cancelled) = with_equalizes(|thing| {
@@ -774,25 +771,20 @@ fn equalize_hook(remaining: Value) {
 	});
 
 	let bench = start_time.elapsed().as_millis();
-	let prev_cost = src
-		.get_number(byond_string!("cost_equalize"))
-		.map_err(|_| {
-			runtime!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?;
+	let prev_cost = src.read_number("cost_equalize").map_err(|_| {
+		eyre::eyre!(
+			"Attempt to interpret non-number value as number {} {}:{}",
+			std::file!(),
+			std::line!(),
+			std::column!()
+		)
+	})?;
 	src.set(
-		byond_string!("cost_equalize"),
-		Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+		"cost_equalize",
+		ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
 	)?;
-	src.set(
-		byond_string!("num_equalize_processed"),
-		Value::from(num_eq as f32),
-	)?;
-	Ok(Value::from(is_cancelled))
+	src.set("num_equalize_processed", ByondValue::from(num_eq as f32))?;
+	Ok(ByondValue::from(is_cancelled))
 }
 
 fn equalize(

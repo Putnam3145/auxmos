@@ -1,7 +1,7 @@
 #[cfg(feature = "reaction_hooks")]
 mod hooks;
 
-use auxtools::{byond_string, runtime, shutdown, DMResult, Runtime, Value};
+use auxtools::{byond_string, runtime, shutdown, ByondValue, Runtime};
 
 use crate::gas::{gas_idx_to_id, total_num_gases, GasIDX, Mixture};
 
@@ -12,6 +12,8 @@ use float_ord::FloatOrd;
 pub type ReactionPriority = FloatOrd<f32>;
 
 pub type ReactionIdentifier = u64;
+
+use eyre::Result;
 
 #[derive(Clone)]
 pub struct Reaction {
@@ -28,8 +30,8 @@ use fxhash::FxBuildHasher;
 use hashbrown::HashMap;
 
 enum ReactionSide {
-	ByondSide(Value),
-	RustSide(fn(&Value, &Value) -> DMResult<Value>),
+	ByondSide(ByondValue),
+	RustSide(fn(&ByondValue, &ByondValue) -> Result<ByondValue>),
 }
 
 thread_local! {
@@ -47,10 +49,14 @@ fn clean_up_reaction_values() {
 /// Runs a reaction given a `ReactionIdentifier`. Returns the result of the reaction, error or success.
 /// # Errors
 /// If the reaction itself has a runtime.
-pub fn react_by_id(id: ReactionIdentifier, src: &Value, holder: &Value) -> DMResult {
+pub fn react_by_id(
+	id: ReactionIdentifier,
+	src: &ByondValue,
+	holder: &ByondValue,
+) -> Result<ByondValue> {
 	REACTION_VALUES.with(|r| {
 		r.borrow().get(&id).map_or_else(
-			|| Err(runtime!("Reaction with invalid id")),
+			|| Err(eyre::eyre!("Reaction with invalid id")),
 			|reaction| match reaction {
 				ReactionSide::ByondSide(val) => val.call("react", &[src, holder]),
 				ReactionSide::RustSide(func) => func(src, holder),
@@ -61,15 +67,15 @@ pub fn react_by_id(id: ReactionIdentifier, src: &Value, holder: &Value) -> DMRes
 
 impl Reaction {
 	/// Takes a `/datum/gas_reaction` and makes a byond reaction out of it.
-	pub fn from_byond_reaction(reaction: &Value) -> Result<Self, Runtime> {
+	pub fn from_byond_reaction(reaction: &ByondValue) -> Result<Self, Runtime> {
 		let priority = FloatOrd(
 			reaction
-				.get_number(byond_string!("priority"))
-				.map_err(|_| runtime!("Reaction priorty must be a number!"))?,
+				.read_number("priority")
+				.map_err(|_| eyre::eyre!("Reaction priorty must be a number!"))?,
 		);
 		let string_id = reaction
-			.get_string(byond_string!("id"))
-			.map_err(|_| runtime!("Reaction id must be a string!"))?;
+			.get_string("id")
+			.map_err(|_| eyre::eyre!("Reaction id must be a string!"))?;
 		let func = {
 			#[cfg(feature = "reaction_hooks")]
 			{
@@ -82,30 +88,21 @@ impl Reaction {
 		};
 		let id = fxhash::hash64(string_id.as_bytes());
 		let our_reaction = {
-			if let Ok(min_reqs) = reaction.get_list(byond_string!("min_requirements")) {
+			if let Ok(min_reqs) = reaction.get_list("min_requirements") {
 				let mut min_gas_reqs: Vec<(GasIDX, f32)> = Vec::new();
 				for i in 0..total_num_gases() {
 					if let Ok(req_amount) = min_reqs
-						.get(gas_idx_to_id(i).unwrap_or_else(|_| Value::null()))
+						.get(gas_idx_to_id(i).unwrap_or_else(|_| ByondValue::null()))
 						.and_then(|v| v.as_number())
 					{
 						min_gas_reqs.push((i, req_amount));
 					}
 				}
-				let min_temp_req = min_reqs
-					.get(byond_string!("TEMP"))
-					.and_then(|v| v.as_number())
-					.ok();
-				let max_temp_req = min_reqs
-					.get(byond_string!("MAX_TEMP"))
-					.and_then(|v| v.as_number())
-					.ok();
-				let min_ener_req = min_reqs
-					.get(byond_string!("ENER"))
-					.and_then(|v| v.as_number())
-					.ok();
+				let min_temp_req = min_reqs.get("TEMP").and_then(|v| v.as_number()).ok();
+				let max_temp_req = min_reqs.get("MAX_TEMP").and_then(|v| v.as_number()).ok();
+				let min_ener_req = min_reqs.get("ENER").and_then(|v| v.as_number()).ok();
 				let min_fire_req = min_reqs
-					.get(byond_string!("FIRE_REAGENTS"))
+					.get("FIRE_REAGENTS")
 					.and_then(|v| v.as_number())
 					.ok();
 				Ok(Reaction {
@@ -118,7 +115,7 @@ impl Reaction {
 					min_gas_reqs,
 				})
 			} else {
-				Err(runtime!(format!(
+				Err(eyre::eyre!(format!(
 					"Reaction {string_id} doesn't have a gas requirements list!"
 				)))
 			}
@@ -170,7 +167,7 @@ impl Reaction {
 	/// Calls the reaction with the given arguments.
 	/// # Errors
 	/// If the reaction itself has a runtime error, this will propagate it up.
-	pub fn react(&self, src: &Value, holder: &Value) -> DMResult {
+	pub fn react(&self, src: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
 		react_by_id(self.id, src, holder)
 	}
 }

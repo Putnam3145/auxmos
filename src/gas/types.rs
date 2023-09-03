@@ -1,5 +1,5 @@
 use auxcallback::byond_callback_sender;
-use auxtools::*;
+use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
 
 use fxhash::FxBuildHasher;
 
@@ -18,6 +18,8 @@ use std::{
 };
 
 use hashbrown::HashMap;
+
+use eyre::Result;
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
 
@@ -81,7 +83,7 @@ impl GasRef {
 	/// Gets the index of the gas.
 	/// # Errors
 	/// Propagates error from `gas_idx_from_string`.
-	pub fn get(&self) -> Result<GasIDX, Runtime> {
+	pub fn get(&self) -> Result<GasIDX> {
 		match self {
 			Self::Deferred(s) => gas_idx_from_string(s),
 			Self::Found(id) => Ok(*id),
@@ -90,7 +92,7 @@ impl GasRef {
 	/// Like `get`, but also caches the result if found.
 	/// # Errors
 	/// If the string is not a valid gas name.
-	pub fn update(&mut self) -> Result<GasIDX, Runtime> {
+	pub fn update(&mut self) -> Result<GasIDX> {
 		match self {
 			Self::Deferred(s) => {
 				*self = Self::Found(gas_idx_from_string(s)?);
@@ -149,72 +151,63 @@ pub struct GasType {
 
 impl GasType {
 	// This absolute monster is what you want to override to add or remove certain gas properties, based on what a gas datum has.
-	fn new(gas: &Value, idx: GasIDX) -> Result<Self, Runtime> {
+	fn new(gas: &ByondValue, idx: GasIDX) -> Result<Self> {
 		Ok(Self {
 			idx,
-			id: gas.get_string(byond_string!("id"))?.into_boxed_str(),
-			name: gas.get_string(byond_string!("name"))?.into_boxed_str(),
-			flags: gas.get_number(byond_string!("flags")).unwrap_or_default() as u32,
-			specific_heat: gas
-				.get_number(byond_string!("specific_heat"))
-				.map_err(|_| {
-					runtime!(
-						"Attempt to interpret non-number value as number {} {}:{}",
-						std::file!(),
-						std::line!(),
-						std::column!()
-					)
-				})?,
-			fusion_power: gas
-				.get_number(byond_string!("fusion_power"))
-				.unwrap_or_default(),
-			moles_visible: gas.get_number(byond_string!("moles_visible")).ok(),
+			id: gas.read_string("id")?.into_boxed_str(),
+			name: gas.read_string("name")?.into_boxed_str(),
+			flags: gas.read_number("flags").unwrap_or_default() as u32,
+			specific_heat: gas.read_number("specific_heat").map_err(|_| {
+				eyre::eyre!(
+					"Attempt to interpret non-number value as number {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})?,
+			fusion_power: gas.read_number("fusion_power").unwrap_or_default(),
+			moles_visible: gas.read_number("moles_visible").ok(),
 			fire_info: {
-				if let Ok(temperature) = gas.get_number(byond_string!("oxidation_temperature")) {
+				if let Ok(temperature) = gas.read_number("oxidation_temperature") {
 					FireInfo::Oxidation(OxidationInfo {
 						temperature,
-						power: gas.get_number(byond_string!("oxidation_rate"))?,
+						power: gas.read_number("oxidation_rate")?,
 					})
-				} else if let Ok(temperature) = gas.get_number(byond_string!("fire_temperature")) {
+				} else if let Ok(temperature) = gas.read_number("fire_temperature") {
 					FireInfo::Fuel(FuelInfo {
 						temperature,
-						burn_rate: gas.get_number(byond_string!("fire_burn_rate"))?,
+						burn_rate: gas.read_number("fire_burn_rate")?,
 					})
 				} else {
 					FireInfo::None
 				}
 			},
-			fire_products: gas
-				.get(byond_string!("fire_products"))
-				.ok()
-				.and_then(|product_info| {
-					if let Ok(products) = product_info.as_list() {
-						Some(FireProductInfo::Generic(
-							(1..=products.len())
-								.filter_map(|i| {
-									let s = products.get(i).unwrap();
-									s.as_string()
-										.and_then(|s_str| {
-											products
-												.get(s)
-												.and_then(|v| v.as_number())
-												.map(|amount| (GasRef::Deferred(s_str), amount))
-										})
-										.ok()
-								})
-								.collect(),
-						))
-					} else if product_info.as_number().is_ok() {
-						Some(FireProductInfo::Plasma) // if we add another snowflake later, add it, but for now we hack this in
-					} else {
-						None
-					}
-				}),
-			enthalpy: gas
-				.get_number(byond_string!("enthalpy"))
-				.unwrap_or_default(),
+			fire_products: gas.read_var("fire_products").ok().and_then(|product_info| {
+				if let Ok(products) = product_info.read_list(name) {
+					Some(FireProductInfo::Generic(
+						(1..=products.len())
+							.filter_map(|i| {
+								let s = products.get(i).unwrap();
+								s.as_string()
+									.and_then(|s_str| {
+										products
+											.get(s)
+											.and_then(|v| v.as_number())
+											.map(|amount| (GasRef::Deferred(s_str), amount))
+									})
+									.ok()
+							})
+							.collect(),
+					))
+				} else if product_info.is_num() {
+					Some(FireProductInfo::Plasma) // if we add another snowflake later, add it, but for now we hack this in
+				} else {
+					None
+				}
+			}),
+			enthalpy: gas.read_number("enthalpy").unwrap_or_default(),
 			fire_radiation_released: gas
-				.get_number(byond_string!("fire_radiation_released"))
+				.read_number("fire_radiation_released")
 				.unwrap_or_default(),
 		})
 	}
@@ -226,8 +219,7 @@ static GAS_INFO_BY_IDX: RwLock<Option<Vec<GasType>>> = const_rwlock(None);
 
 static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = const_rwlock(None);
 
-#[init(partial)]
-fn initialize_gas_info_structs() -> Result<(), String> {
+fn initialize_gas_info_structs() -> Result<()> {
 	unsafe {
 		GAS_INFO_BY_STRING = Some(DashMap::with_hasher(FxBuildHasher::default()));
 	};
@@ -236,7 +228,6 @@ fn initialize_gas_info_structs() -> Result<(), String> {
 	Ok(())
 }
 
-#[shutdown]
 fn destroy_gas_info_structs() {
 	crate::turfs::wait_for_tasks();
 	unsafe {
@@ -253,9 +244,9 @@ fn destroy_gas_info_structs() {
 	});
 }
 
-#[hook("/proc/_auxtools_register_gas")]
-fn hook_register_gas(gas: Value) {
-	let gas_id = gas.get_string(byond_string!("id"))?;
+#[byondapi_hooks::bind("/proc/_auxtools_register_gas")]
+fn hook_register_gas(gas: ByondValue) {
+	let gas_id = gas.get_string("id")?;
 	match {
 		unsafe { GAS_INFO_BY_STRING.as_ref() }
 			.unwrap()
@@ -287,30 +278,28 @@ fn hook_register_gas(gas: Value) {
 			TOTAL_NUM_GASES.fetch_add(1, Ordering::Release); // this is the only thing that stores it other than shutdown
 		}
 	}
-	Ok(Value::null())
+	Ok(ByondValue::null())
 }
 
-#[hook("/proc/auxtools_atmos_init")]
+#[byondapi_hooks::bind("/proc/auxtools_atmos_init")]
 fn hook_init() {
-	let data = Value::globals()
-		.get(byond_string!("gas_data"))?
-		.get_list(byond_string!("datums"))?;
+	let data = ByondValue::globals().get("gas_data")?.get_list("datums")?;
 	for i in 1..=data.len() {
 		hook_register_gas(
-			&Value::null(),
-			&Value::null(),
+			&ByondValue::null(),
+			&ByondValue::null(),
 			vec![data.get(data.get(i)?)?],
 		)?;
 	}
 	*REACTION_INFO.write() = Some(get_reaction_info());
-	Ok(Value::from(true))
+	Ok(ByondValue::from(true))
 }
 
 fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
-	let gas_reactions = Value::globals()
-		.get(byond_string!("SSair"))
+	let gas_reactions = ByondValue::globals()
+		.get("SSair")
 		.unwrap()
-		.get_list(byond_string!("gas_reactions"))
+		.get_list("gas_reactions")
 		.unwrap();
 	let mut reaction_cache: BTreeMap<ReactionPriority, Reaction> = Default::default();
 	let sender = byond_callback_sender();
@@ -323,7 +312,7 @@ fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
 					e.insert(reaction);
 				} else {
 					drop(sender.try_send(Box::new(move || {
-						Err(runtime!(format!(
+						Err(eyre::eyre!(format!(
 							"Duplicate reaction priority {}, this reaction will be ignored!",
 							reaction.get_priority().0
 						)))
@@ -339,10 +328,10 @@ fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
 	reaction_cache
 }
 
-#[hook("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
+#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
 fn update_reactions() {
 	*REACTION_INFO.write() = Some(get_reaction_info());
-	Ok(Value::from(true))
+	Ok(ByondValue::from(true))
 }
 
 /// Calls the given closure with all reaction info as an argument.
@@ -442,14 +431,14 @@ pub fn update_gas_refs() {
 		});
 }
 
-#[hook("/proc/finalize_gas_refs")]
+#[byondapi_hooks::bind("/proc/finalize_gas_refs")]
 fn finalize_gas_refs() {
 	update_gas_refs();
-	Ok(Value::null())
+	Ok(ByondValue::null())
 }
 
 thread_local! {
-	static CACHED_GAS_IDS: RefCell<HashMap<Value, GasIDX, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
+	static CACHED_GAS_IDS: RefCell<HashMap<ByondValue, GasIDX, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
 	static CACHED_IDX_TO_STRINGS: RefCell<HashMap<usize,Box<str>, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
 }
 
@@ -458,16 +447,16 @@ thread_local! {
 /// If gases aren't loaded or an invalid gas ID is given.
 pub fn gas_idx_from_string(id: &str) -> Result<GasIDX, Runtime> {
 	Ok(unsafe { GAS_INFO_BY_STRING.as_ref() }
-		.ok_or_else(|| runtime!("Gases not loaded yet! Uh oh!"))?
+		.ok_or_else(|| eyre::eyre!("Gases not loaded yet! Uh oh!"))?
 		.get(id)
-		.ok_or_else(|| runtime!("Invalid gas ID: {}", id))?
+		.ok_or_else(|| eyre::eyre!("Invalid gas ID: {}", id))?
 		.idx)
 }
 
 /// Returns the appropriate index to be used by the game for a given Byond string.
 /// # Errors
 /// If the given string is not a string or is not a valid gas ID.
-pub fn gas_idx_from_value(string_val: &Value) -> Result<GasIDX, Runtime> {
+pub fn gas_idx_from_value(string_val: &ByondValue) -> Result<GasIDX, Runtime> {
 	CACHED_GAS_IDS.with(|c| {
 		let mut cache = c.borrow_mut();
 		if let Some(idx) = cache.get(string_val) {
@@ -484,10 +473,10 @@ pub fn gas_idx_from_value(string_val: &Value) -> Result<GasIDX, Runtime> {
 /// Takes an index and returns a borrowed string representing the string ID of the gas datum stored in that index.
 /// # Panics
 /// If an invalid gas index is given to this. This should never happen, so we panic instead of runtiming.
-pub fn gas_idx_to_id(idx: GasIDX) -> DMResult {
+pub fn gas_idx_to_id(idx: GasIDX) -> Result<ByondValue> {
 	CACHED_IDX_TO_STRINGS.with(|thin| {
 		let stuff = thin.borrow();
-		Value::from_string(
+		ByondValue::from_string(
 			stuff
 				.get(&idx)
 				.unwrap_or_else(|| panic!("Invalid gas index: {idx}")),

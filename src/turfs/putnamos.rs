@@ -18,7 +18,7 @@ fn explosively_depressurize(
 	equalize_hard_turf_limit: usize,
 	max_x: i32,
 	max_y: i32,
-) -> DMResult {
+) -> Result<ByondValue> {
 	let mut turfs: Vec<(TurfID, TurfMixture)> = Vec::new();
 	let mut space_turfs: Vec<(TurfID, TurfMixture)> = Vec::new();
 	turfs.push((turf_idx, turf));
@@ -26,7 +26,7 @@ fn explosively_depressurize(
 	let mut cur_queue_idx = 0;
 	while cur_queue_idx < turfs.len() {
 		let (i, m) = turfs[cur_queue_idx];
-		let actual_turf = unsafe { Value::turf_by_id_unchecked(i) };
+		let actual_turf = unsafe { ByondValue::turf_by_id_unchecked(i) };
 		cur_queue_idx += 1;
 		if m.planetary_atmos.is_some() {
 			warned_about_planet_atmos = true;
@@ -34,7 +34,7 @@ fn explosively_depressurize(
 		}
 		if m.is_immutable() {
 			space_turfs.push((i, m));
-			actual_turf.set(byond_string!("pressure_specific_target"), &actual_turf)?;
+			actual_turf.set("pressure_specific_target", &actual_turf)?;
 		} else {
 			if cur_queue_idx > equalize_hard_turf_limit {
 				continue;
@@ -42,7 +42,7 @@ fn explosively_depressurize(
 			for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
 				actual_turf.call(
 					"consider_firelocks",
-					&[&unsafe { Value::turf_by_id_unchecked(loc) }],
+					&[&unsafe { ByondValue::turf_by_id_unchecked(loc) }],
 				)?;
 				if let Some(new_m) = turf_gases().get(&i) {
 					let bit = 1 << j;
@@ -56,7 +56,7 @@ fn explosively_depressurize(
 			}
 		}
 		if warned_about_planet_atmos {
-			return Ok(Value::null()); // planet atmos > space
+			return Ok(ByondValue::null()); // planet atmos > space
 		}
 	}
 	let mut progression_order: Vec<(TurfID, TurfMixture)> = Vec::with_capacity(space_turfs.len());
@@ -68,25 +68,25 @@ fn explosively_depressurize(
 	cur_queue_idx = 0;
 	while cur_queue_idx < progression_order.len() {
 		let (i, m) = progression_order[cur_queue_idx];
-		let actual_turf = unsafe { Value::turf_by_id_unchecked(i) };
+		let actual_turf = unsafe { ByondValue::turf_by_id_unchecked(i) };
 		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
 			if let Some(adj) = turf_gases().get(&loc) {
 				let (adj_i, adj_m) = (*adj.key(), adj.value());
 				if !adjacency_info.contains_key(&adj_i) && !adj_m.is_immutable() {
 					adjacency_info.insert(i, Cell::new((OPP_DIR_INDEX[j as usize], 0.0)));
-					unsafe { Value::turf_by_id_unchecked(adj_i) }
-						.set(byond_string!("pressure_specific_target"), &actual_turf)?;
+					unsafe { ByondValue::turf_by_id_unchecked(adj_i) }
+						.set("pressure_specific_target", &actual_turf)?;
 					progression_order.push((adj_i, *adj_m));
 				}
 			}
 		}
 		cur_queue_idx += 1;
 	}
-	let hpd = auxtools::Value::globals()
-		.get(byond_string!("SSAir"))?
-		.get_list(byond_string!("high_pressure_delta"))
+	let hpd = auxtools::ByondValue::globals()
+		.get("SSAir")?
+		.get_list("high_pressure_delta")
 		.map_err(|_| {
-			runtime!(
+			eyre::eyre!(
 				"Attempt to interpret non-list value as list {} {}:{}",
 				std::file!(),
 				std::line!(),
@@ -99,7 +99,7 @@ fn explosively_depressurize(
 		if cur_info.0 == 6 {
 			continue;
 		}
-		let actual_turf = unsafe { Value::turf_by_id_unchecked(*i) };
+		let actual_turf = unsafe { ByondValue::turf_by_id_unchecked(*i) };
 		hpd.set(&actual_turf, 1.0)?;
 		let loc = adjacent_tile_id(cur_info.0, *i, max_x, max_y);
 		if let Some(adj) = turf_gases().get(&loc) {
@@ -110,25 +110,19 @@ fn explosively_depressurize(
 			cur_info.1 += sum;
 			adj_info.1 += cur_info.1;
 			if adj_info.0 != 6 {
-				let adj_turf = unsafe { Value::turf_by_id_unchecked(adj_i) };
-				adj_turf.set(byond_string!("pressure_difference"), cur_info.1)?;
-				adj_turf.set(
-					byond_string!("pressure_direction"),
-					(1 << cur_info.0) as f32,
-				)?;
+				let adj_turf = unsafe { ByondValue::turf_by_id_unchecked(adj_i) };
+				adj_turf.set("pressure_difference", cur_info.1)?;
+				adj_turf.set("pressure_direction", (1 << cur_info.0) as f32)?;
 			}
 			m.clear_air();
-			actual_turf.set(byond_string!("pressure_difference"), cur_info.1)?;
-			actual_turf.set(
-				byond_string!("pressure_direction"),
-				(1 << cur_info.0) as f32,
-			)?;
-			actual_turf.call("handle decompression floor rip", &[&Value::from(sum)])?;
+			actual_turf.set("pressure_difference", cur_info.1)?;
+			actual_turf.set("pressure_direction", (1 << cur_info.0) as f32)?;
+			actual_turf.call("handle decompression floor rip", &[&ByondValue::from(sum)])?;
 			adj_orig.set(adj_info);
 			cur_orig.set(cur_info);
 		}
 	}
-	Ok(Value::null())
+	Ok(ByondValue::null())
 }
 
 // Just floodfills to lower-pressure turfs until it can't find any more.
@@ -230,15 +224,15 @@ pub fn equalize(
 				let _ = sender.try_send(Box::new(move || {
 					for &(idx, parent, delta) in chunk.iter() {
 						if parent != 0 {
-							let turf = unsafe { Value::turf_by_id_unchecked(idx) };
-							let enemy_turf = unsafe { Value::turf_by_id_unchecked(parent) };
+							let turf = unsafe { ByondValue::turf_by_id_unchecked(idx) };
+							let enemy_turf = unsafe { ByondValue::turf_by_id_unchecked(parent) };
 							enemy_turf.call(
 								"consider_pressure_difference",
-								&[&turf, &Value::from(delta)],
+								&[&turf, &ByondValue::from(delta)],
 							)?;
 						}
 					}
-					Ok(Value::null())
+					Ok(ByondValue::null())
 				}));
 			}
 		}

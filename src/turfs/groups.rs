@@ -21,10 +21,10 @@ pub fn send_to_groups(sent: BTreeSet<TurfID>) {
 	GROUPS_CHANNEL.try_lock().map(|mut opt| opt.replace(sent));
 }
 
-#[hook("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
-fn groups_hook(remaining: Value) {
+#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
+fn groups_hook(remaining: ByondValue) {
 	let group_pressure_goal = src
-		.get_number(byond_string!("excited_group_pressure_goal"))
+		.read_number("excited_group_pressure_goal")
 		.unwrap_or(0.5);
 	let remaining_time = Duration::from_millis(remaining.as_number().unwrap_or(50.0) as u64);
 	let start_time = Instant::now();
@@ -41,8 +41,8 @@ fn groups_hook(remaining: Value) {
 	});
 
 	let bench = start_time.elapsed().as_millis();
-	let prev_cost = src.get_number(byond_string!("cost_groups")).map_err(|_| {
-		runtime!(
+	let prev_cost = src.read_number("cost_groups").map_err(|_| {
+		eyre::eyre!(
 			"Attempt to interpret non-number value as number {} {}:{}",
 			std::file!(),
 			std::line!(),
@@ -50,14 +50,11 @@ fn groups_hook(remaining: Value) {
 		)
 	})?;
 	src.set(
-		byond_string!("cost_groups"),
-		Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+		"cost_groups",
+		ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
 	)?;
-	src.set(
-		byond_string!("num_group_turfs_processed"),
-		Value::from(num_eq as f32),
-	)?;
-	Ok(Value::from(is_cancelled))
+	src.set("num_group_turfs_processed", ByondValue::from(num_eq as f32))?;
+	Ok(ByondValue::from(is_cancelled))
 }
 
 // Finds small differences in turf pressures and equalizes them.
@@ -79,7 +76,9 @@ fn excited_group_processing(
 		}
 
 		with_turf_gases_read(|arena| {
-			let Some(initial_mix_ref) = arena.get_from_id(initial_turf) else { return; };
+			let Some(initial_mix_ref) = arena.get_from_id(initial_turf) else {
+				return;
+			};
 			if !initial_mix_ref.enabled() {
 				return;
 			}
@@ -98,7 +97,9 @@ fn excited_group_processing(
 						break;
 					}
 					if let Some(idx) = border_turfs.pop_front() {
-						let Some(tmix) = arena.get_from_id(idx) else { break; };
+						let Some(tmix) = arena.get_from_id(idx) else {
+							break;
+						};
 						if let Some(lock) = all_mixtures.get(tmix.mix) {
 							let mix = lock.read();
 							let pressure = mix.return_pressure();

@@ -1,4 +1,4 @@
-use auxtools::*;
+use byondapi::prelude::*;
 
 use super::*;
 
@@ -162,24 +162,17 @@ impl TurfHeat {
 	}
 }
 
-pub fn supercond_update_ref(src: Value) -> Result<(), Runtime> {
+pub fn supercond_update_ref(src: ByondValue) -> Result<(), Runtime> {
 	let id = unsafe { src.raw.data.id };
-	let therm_cond = src
-		.get_number(byond_string!("thermal_conductivity"))
-		.unwrap_or(0.0);
-	let therm_cap = src
-		.get_number(byond_string!("heat_capacity"))
-		.unwrap_or(0.0);
+	let therm_cond = src.read_number("thermal_conductivity").unwrap_or(0.0);
+	let therm_cap = src.read_number("heat_capacity").unwrap_or(0.0);
 	if therm_cond > 0.0 && therm_cap > 0.0 {
 		let therm_info = ThermalInfo {
 			id,
 			adjacent_to_space: src.call("should_conduct_to_space", &[])?.as_number()? > 0.0,
 			heat_capacity: therm_cap,
 			thermal_conductivity: therm_cond,
-			temperature: RwLock::new(
-				src.get_number(byond_string!("initial_temperature"))
-					.unwrap_or(TCMB),
-			),
+			temperature: RwLock::new(src.read_number("initial_temperature").unwrap_or(TCMB)),
 		};
 		with_turf_heat_write(|arena| arena.insert_turf(therm_info));
 	} else {
@@ -189,31 +182,29 @@ pub fn supercond_update_ref(src: Value) -> Result<(), Runtime> {
 }
 
 pub fn supercond_update_adjacencies(id: u32) -> Result<(), Runtime> {
-	let max_x = auxtools::Value::world()
-		.get_number(byond_string!("maxx"))
+	let max_x = auxtools::ByondValue::world()
+		.read_number("maxx")
 		.map_err(|_| {
-			runtime!(
+			eyre::eyre!(
 				"Attempt to interpret non-number value as number {} {}:{}",
 				std::file!(),
 				std::line!(),
 				std::column!()
 			)
 		})? as i32;
-	let max_y = auxtools::Value::world()
-		.get_number(byond_string!("maxy"))
+	let max_y = auxtools::ByondValue::world()
+		.read_number("maxy")
 		.map_err(|_| {
-			runtime!(
+			eyre::eyre!(
 				"Attempt to interpret non-number value as number {} {}:{}",
 				std::file!(),
 				std::line!(),
 				std::column!()
 			)
 		})? as i32;
-	let src_turf = unsafe { Value::turf_by_id_unchecked(id) };
+	let src_turf = unsafe { ByondValue::turf_by_id_unchecked(id) };
 	with_turf_heat_write(|arena| -> Result<(), Runtime> {
-		if let Ok(blocked_dirs) =
-			src_turf.get_number(byond_string!("conductivity_blocked_directions"))
-		{
+		if let Ok(blocked_dirs) = src_turf.read_number("conductivity_blocked_directions") {
 			let actual_dir = Directions::from_bits_truncate(blocked_dirs as u8);
 			arena.update_adjacencies(id, actual_dir, max_x, max_y)
 		} else if let Some(&idx) = arena.get_id(&id) {
@@ -224,26 +215,26 @@ pub fn supercond_update_adjacencies(id: u32) -> Result<(), Runtime> {
 	Ok(())
 }
 
-#[hook("/turf/proc/return_temperature")]
+#[byondapi_hooks::bind("/turf/proc/return_temperature")]
 fn hook_turf_temperature() {
-	with_turf_heat_read(|arena| -> DMResult {
+	with_turf_heat_read(|arena| -> Result<ByondValue> {
 		if let Some(&node_index) = arena.get_id(&unsafe { src.raw.data.id }) {
 			let info = arena.get(node_index).unwrap();
 			let read = info.temperature.read();
 			if read.is_normal() {
-				Ok(Value::from(*read))
+				Ok(ByondValue::from(*read))
 			} else {
-				Ok(Value::from(300))
+				Ok(ByondValue::from(300))
 			}
 		} else {
-			Ok(Value::from(102))
+			Ok(ByondValue::from(102))
 		}
 	})
 }
 
 // Expected function call: process_turf_heat()
 // Returns: TRUE if thread not done, FALSE otherwise
-#[hook("/datum/controller/subsystem/air/proc/process_turf_heat")]
+#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/process_turf_heat")]
 fn process_heat_notify() {
 	rebuild_turf_graph()?;
 	/*
@@ -263,8 +254,8 @@ fn process_heat_notify() {
 		does this in general, thus turf gas mixtures being 2.5 m^3.
 	*/
 	let sender = heat_processing_callbacks_sender();
-	let time_delta = (src.get_number(byond_string!("wait")).map_err(|_| {
-		runtime!(
+	let time_delta = (src.read_number("wait").map_err(|_| {
+		eyre::eyre!(
 			"Attempt to interpret non-number value as number {} {}:{}",
 			std::file!(),
 			std::line!(),
@@ -272,7 +263,7 @@ fn process_heat_notify() {
 		)
 	})? / 10.0) as f64;
 	_ = sender.try_send(SSheatInfo { time_delta });
-	Ok(Value::null())
+	Ok(ByondValue::null())
 }
 
 fn get_share_energy(delta: f32, cap_1: f32, cap_2: f32) -> f32 {
@@ -412,8 +403,8 @@ fn process_heat_start() -> Result<(), String> {
 							{
 								// not what heat capacity means but whatever
 								drop(sender.try_send(Box::new(move || {
-									let turf = unsafe { Value::turf_by_id_unchecked(id) };
-									turf.set(byond_string!("to_be_destroyed"), 1.0)?;
+									let turf = unsafe { ByondValue::turf_by_id_unchecked(id) };
+									turf.set("to_be_destroyed", 1.0)?;
 									Ok(())
 								})));
 							}
@@ -459,20 +450,18 @@ fn process_heat_start() -> Result<(), String> {
 			});
 			let bench = start_time.elapsed().as_millis();
 			drop(sender.try_send(Box::new(move || {
-				let ssair = auxtools::Value::globals().get(byond_string!("SSair"))?;
-				let prev_cost = ssair
-					.get_number(byond_string!("cost_superconductivity"))
-					.map_err(|_| {
-						runtime!(
-							"Attempt to interpret non-number value as number {} {}:{}",
-							std::file!(),
-							std::line!(),
-							std::column!()
-						)
-					})?;
+				let ssair = auxtools::ByondValue::globals().get("SSair")?;
+				let prev_cost = ssair.read_number("cost_superconductivity").map_err(|_| {
+					eyre::eyre!(
+						"Attempt to interpret non-number value as number {} {}:{}",
+						std::file!(),
+						std::line!(),
+						std::column!()
+					)
+				})?;
 				ssair.set(
-					byond_string!("cost_superconductivity"),
-					Value::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+					"cost_superconductivity",
+					ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
 				)?;
 				Ok(())
 			})));

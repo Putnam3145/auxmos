@@ -129,17 +129,17 @@ fn finalize_eq(
 					}
 					adj_orig.set(adj_info);
 					let _ = sender.send(Box::new(move || {
-						let real_amount = Value::from(-amount);
-						let turf = unsafe { Value::turf_by_id_unchecked(i as u32) };
-						let other_turf = unsafe { Value::turf_by_id_unchecked(adj_id as u32) };
+						let real_amount = ByondValue::from(-amount);
+						let turf = unsafe { ByondValue::turf_by_id_unchecked(i as u32) };
+						let other_turf = unsafe { ByondValue::turf_by_id_unchecked(adj_id as u32) };
 						if let Err(e) =
 							turf.call("consider_pressure_difference", &[&other_turf, &real_amount])
 						{
-							Proc::find(byond_string!("/proc/stack_trace"))
-								.ok_or_else(|| runtime!("Couldn't find stack_trace!"))?
-								.call(&[&Value::from_string(e.message.as_str())?])?;
+							Proc::find("/proc/stack_trace")
+								.ok_or_else(|| eyre::eyre!("Couldn't find stack_trace!"))?
+								.call(&[&ByondValue::from_string(e.message.as_str())?])?;
 						}
-						Ok(Value::null())
+						Ok(ByondValue::null())
 					}));
 				}
 			}
@@ -173,7 +173,7 @@ fn explosively_depressurize(
 	equalize_hard_turf_limit: usize,
 	max_x: i32,
 	max_y: i32,
-) -> DMResult {
+) -> Result<ByondValue> {
 	let mut turfs: IndexSet<MixWithID, RandomState> = IndexSet::with_hasher(RandomState::default());
 	let mut progression_order: IndexSet<MixWithID, RandomState> =
 		IndexSet::with_hasher(RandomState::default());
@@ -197,9 +197,9 @@ fn explosively_depressurize(
 		}
 		if m.is_immutable() {
 			if progression_order.insert((i, m)) {
-				unsafe { Value::turf_by_id_unchecked(i) }
-					.set(byond_string!("pressure_specific_target"), &unsafe {
-						Value::turf_by_id_unchecked(i)
+				unsafe { ByondValue::turf_by_id_unchecked(i) }
+					.set("pressure_specific_target", &unsafe {
+						ByondValue::turf_by_id_unchecked(i)
 					})?;
 			}
 		} else {
@@ -212,16 +212,16 @@ fn explosively_depressurize(
 					insert_success = turfs.insert((loc, *adj_m))
 				};
 				if insert_success {
-					unsafe { Value::turf_by_id_unchecked(i) }.call(
+					unsafe { ByondValue::turf_by_id_unchecked(i) }.call(
 						"consider_firelocks",
-						&[&unsafe { Value::turf_by_id_unchecked(loc) }],
+						&[&unsafe { ByondValue::turf_by_id_unchecked(loc) }],
 					)?;
 					info.entry(loc).or_default().take();
 				}
 			}
 		}
 		if warned_about_planet_atmos {
-			return Ok(Value::null()); // planet atmos > space
+			return Ok(ByondValue::null()); // planet atmos > space
 		}
 	}
 	for (i, _) in progression_order.iter() {
@@ -243,21 +243,21 @@ fn explosively_depressurize(
 					if progression_order.insert((loc, *adj_m)) {
 						adj_info.curr_transfer_dir = OPP_DIR_INDEX[j as usize];
 						adj_info.curr_transfer_amount = 0.0;
-						let cur_target_turf = unsafe { Value::turf_by_id_unchecked(i) }
-							.get(byond_string!("pressure_specific_target"))?;
-						unsafe { Value::turf_by_id_unchecked(loc) }
-							.set(byond_string!("pressure_specific_target"), &cur_target_turf)?;
+						let cur_target_turf = unsafe { ByondValue::turf_by_id_unchecked(i) }
+							.get("pressure_specific_target")?;
+						unsafe { ByondValue::turf_by_id_unchecked(loc) }
+							.set("pressure_specific_target", &cur_target_turf)?;
 						adj_orig.set(adj_info);
 					}
 				}
 			}
 		}
 	}
-	let hpd = auxtools::Value::globals()
-		.get(byond_string!("SSair"))?
-		.get_list(byond_string!("high_pressure_delta"))
+	let hpd = auxtools::ByondValue::globals()
+		.get("SSair")?
+		.get_list("high_pressure_delta")
 		.map_err(|_| {
-			runtime!(
+			eyre::eyre!(
 				"Attempt to interpret non-list value as list {} {}:{}",
 				std::file!(),
 				std::line!(),
@@ -273,14 +273,14 @@ fn explosively_depressurize(
 		let mut in_hpd = false;
 		for k in 1..=hpd.len() {
 			if let Ok(hpd_val) = hpd.get(k) {
-				if hpd_val == unsafe { Value::turf_by_id_unchecked(*i) } {
+				if hpd_val == unsafe { ByondValue::turf_by_id_unchecked(*i) } {
 					in_hpd = true;
 					break;
 				}
 			}
 		}
 		if !in_hpd {
-			hpd.append(&unsafe { Value::turf_by_id_unchecked(*i) });
+			hpd.append(&unsafe { ByondValue::turf_by_id_unchecked(*i) });
 		}
 		let loc = adjacent_tile_id(cur_info.curr_transfer_dir as u8, *i, max_x, max_y);
 		let mut sum = 0.0_f32;
@@ -298,32 +298,32 @@ fn explosively_depressurize(
 		adj_info.curr_transfer_amount += cur_info.curr_transfer_amount;
 		adj_orig.set(adj_info);
 
-		let byond_turf = unsafe { Value::turf_by_id_unchecked(*i) };
+		let byond_turf = unsafe { ByondValue::turf_by_id_unchecked(*i) };
 
 		byond_turf.set(
-			byond_string!("pressure_difference"),
-			Value::from(cur_info.curr_transfer_amount),
+			"pressure_difference",
+			ByondValue::from(cur_info.curr_transfer_amount),
 		)?;
 		byond_turf.set(
-			byond_string!("pressure_direction"),
-			Value::from((1 << cur_info.curr_transfer_dir) as f32),
+			"pressure_direction",
+			ByondValue::from((1 << cur_info.curr_transfer_dir) as f32),
 		)?;
 
 		if adj_info.curr_transfer_dir == 6 {
-			let byond_turf_adj = unsafe { Value::turf_by_id_unchecked(loc) };
+			let byond_turf_adj = unsafe { ByondValue::turf_by_id_unchecked(loc) };
 			byond_turf_adj.set(
-				byond_string!("pressure_difference"),
-				Value::from(adj_info.curr_transfer_amount),
+				"pressure_difference",
+				ByondValue::from(adj_info.curr_transfer_amount),
 			)?;
 			byond_turf_adj.set(
-				byond_string!("pressure_direction"),
-				Value::from((1 << cur_info.curr_transfer_dir) as f32),
+				"pressure_direction",
+				ByondValue::from((1 << cur_info.curr_transfer_dir) as f32),
 			)?;
 		}
 		m.clear_air();
-		byond_turf.call("handle_decompression_floor_rip", &[&Value::from(sum)])?;
+		byond_turf.call("handle_decompression_floor_rip", &[&ByondValue::from(sum)])?;
 	}
-	Ok(Value::null())
+	Ok(ByondValue::null())
 	//	if (total_gases_deleted / turfs.len() as f32) > 20.0 && turfs.len() > 10 { // logging I guess
 	//	}
 }
@@ -654,15 +654,15 @@ fn process_planet_turfs(
 	max_y: i32,
 	info: &mut HashMap<TurfID, Cell<MonstermosInfo>, FxBuildHasher>,
 	mut queue_cycle_slow: i32,
-) -> DMResult {
+) -> Result<ByondValue> {
 	let (_, sample_turf) = planet_turfs[0];
 	let planet_sum = planetary_atmos()
 		.get(
 			&sample_turf
 				.planetary_atmos
-				.ok_or_else(|| runtime!("Tried to get planetary atmos from turf with none!"))?,
+				.ok_or_else(|| eyre::eyre!("Tried to get planetary atmos from turf with none!"))?,
 		)
-		.ok_or_else(|| runtime!("Tried to get an invalid planetary atmos type!"))?
+		.ok_or_else(|| eyre::eyre!("Tried to get an invalid planetary atmos type!"))?
 		.value()
 		.total_moles();
 	let target_delta = planet_sum - average_moles;
@@ -687,9 +687,9 @@ fn process_planet_turfs(
 		for (j, loc) in adjacent_tile_ids(m.adjacency, i, max_x, max_y) {
 			if let Some(adj_orig) = info.get(&loc) {
 				let mut adj_info = adj_orig.get();
-				unsafe { Value::turf_by_id_unchecked(i) }.call(
+				unsafe { ByondValue::turf_by_id_unchecked(i) }.call(
 					"consider_firelocks",
-					&[&unsafe { Value::turf_by_id_unchecked(loc) }],
+					&[&unsafe { ByondValue::turf_by_id_unchecked(loc) }],
 				)?;
 				if let Some(adj) = turf_gases().get(&loc) {
 					if adj_info.last_slow_queue_cycle == queue_cycle_slow
@@ -730,7 +730,7 @@ fn process_planet_turfs(
 			}
 		}
 	}
-	Ok(Value::null())
+	Ok(ByondValue::null())
 }
 
 #[deprecated(
@@ -885,7 +885,7 @@ pub fn equalize(
 				for (i, turf) in turfs.iter() {
 					finalize_eq(*i, turf, &cloned, max_x, max_y);
 				}
-				Ok(Value::null())
+				Ok(ByondValue::null())
 			}));
 		}
 	}

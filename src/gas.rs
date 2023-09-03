@@ -5,7 +5,7 @@ pub mod mixture;
 
 pub mod types;
 
-use auxtools::*;
+use byondapi::prelude::*;
 
 pub use types::*;
 
@@ -18,6 +18,8 @@ pub use mixture::Mixture;
 use std::{cell::RefCell, collections::HashSet};
 
 pub type GasIDX = usize;
+
+use eyre::Result;
 
 /// A static container, with a bunch of helper functions for accessing global data. It's horrible, I know, but video games.
 pub struct GasArena {}
@@ -48,7 +50,7 @@ fn is_registered_mix(i: u32) -> bool {
 	})
 }
 
-fn register_mix(v: &Value) {
+fn register_mix(v: &ByondValue) {
 	REGISTERED_GAS_MIXES.with(|thin| {
 		thin.borrow_mut()
 			.as_mut()
@@ -65,15 +67,13 @@ fn unregister_mix(i: u32) {
 	});
 }
 
-#[init(partial)]
-fn initialize_gas_mixtures() -> Result<(), String> {
+fn initialize_gas_mixtures() -> Result<()> {
 	*GAS_MIXTURES.write() = Some(Vec::with_capacity(240_000));
 	*NEXT_GAS_IDS.write() = Some(Vec::with_capacity(2000));
 	REGISTERED_GAS_MIXES.with(|thing| *thing.borrow_mut() = Some(Default::default()));
 	Ok(())
 }
 
-#[shutdown]
 fn shut_down_gases() {
 	crate::turfs::wait_for_tasks();
 	GAS_MIXTURES.write().as_mut().unwrap().clear();
@@ -108,15 +108,15 @@ impl GasArena {
 	/// If no such gas mixture exists or the closure itself errors.
 	/// # Panics
 	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
-	pub fn with_gas_mixture<T, F>(id: usize, f: F) -> Result<T, Runtime>
+	pub fn with_gas_mixture<T, F>(id: usize, f: F) -> Result<T>
 	where
-		F: FnOnce(&Mixture) -> Result<T, Runtime>,
+		F: FnOnce(&Mixture) -> Result<T>,
 	{
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
 		let mix = gas_mixtures
 			.get(id)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id))?
+			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", id))?
 			.read();
 		f(&mix)
 	}
@@ -125,15 +125,15 @@ impl GasArena {
 	/// If no such gas mixture exists or the closure itself errors.
 	/// # Panics
 	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
-	pub fn with_gas_mixture_mut<T, F>(id: usize, f: F) -> Result<T, Runtime>
+	pub fn with_gas_mixture_mut<T, F>(id: usize, f: F) -> Result<T>
 	where
-		F: FnOnce(&mut Mixture) -> Result<T, Runtime>,
+		F: FnOnce(&mut Mixture) -> Result<T>,
 	{
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
 		let mut mix = gas_mixtures
 			.get(id)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", id))?
+			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", id))?
 			.write();
 		f(&mut mix)
 	}
@@ -142,19 +142,19 @@ impl GasArena {
 	/// If no such gas mixture exists or the closure itself errors.
 	/// # Panics
 	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
-	pub fn with_gas_mixtures<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
+	pub fn with_gas_mixtures<T, F>(src: usize, arg: usize, f: F) -> Result<T>
 	where
-		F: FnOnce(&Mixture, &Mixture) -> Result<T, Runtime>,
+		F: FnOnce(&Mixture, &Mixture) -> Result<T>,
 	{
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
 		let src_gas = gas_mixtures
 			.get(src)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?
+			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", src))?
 			.read();
 		let arg_gas = gas_mixtures
 			.get(arg)
-			.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?
+			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", arg))?
 			.read();
 		f(&src_gas, &arg_gas)
 	}
@@ -163,9 +163,9 @@ impl GasArena {
 	/// If no such gas mixture exists or the closure itself errors.
 	/// # Panics
 	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
-	pub fn with_gas_mixtures_mut<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
+	pub fn with_gas_mixtures_mut<T, F>(src: usize, arg: usize, f: F) -> Result<T>
 	where
-		F: FnOnce(&mut Mixture, &mut Mixture) -> Result<T, Runtime>,
+		F: FnOnce(&mut Mixture, &mut Mixture) -> Result<T>,
 	{
 		let src = src;
 		let arg = arg;
@@ -174,7 +174,7 @@ impl GasArena {
 		if src == arg {
 			let mut entry = gas_mixtures
 				.get(src)
-				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?
+				.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", src))?
 				.write();
 			let mix = &mut entry;
 			let mut copied = mix.clone();
@@ -183,11 +183,11 @@ impl GasArena {
 			f(
 				&mut gas_mixtures
 					.get(src)
-					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?
+					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", src))?
 					.write(),
 				&mut gas_mixtures
 					.get(arg)
-					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?
+					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", arg))?
 					.write(),
 			)
 		}
@@ -197,9 +197,9 @@ impl GasArena {
 	/// If no such gas mixture exists or the closure itself errors.
 	/// # Panics
 	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
-	fn with_gas_mixtures_custom<T, F>(src: usize, arg: usize, f: F) -> Result<T, Runtime>
+	fn with_gas_mixtures_custom<T, F>(src: usize, arg: usize, f: F) -> Result<T>
 	where
-		F: FnOnce(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T, Runtime>,
+		F: FnOnce(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T>,
 	{
 		let src = src;
 		let arg = arg;
@@ -208,46 +208,44 @@ impl GasArena {
 		if src == arg {
 			let entry = gas_mixtures
 				.get(src)
-				.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?;
+				.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", src))?;
 			let gas_copy = entry.read().clone();
 			f(entry, &RwLock::new(gas_copy))
 		} else {
 			f(
 				gas_mixtures
 					.get(src)
-					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", src))?,
+					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", src))?,
 				gas_mixtures
 					.get(arg)
-					.ok_or_else(|| runtime!("No gas mixture with ID {} exists!", arg))?,
+					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", arg))?,
 			)
 		}
 	}
-	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument Value to point to it.
+	/// Fills in the first unused slot in the gas mixtures vector, or adds another one, then sets the argument ByondValue to point to it.
 	/// # Errors
 	/// If `initial_volume` is incorrect or `_extools_pointer_gasmixture` doesn't exist, somehow.
 	/// # Panics
 	/// If not called from the main thread
 	/// If `NEXT_GAS_IDS` is not initialized, somehow.
-	pub fn register_mix(mix: &Value) -> DMResult {
-		let init_volume = mix
-			.get_number(byond_string!("initial_volume"))
-			.map_err(|_| {
-				runtime!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?;
+	pub fn register_mix(mix: &ByondValue) -> Result<ByondValue> {
+		let init_volume = mix.read_number("initial_volume").map_err(|_| {
+			eyre::eyre!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 		if NEXT_GAS_IDS.read().as_ref().unwrap().is_empty() {
 			let mut gas_lock = GAS_MIXTURES.write();
 			let gas_mixtures = gas_lock.as_mut().unwrap();
 			let next_idx = gas_mixtures.len();
 			gas_mixtures.push(RwLock::new(Mixture::from_vol(init_volume)));
 
-			mix.set(
-				byond_string!("_extools_pointer_gasmixture"),
-				f32::from_bits(next_idx as u32),
+			mix.write_var(
+				"_extools_pointer_gasmixture",
+				&ByondValue::from(f32::from_bits(next_idx as u32)),
 			)
 			.unwrap();
 
@@ -277,16 +275,16 @@ impl GasArena {
 				.unwrap()
 				.write()
 				.clear_with_vol(init_volume);
-			mix.set(
-				byond_string!("_extools_pointer_gasmixture"),
-				f32::from_bits(idx as u32),
+			mix.write_var(
+				"_extools_pointer_gasmixture",
+				&ByondValue::from(f32::from_bits(idx as u32)),
 			)
 			.unwrap();
 		}
 		register_mix(mix);
-		Ok(Value::null())
+		Ok(ByondValue::null())
 	}
-	/// Marks the Value's gas mixture as unused, allowing it to be reallocated to another.
+	/// Marks the ByondValue's gas mixture as unused, allowing it to be reallocated to another.
 	/// # Panics
 	/// If not called from the main thread
 	/// If `NEXT_GAS_IDS` hasn't been initialized, somehow.
@@ -294,18 +292,18 @@ impl GasArena {
 		if is_registered_mix(mix) {
 			use raw_types::values::{ValueData, ValueTag};
 			unsafe {
-				let mut raw = raw_types::values::Value {
+				let mut raw = raw_types::values::ByondValue {
 					tag: ValueTag::Null,
 					data: ValueData { id: 0 },
 				};
-				let this_mix = raw_types::values::Value {
+				let this_mix = raw_types::values::ByondValue {
 					tag: ValueTag::Datum,
 					data: ValueData { id: mix },
 				};
 				let err = raw_types::funcs::get_variable(
 					&mut raw,
 					this_mix,
-					byond_string!("_extools_pointer_gasmixture").get_id(),
+					"_extools_pointer_gasmixture".get_id(),
 				);
 				if err == 1 {
 					let idx = raw.data.number.to_bits();
@@ -323,14 +321,14 @@ impl GasArena {
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.
 /// # Errors
 /// If a gasmixture ID is not a number or the callback returns an error.
-pub fn with_mix<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
+pub fn with_mix<T, F>(mix: &ByondValue, f: F) -> Result<T>
 where
-	F: FnMut(&Mixture) -> Result<T, Runtime>,
+	F: FnMut(&Mixture) -> Result<T>,
 {
 	GasArena::with_gas_mixture(
-		mix.get_number(byond_string!("_extools_pointer_gasmixture"))
+		mix.read_number("_extools_pointer_gasmixture")
 			.map_err(|_| {
-				runtime!(
+				eyre::eyre!(
 					"Attempt to interpret non-number value as number {} {}:{}",
 					std::file!(),
 					std::line!(),
@@ -345,14 +343,14 @@ where
 /// As `with_mix`, but mutable.
 /// # Errors
 /// If a gasmixture ID is not a number or the callback returns an error.
-pub fn with_mix_mut<T, F>(mix: &Value, f: F) -> Result<T, Runtime>
+pub fn with_mix_mut<T, F>(mix: &ByondValue, f: F) -> Result<T>
 where
-	F: FnMut(&mut Mixture) -> Result<T, Runtime>,
+	F: FnMut(&mut Mixture) -> Result<T>,
 {
 	GasArena::with_gas_mixture_mut(
-		mix.get_number(byond_string!("_extools_pointer_gasmixture"))
+		mix.read_number("_extools_pointer_gasmixture")
 			.map_err(|_| {
-				runtime!(
+				eyre::eyre!(
 					"Attempt to interpret non-number value as number {} {}:{}",
 					std::file!(),
 					std::line!(),
@@ -367,15 +365,15 @@ where
 /// As `with_mix`, but with two mixes.
 /// # Errors
 /// If a gasmixture ID is not a number or the callback returns an error.
-pub fn with_mixes<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
+pub fn with_mixes<T, F>(src_mix: &ByondValue, arg_mix: &ByondValue, f: F) -> Result<T>
 where
-	F: FnMut(&Mixture, &Mixture) -> Result<T, Runtime>,
+	F: FnMut(&Mixture, &Mixture) -> Result<T>,
 {
 	GasArena::with_gas_mixtures(
 		src_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
+			.read_number("_extools_pointer_gasmixture")
 			.map_err(|_| {
-				runtime!(
+				eyre::eyre!(
 					"Attempt to interpret non-number value as number {} {}:{}",
 					std::file!(),
 					std::line!(),
@@ -384,9 +382,9 @@ where
 			})?
 			.to_bits() as usize,
 		arg_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
+			.read_number("_extools_pointer_gasmixture")
 			.map_err(|_| {
-				runtime!(
+				eyre::eyre!(
 					"Attempt to interpret non-number value as number {} {}:{}",
 					std::file!(),
 					std::line!(),
@@ -401,15 +399,15 @@ where
 /// As `with_mix_mut`, but with two mixes.
 /// # Errors
 /// If a gasmixture ID is not a number or the callback returns an error.
-pub fn with_mixes_mut<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
+pub fn with_mixes_mut<T, F>(src_mix: &ByondValue, arg_mix: &ByondValue, f: F) -> Result<T>
 where
-	F: FnMut(&mut Mixture, &mut Mixture) -> Result<T, Runtime>,
+	F: FnMut(&mut Mixture, &mut Mixture) -> Result<T>,
 {
 	GasArena::with_gas_mixtures_mut(
 		src_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
+			.read_number("_extools_pointer_gasmixture")
 			.map_err(|_| {
-				runtime!(
+				eyre::eyre!(
 					"Attempt to interpret non-number value as number {} {}:{}",
 					std::file!(),
 					std::line!(),
@@ -418,9 +416,9 @@ where
 			})?
 			.to_bits() as usize,
 		arg_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
+			.read_number("_extools_pointer_gasmixture")
 			.map_err(|_| {
-				runtime!(
+				eyre::eyre!(
 					"Attempt to interpret non-number value as number {} {}:{}",
 					std::file!(),
 					std::line!(),
@@ -435,15 +433,15 @@ where
 /// Allows different lock levels for each gas. Instead of relevant refs to the gases, returns the `RWLock` object.
 /// # Errors
 /// If a gasmixture ID is not a number or the callback returns an error.
-pub fn with_mixes_custom<T, F>(src_mix: &Value, arg_mix: &Value, f: F) -> Result<T, Runtime>
+pub fn with_mixes_custom<T, F>(src_mix: &ByondValue, arg_mix: &ByondValue, f: F) -> Result<T>
 where
-	F: FnMut(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T, Runtime>,
+	F: FnMut(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T>,
 {
 	GasArena::with_gas_mixtures_custom(
 		src_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
+			.read_number("_extools_pointer_gasmixture")
 			.map_err(|_| {
-				runtime!(
+				eyre::eyre!(
 					"Attempt to interpret non-number value as number {} {}:{}",
 					std::file!(),
 					std::line!(),
@@ -452,9 +450,9 @@ where
 			})?
 			.to_bits() as usize,
 		arg_mix
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
+			.read_number("_extools_pointer_gasmixture")
 			.map_err(|_| {
-				runtime!(
+				eyre::eyre!(
 					"Attempt to interpret non-number value as number {} {}:{}",
 					std::file!(),
 					std::line!(),

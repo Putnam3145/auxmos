@@ -14,7 +14,7 @@ mod katmos;
 #[cfg(feature = "superconductivity")]
 mod superconduct;
 
-use auxtools::*;
+use byondapi::prelude::*;
 
 use rayon::prelude::*;
 
@@ -32,6 +32,8 @@ use indexmap::IndexMap;
 
 use std::time::Duration;
 use std::{mem::drop, sync::atomic::AtomicU64};
+
+use eyre::Result;
 
 bitflags! {
 	#[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -240,7 +242,7 @@ impl TurfGases {
 			self.graph.remove_node(index);
 		}
 	}
-	pub fn update_adjacencies(&mut self, idx: TurfID, adjacent_list: List) -> Result<(), Runtime> {
+	pub fn update_adjacencies(&mut self, idx: TurfID, adjacent_list: List) -> Result<()> {
 		if let Some(&this_index) = self.map.get(&idx) {
 			self.remove_adjacencies(this_index);
 			for i in 1..=adjacent_list.len() {
@@ -387,8 +389,7 @@ pub fn wait_for_tasks() {
 	}
 }
 
-#[init(partial)]
-fn initialize_turf_statics() -> Result<(), String> {
+fn initialize_turf_statics() -> Result<()> {
 	// 10x 255x255 zlevels
 	// double that for edges since each turf can have up to 6 edges but eehhhh
 	*TURF_GASES.write() = Some(TurfGases {
@@ -440,25 +441,25 @@ where
 	f(PLANETARY_ATMOS.upgradable_read())
 }
 
-#[hook("/turf/proc/update_air_ref")]
+#[byondapi_hooks::bind("/turf/proc/update_air_ref")]
 fn hook_register_turf() {
 	let id = unsafe { src.raw.data.id };
 	let flag = determine_turf_flag(src);
-	if let Ok(blocks) = src.get_number(byond_string!("blocks_air")) {
+	if let Ok(blocks) = src.read_number("blocks_air") {
 		if blocks > 0.0 {
 			with_turf_gases_write(|arena| arena.remove_turf(id));
 			#[cfg(feature = "superconductivity")]
 			superconduct::supercond_update_ref(src)?;
-			return Ok(Value::null());
+			return Ok(ByondValue::null());
 		}
 	}
 	if flag >= 0 {
 		let mut to_insert: TurfMixture = TurfMixture::default();
-		let air = src.get(byond_string!("air"))?;
+		let air = src.get("air")?;
 		to_insert.mix = air
-			.get_number(byond_string!("_extools_pointer_gasmixture"))
+			.read_number("_extools_pointer_gasmixture")
 			.map_err(|_| {
-				runtime!(
+				eyre::eyre!(
 					"Attempt to interpret non-number value as number {} {}:{}",
 					std::file!(),
 					std::line!(),
@@ -469,9 +470,9 @@ fn hook_register_turf() {
 		to_insert.flags = SimulationFlags::from_bits_truncate(flag as u8);
 		to_insert.id = id;
 
-		if let Ok(is_planet) = src.get_number(byond_string!("planetary_atmos")) {
+		if let Ok(is_planet) = src.read_number("planetary_atmos") {
 			if is_planet != 0.0 {
-				if let Ok(at_str) = src.get_string(byond_string!("initial_gas_mix")) {
+				if let Ok(at_str) = src.get_string("initial_gas_mix") {
 					with_planetary_atmos_upgradeable_read(|lock| {
 						to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
 						if lock
@@ -504,7 +505,7 @@ fn hook_register_turf() {
 
 	#[cfg(feature = "superconductivity")]
 	superconduct::supercond_update_ref(src)?;
-	Ok(Value::null())
+	Ok(ByondValue::null())
 }
 
 const PLANET_TURF: i32 = 1;
@@ -513,17 +514,13 @@ const CLOSED_TURF: i32 = -1;
 const OPEN_TURF: i32 = 2;
 
 //hardcoded because we can't have nice things
-fn determine_turf_flag(src: &Value) -> i32 {
+fn determine_turf_flag(src: &ByondValue) -> i32 {
 	let path = src
 		.get_type()
 		.unwrap_or_else(|_| "TYPPENOTFOUND".to_string());
 	if !path.as_str().starts_with("/turf/open") {
 		CLOSED_TURF
-	} else if src
-		.get_number(byond_string!("planetary_atmos"))
-		.unwrap_or(0.0)
-		> 0.0
-	{
+	} else if src.read_number("planetary_atmos").unwrap_or(0.0) > 0.0 {
 		PLANET_TURF
 	} else if path.as_str().starts_with("/turf/open/space") {
 		SPACE_TURF
@@ -532,11 +529,11 @@ fn determine_turf_flag(src: &Value) -> i32 {
 	}
 }
 
-#[hook("/turf/proc/__update_auxtools_turf_adjacency_info")]
+#[byondapi_hooks::bind("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn hook_infos() {
 	let id = unsafe { src.raw.data.id };
-	with_turf_gases_write(|arena| -> Result<(), Runtime> {
-		if let Ok(adjacent_list) = src.get_list(byond_string!("atmos_adjacent_turfs")) {
+	with_turf_gases_write(|arena| -> Result<()> {
+		if let Ok(adjacent_list) = src.get_list("atmos_adjacent_turfs") {
 			arena.update_adjacencies(id, adjacent_list)?;
 		} else if let Some(&idx) = arena.map.get(&id) {
 			arena.remove_adjacencies(idx);
@@ -546,7 +543,7 @@ fn hook_infos() {
 
 	#[cfg(feature = "superconductivity")]
 	superconduct::supercond_update_adjacencies(id)?;
-	Ok(Value::null())
+	Ok(ByondValue::null())
 }
 
 // gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't
@@ -554,19 +551,19 @@ fn hook_infos() {
 /// Will use a cached overlay list if one exists.
 /// # Errors
 /// If auxgm wasn't implemented properly or there's an invalid gas mixture.
-fn update_visuals(src: Value) -> DMResult {
+fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 	use super::gas;
-	match src.get(byond_string!("air")) {
-		Err(_) => Ok(Value::null()),
+	match src.get("air") {
+		Err(_) => Ok(ByondValue::null()),
 		Ok(air) => {
 			let overlay_types = List::new();
-			let gas_overlays = Value::globals()
-				.get(byond_string!("gas_data"))?
-				.get_list(byond_string!("overlays"))?;
+			let gas_overlays = ByondValue::globals()
+				.get("gas_data")?
+				.get_list("overlays")?;
 			let ptr = air
-				.get_number(byond_string!("_extools_pointer_gasmixture"))
+				.read_number("_extools_pointer_gasmixture")
 				.map_err(|_| {
-					runtime!(
+					eyre::eyre!(
 						"Attempt to interpret non-number value as number {} {}:{}",
 						std::file!(),
 						std::line!(),
@@ -591,7 +588,7 @@ fn update_visuals(src: Value) -> DMResult {
 				})
 			})?;
 
-			src.call("set_visuals", &[&Value::from(overlay_types)])
+			src.call("set_visuals", &[&ByondValue::from(overlay_types)])
 		}
 	}
 }

@@ -1,7 +1,7 @@
 #[cfg(feature = "reaction_hooks")]
 mod hooks;
 
-use auxtools::{byond_string, runtime, shutdown, ByondValue, Runtime};
+use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
 
 use crate::gas::{gas_idx_to_id, total_num_gases, GasIDX, Mixture};
 
@@ -38,7 +38,6 @@ thread_local! {
 	static REACTION_VALUES: RefCell<HashMap<ReactionIdentifier, ReactionSide, FxBuildHasher>> = Default::default();
 }
 
-#[shutdown]
 fn clean_up_reaction_values() {
 	crate::turfs::wait_for_tasks();
 	REACTION_VALUES.with(|reaction_values| {
@@ -67,14 +66,14 @@ pub fn react_by_id(
 
 impl Reaction {
 	/// Takes a `/datum/gas_reaction` and makes a byond reaction out of it.
-	pub fn from_byond_reaction(reaction: &ByondValue) -> Result<Self, Runtime> {
+	pub fn from_byond_reaction(reaction: &ByondValue) -> Result<Self> {
 		let priority = FloatOrd(
 			reaction
 				.read_number("priority")
 				.map_err(|_| eyre::eyre!("Reaction priorty must be a number!"))?,
 		);
 		let string_id = reaction
-			.get_string("id")
+			.read_string("id")
 			.map_err(|_| eyre::eyre!("Reaction id must be a string!"))?;
 		let func = {
 			#[cfg(feature = "reaction_hooks")]
@@ -88,7 +87,10 @@ impl Reaction {
 		};
 		let id = fxhash::hash64(string_id.as_bytes());
 		let our_reaction = {
-			if let Ok(min_reqs) = reaction.get_list("min_requirements") {
+			if let Some(min_reqs) = reaction
+				.read_var("min_requirements")
+				.map_or_else(None, |value| value.is_list().then_some(value))
+			{
 				let mut min_gas_reqs: Vec<(GasIDX, f32)> = Vec::new();
 				for i in 0..total_num_gases() {
 					if let Ok(req_amount) = min_reqs
@@ -121,7 +123,7 @@ impl Reaction {
 			}
 		}?;
 
-		REACTION_VALUES.with(|r| -> Result<(), Runtime> {
+		REACTION_VALUES.with(|r| -> Result<()> {
 			let mut reaction_map = r.borrow_mut();
 			match func {
 				Some(function) => {

@@ -588,7 +588,7 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 				})
 			})?;
 
-			src.call("set_visuals", &[&ByondValue::from(overlay_types)])
+			src.call("set_visuals", &[ByondValue::from(overlay_types)])
 		}
 	}
 }

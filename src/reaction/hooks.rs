@@ -22,10 +22,10 @@ pub fn func_from_id(id: &str) -> Option<ReactFunc> {
 	}
 }
 
-type ReactFunc = fn(&ByondValue, &ByondValue) -> Result<ByondValue><ByondValue>;
+type ReactFunc = fn(&ByondValue, &ByondValue) -> Result<ByondValue>;
 
 #[cfg(feature = "plasma_fire_hook")]
-fn plasma_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue><ByondValue> {
+fn plasma_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
 	const PLASMA_UPPER_TEMPERATURE: f32 = 1390.0 + T0C;
 	const OXYGEN_BURN_RATE_BASE: f32 = 1.4;
 	const PLASMA_OXYGEN_FULLBURN: f32 = 10.0;
@@ -86,16 +86,14 @@ fn plasma_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue
 			air.garbage_collect();
 			Ok(new_temp)
 		})?;
-		let cached_results = byond_air
-			.get_list("reaction_results")
-			.map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-list value as list {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?;
+		let cached_results = byond_air.get_list("reaction_results").map_err(|_| {
+			eyre::eyre!(
+				"Attempt to interpret non-list value as list {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 		cached_results.set("fire", ByondValue::from(fire_amount))?;
 		if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
 			if let Some(fire_expose) = Proc::find("/proc/fire_expose") {
@@ -103,7 +101,7 @@ fn plasma_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue
 			} else {
 				Proc::find("/proc/stack_trace")
 					.ok_or_else(|| eyre::eyre!("Couldn't find stack_trace!"))?
-					.call(&[&ByondValue::from_string(
+					.call(&[ByondValue::from_string(
 						"fire_expose not found! Auxmos hooked fires do not work without it!",
 					)?])?;
 			}
@@ -115,7 +113,7 @@ fn plasma_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue
 }
 
 #[cfg(feature = "trit_fire_hook")]
-fn tritium_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue><ByondValue> {
+fn tritium_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
 	const TRITIUM_BURN_OXY_FACTOR: f32 = 100.0;
 	const TRITIUM_BURN_TRIT_FACTOR: f32 = 10.0;
 	const TRITIUM_MINIMUM_RADIATION_FACTOR: f32 = 0.1;
@@ -147,16 +145,14 @@ fn tritium_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValu
 		air.adjust_moles(water, burned_fuel / TRITIUM_BURN_OXY_FACTOR);
 		let energy_released = FIRE_HYDROGEN_ENERGY_RELEASED * burned_fuel;
 		let new_temp = (initial_energy + energy_released) / air.heat_capacity();
-		let cached_results = byond_air
-			.get_list("reaction_results")
-			.map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-list value as list {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?;
+		let cached_results = byond_air.get_list("reaction_results").map_err(|_| {
+			eyre::eyre!(
+				"Attempt to interpret non-list value as list {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 		cached_results.set("fire", ByondValue::from(burned_fuel))?;
 		air.set_temperature(new_temp);
 		air.garbage_collect();
@@ -188,7 +184,7 @@ fn tritium_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValu
 }
 
 #[cfg(feature = "fusion_hook")]
-fn fusion(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue><ByondValue> {
+fn fusion(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
 	const TOROID_CALCULATED_THRESHOLD: f32 = 5.96; // changing it by 0.1 generally doubles or halves fusion temps
 	const INSTABILITY_GAS_POWER_FACTOR: f32 = 3.0;
 	const PLASMA_BINDING_ENERGY: f32 = 20_000_000.0;
@@ -320,13 +316,11 @@ fn fusion(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue><Byo
 		Ok(standard_energy)
 	})?;
 	if reaction_energy != 0.0 {
-		Proc::find("/proc/fusion_ball")
-			.unwrap()
-			.call(&[
-				holder,
-				&ByondValue::from(reaction_energy),
-				&ByondValue::from(standard_energy),
-			])?;
+		Proc::find("/proc/fusion_ball").unwrap().call(&[
+			holder,
+			&ByondValue::from(reaction_energy),
+			&ByondValue::from(standard_energy),
+		])?;
 		Ok(ByondValue::from(1.0))
 	} else if reaction_energy == 0.0 && instability <= FUSION_INSTABILITY_ENDOTHERMALITY {
 		Ok(ByondValue::from(1.0))
@@ -336,7 +330,7 @@ fn fusion(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue><Byo
 }
 
 #[cfg(feature = "generic_fire_hook")]
-fn generic_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue><ByondValue> {
+fn generic_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
 	use fxhash::FxBuildHasher;
 	use hashbrown::HashMap;
 	let mut burn_results: HashMap<GasIDX, f32, FxBuildHasher> = HashMap::with_capacity_and_hasher(
@@ -428,16 +422,14 @@ fn generic_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValu
 				);
 				Ok(air.get_temperature())
 			})?;
-			let cached_results = byond_air
-				.get_list("reaction_results")
-				.map_err(|_| {
-					eyre::eyre!(
-						"Attempt to interpret non-list value as list {} {}:{}",
-						std::file!(),
-						std::line!(),
-						std::column!()
-					)
-				})?;
+			let cached_results = byond_air.get_list("reaction_results").map_err(|_| {
+				eyre::eyre!(
+					"Attempt to interpret non-list value as list {} {}:{}",
+					std::file!(),
+					std::line!(),
+					std::column!()
+				)
+			})?;
 			cached_results.set("fire", ByondValue::from(fire_amount))?;
 			if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
 				if let Some(fire_expose) = Proc::find("/proc/fire_expose") {

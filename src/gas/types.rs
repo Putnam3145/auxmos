@@ -19,7 +19,7 @@ use std::{
 
 use hashbrown::HashMap;
 
-use eyre::Result;
+use eyre::{Context, Result};
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
 
@@ -183,17 +183,14 @@ impl GasType {
 				}
 			},
 			fire_products: gas.read_var("fire_products").ok().and_then(|product_info| {
-				if let Ok(products) = product_info.read_list(name) {
+				if product_info.is_list() {
 					Some(FireProductInfo::Generic(
-						(1..=products.len())
-							.filter_map(|i| {
-								let s = products.get(i).unwrap();
-								s.as_string()
+						product_info
+							.iter()
+							.filter_map(|(k, v)| {
+								k.get_string()
 									.and_then(|s_str| {
-										products
-											.get(s)
-											.and_then(|v| v.as_number())
-											.map(|amount| (GasRef::Deferred(s_str), amount))
+										v.get_number().map(|amt| (GasRef::Deferred(s_str), amt))
 									})
 									.ok()
 							})
@@ -246,20 +243,20 @@ fn destroy_gas_info_structs() {
 
 #[byondapi_hooks::bind("/proc/_auxtools_register_gas")]
 fn hook_register_gas(gas: ByondValue) {
-	let gas_id = gas.get_string("id")?;
+	let gas_id = gas.read_string("id")?;
 	match {
 		unsafe { GAS_INFO_BY_STRING.as_ref() }
 			.unwrap()
 			.get_mut(&gas_id as &str)
 	} {
 		Some(mut old_gas) => {
-			let gas_cache = GasType::new(gas, old_gas.idx)?;
+			let gas_cache = GasType::new(&gas, old_gas.idx)?;
 			*old_gas = gas_cache.clone();
 			GAS_SPECIFIC_HEATS.write().as_mut().unwrap()[old_gas.idx] = gas_cache.specific_heat;
 			GAS_INFO_BY_IDX.write().as_mut().unwrap()[old_gas.idx] = gas_cache;
 		}
 		None => {
-			let gas_cache = GasType::new(gas, TOTAL_NUM_GASES.load(Ordering::Acquire))?;
+			let gas_cache = GasType::new(&gas, TOTAL_NUM_GASES.load(Ordering::Acquire))?;
 			let cached_id = gas_id.clone();
 			let cached_idx = gas_cache.idx;
 			unsafe { GAS_INFO_BY_STRING.as_ref() }
@@ -285,11 +282,7 @@ fn hook_register_gas(gas: ByondValue) {
 fn hook_init() {
 	let data = ByondValue::globals().get("gas_data")?.get_list("datums")?;
 	for i in 1..=data.len() {
-		hook_register_gas(
-			&ByondValue::null(),
-			&ByondValue::null(),
-			vec![data.get(data.get(i)?)?],
-		)?;
+		hook_register_gas(data.get(data.get(i)?)?)?;
 	}
 	*REACTION_INFO.write() = Some(get_reaction_info());
 	Ok(ByondValue::from(true))
@@ -438,14 +431,14 @@ fn finalize_gas_refs() {
 }
 
 thread_local! {
-	static CACHED_GAS_IDS: RefCell<HashMap<ByondValue, GasIDX, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
+	static CACHED_GAS_IDS: RefCell<HashMap<u32, GasIDX, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
 	static CACHED_IDX_TO_STRINGS: RefCell<HashMap<usize,Box<str>, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
 }
 
 /// Returns the appropriate index to be used by auxmos for a given ID string.
 /// # Errors
 /// If gases aren't loaded or an invalid gas ID is given.
-pub fn gas_idx_from_string(id: &str) -> Result<GasIDX, Runtime> {
+pub fn gas_idx_from_string(id: &str) -> Result<GasIDX> {
 	Ok(unsafe { GAS_INFO_BY_STRING.as_ref() }
 		.ok_or_else(|| eyre::eyre!("Gases not loaded yet! Uh oh!"))?
 		.get(id)
@@ -456,15 +449,15 @@ pub fn gas_idx_from_string(id: &str) -> Result<GasIDX, Runtime> {
 /// Returns the appropriate index to be used by the game for a given Byond string.
 /// # Errors
 /// If the given string is not a string or is not a valid gas ID.
-pub fn gas_idx_from_value(string_val: &ByondValue) -> Result<GasIDX, Runtime> {
+pub fn gas_idx_from_value(string_val: ByondValue) -> Result<GasIDX> {
 	CACHED_GAS_IDS.with(|c| {
 		let mut cache = c.borrow_mut();
-		if let Some(idx) = cache.get(string_val) {
+		if let Some(idx) = cache.get(&string_val.get_ref().unwrap()) {
 			Ok(*idx)
 		} else {
-			let id = &string_val.as_string()?;
+			let id = &string_val.get_string()?;
 			let idx = gas_idx_from_string(id)?;
-			cache.insert(string_val.clone(), idx);
+			cache.insert(string_val.get_ref().unwrap(), idx);
 			Ok(idx)
 		}
 	})
@@ -473,14 +466,15 @@ pub fn gas_idx_from_value(string_val: &ByondValue) -> Result<GasIDX, Runtime> {
 /// Takes an index and returns a borrowed string representing the string ID of the gas datum stored in that index.
 /// # Panics
 /// If an invalid gas index is given to this. This should never happen, so we panic instead of runtiming.
-pub fn gas_idx_to_id(idx: GasIDX) -> Result<ByondValue> {
+pub fn gas_idx_to_id(idx: GasIDX) -> ByondValue {
 	CACHED_IDX_TO_STRINGS.with(|thin| {
 		let stuff = thin.borrow();
-		ByondValue::from_string(
+		ByondValue::new_str(
 			stuff
 				.get(&idx)
 				.unwrap_or_else(|| panic!("Invalid gas index: {idx}")),
 		)
+		.unwrap_or_else(|_| panic!("Cannot convert gas index to byond string: {idx}"))
 	})
 }
 

@@ -1,13 +1,13 @@
 use std::io::Write;
 
-pub use byondapi_impl::bind;
+pub use byondapi_impl::{bind, bind_raw_args};
 
 pub use inventory;
 
 pub struct Bind {
 	proc_path: &'static str,
 	func_name: &'static str,
-	func_arguments: &'static str,
+	func_arguments: Option<&'static str>,
 }
 
 inventory::collect!(Bind);
@@ -35,7 +35,7 @@ pub fn generate_bindings() {
 	for thing in inventory::iter::<Bind> {
 		let path = thing.proc_path;
 		let func_name = thing.func_name;
-		let func_arguments = thing.func_arguments;
+		let func_arguments = thing.func_arguments.unwrap_or("");
 		file.write_all(
 			format!(
 				r#"{path}

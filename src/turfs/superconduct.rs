@@ -12,6 +12,8 @@ use parking_lot::Once;
 
 use coarsetime::Instant;
 
+use eyre::Result;
+
 static INIT_HEAT: Once = Once::new();
 
 static TURF_HEAT: RwLock<Option<TurfHeat>> = const_rwlock(None);
@@ -162,7 +164,7 @@ impl TurfHeat {
 	}
 }
 
-pub fn supercond_update_ref(src: ByondValue) -> Result<(), Runtime> {
+pub fn supercond_update_ref(src: ByondValue) -> Result<()> {
 	let id = unsafe { src.raw.data.id };
 	let therm_cond = src.read_number("thermal_conductivity").unwrap_or(0.0);
 	let therm_cap = src.read_number("heat_capacity").unwrap_or(0.0);
@@ -181,7 +183,7 @@ pub fn supercond_update_ref(src: ByondValue) -> Result<(), Runtime> {
 	Ok(())
 }
 
-pub fn supercond_update_adjacencies(id: u32) -> Result<(), Runtime> {
+pub fn supercond_update_adjacencies(id: u32) -> Result<()> {
 	let max_x = auxtools::ByondValue::world()
 		.read_number("maxx")
 		.map_err(|_| {
@@ -203,7 +205,7 @@ pub fn supercond_update_adjacencies(id: u32) -> Result<(), Runtime> {
 			)
 		})? as i32;
 	let src_turf = unsafe { ByondValue::turf_by_id_unchecked(id) };
-	with_turf_heat_write(|arena| -> Result<(), Runtime> {
+	with_turf_heat_write(|arena| -> Result<()> {
 		if let Ok(blocked_dirs) = src_turf.read_number("conductivity_blocked_directions") {
 			let actual_dir = Directions::from_bits_truncate(blocked_dirs as u8);
 			arena.update_adjacencies(id, actual_dir, max_x, max_y)

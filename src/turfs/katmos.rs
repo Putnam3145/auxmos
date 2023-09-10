@@ -24,6 +24,8 @@ use hashbrown::{HashMap, HashSet};
 
 use parking_lot::{const_mutex, Mutex};
 
+use eyre::Result;
+
 static EQUALIZE_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = const_mutex(None);
 
 #[shutdown]
@@ -327,7 +329,7 @@ fn take_from_givers(
 fn explosively_depressurize(
 	initial_index: NodeIndex,
 	equalize_hard_turf_limit: usize,
-) -> Result<(), Runtime> {
+) -> Result<()> {
 	//1st floodfill
 	let (space_turfs, warned_about_planet_atmos) = {
 		let mut cur_queue_idx = 0;
@@ -339,7 +341,7 @@ fn explosively_depressurize(
 			let cur_index = turfs[cur_queue_idx];
 			cur_queue_idx += 1;
 			let mut firelock_considerations = vec![];
-			with_turf_gases_read(|arena| -> Result<(), Runtime> {
+			with_turf_gases_read(|arena| -> Result<()> {
 				let cur_mixture = {
 					let maybe = arena.get(cur_index);
 					if maybe.is_none() {
@@ -600,10 +602,7 @@ fn flood_fill_zones(
 	(!ignore_zone).then_some((turf_graph, total_moles))
 }
 
-fn planet_equalize(
-	initial_index: NodeIndex,
-	equalize_hard_turf_limit: usize,
-) -> Result<(), Runtime> {
+fn planet_equalize(initial_index: NodeIndex, equalize_hard_turf_limit: usize) -> Result<()> {
 	let mut cur_queue_idx = 0;
 	let mut warned_about_space = false;
 	let mut planet_turfs: IndexSet<NodeIndex, FxBuildHasher> = Default::default();
@@ -613,7 +612,7 @@ fn planet_equalize(
 		let cur_index = turfs[cur_queue_idx];
 		cur_queue_idx += 1;
 		let mut firelock_considerations = vec![];
-		with_turf_gases_read(|arena| -> Result<(), Runtime> {
+		with_turf_gases_read(|arena| -> Result<()> {
 			let cur_mixture = {
 				let maybe = arena.get(cur_index);
 				if maybe.is_none() {

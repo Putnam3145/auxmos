@@ -8,7 +8,6 @@ use parking_lot::{const_mutex, Mutex};
 
 static GROUPS_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = const_mutex(None);
 
-#[shutdown]
 fn flush_groups_channel() {
 	*GROUPS_CHANNEL.lock() = None;
 }
@@ -22,11 +21,11 @@ pub fn send_to_groups(sent: BTreeSet<TurfID>) {
 }
 
 #[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
-fn groups_hook(remaining: ByondValue) {
+fn groups_hook(src: ByondValue, remaining: ByondValue) {
 	let group_pressure_goal = src
 		.read_number("excited_group_pressure_goal")
 		.unwrap_or(0.5);
-	let remaining_time = Duration::from_millis(remaining.as_number().unwrap_or(50.0) as u64);
+	let remaining_time = Duration::from_millis(remaining.get_number().unwrap_or(50.0) as u64);
 	let start_time = Instant::now();
 	let (num_eq, is_cancelled) = with_groups(|thing| {
 		if let Some(high_pressure_turfs) = thing {
@@ -49,11 +48,14 @@ fn groups_hook(remaining: ByondValue) {
 			std::column!()
 		)
 	})?;
-	src.set(
+	src.write_var(
 		"cost_groups",
-		ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+		&ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
 	)?;
-	src.set("num_group_turfs_processed", ByondValue::from(num_eq as f32))?;
+	src.write_var(
+		"num_group_turfs_processed",
+		&ByondValue::from(num_eq as f32),
+	)?;
 	Ok(ByondValue::from(is_cancelled))
 }
 

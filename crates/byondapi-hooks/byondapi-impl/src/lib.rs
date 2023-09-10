@@ -23,6 +23,7 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 	let func_name_ffi_disp = quote!(#func_name_ffi).to_string();
 
 	let args = &input.sig.inputs;
+	let args_len = args.len();
 
 	//Check for returns
 	match &input.sig.output {
@@ -36,6 +37,7 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 	}
 
 	let signature = quote! {
+		#[no_mangle]
 		pub unsafe extern "C" fn #func_name_ffi (
 			__argc: ::byondapi::sys::u4c,
 			__argv: *mut ::byondapi::value::ByondValue
@@ -56,13 +58,7 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 			let index = arg_names.len() - 1;
 			proc_arg_unpacker.push(
 				(quote! {
-					{
-						if args.get(#index).is_some() {
-							args[#index]
-						} else {
-							::byondapi::value::ByondValue::default()
-						}
-					}
+					args[#index]
 				})
 				.into(),
 			);
@@ -78,7 +74,7 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 					::byondapi_hooks::Bind {
 						proc_path: #p,
 						func_name: #func_name_ffi_disp,
-						func_arguments: #arg_names_disp
+						func_arguments: Some(#arg_names_disp)
 					}
 				});
 			}
@@ -86,7 +82,7 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 		Some(other_literal) => {
 			return syn::Error::new(
 				other_literal.span(),
-				"Hook attributes must be a string literal or empty",
+				"Bind attributes must be a string literal or empty",
 			)
 			.to_compile_error()
 			.into()
@@ -97,7 +93,7 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 					::byondapi_hooks::Bind{
 						proc_path: #func_name_disp,
 						func_name: #func_name_ffi_disp,
-						func_arguments: #arg_names_disp
+						func_arguments: Some(#arg_names_disp)
 					}
 				});
 
@@ -108,7 +104,10 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 	let result = quote! {
 		#cthook_prelude
 		#signature {
-			let args = unsafe { ::byondapi::parse_args(__argc, __argv) };
+			let mut args = unsafe { ::byondapi::parse_args(__argc, __argv) };
+			if #args_len > args.len() {
+				args.extend((0..#args_len - args.len()).map(|_| ::byondapi::value::ByondValue::default()))
+			}
 			match #func_name(#proc_arg_unpacker) {
 				Ok(val) => val,
 				Err(_) => ::byondapi::value::ByondValue::null()
@@ -116,6 +115,98 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 		}
 		fn #func_name(#args) -> ::eyre::Result<::byondapi::value::ByondValue>
+		#body
+	};
+	result.into()
+}
+
+#[proc_macro_attribute]
+pub fn bind_raw_args(attr: TokenStream, item: TokenStream) -> TokenStream {
+	let input = syn::parse_macro_input!(item as syn::ItemFn);
+	let proc = syn::parse_macro_input!(attr as Option<syn::Lit>);
+
+	let func_name = &input.sig.ident;
+	let func_name_disp = quote!(#func_name).to_string();
+
+	let func_name_ffi = format!("{func_name_disp}_ffi");
+	let func_name_ffi = Ident::new(&func_name_ffi, func_name.span());
+	let func_name_ffi_disp = quote!(#func_name_ffi).to_string();
+
+	//Check for returns
+	match &input.sig.output {
+		syn::ReturnType::Default => {} //
+
+		syn::ReturnType::Type(_, ty) => {
+			return syn::Error::new(ty.span(), "Do not specify the return value of binds")
+				.to_compile_error()
+				.into()
+		}
+	}
+
+	if !input.sig.inputs.is_empty() {
+		return syn::Error::new(
+			input.sig.inputs.span(),
+			"Do not specify arguments for raw arg binds",
+		)
+		.to_compile_error()
+		.into();
+	}
+
+	let signature = quote! {
+		pub unsafe extern "C" fn #func_name_ffi (
+			__argc: ::byondapi::sys::u4c,
+			__argv: *mut ::byondapi::value::ByondValue
+		) -> ::byondapi::value::ByondValue
+	};
+
+	let body = &input.block;
+
+	//Submit to inventory
+	let cthook_prelude = match proc {
+		Some(Lit::Str(p)) => {
+			quote! {
+				::byondapi_hooks::inventory::submit!({
+					::byondapi_hooks::Bind {
+						proc_path: #p,
+						func_name: #func_name_ffi_disp,
+						func_arguments: None
+					}
+				});
+			}
+		}
+		Some(other_literal) => {
+			return syn::Error::new(
+				other_literal.span(),
+				"Bind attributes must be a string literal or empty",
+			)
+			.to_compile_error()
+			.into()
+		}
+		None => quote! {
+			quote! {
+				::byondapi_hooks::inventory::submit!({
+					::byondapi_hooks::Bind{
+						proc_path: #func_name_disp,
+						func_name: #func_name_ffi_disp,
+						func_arguments: None,
+					}
+				});
+
+			}
+		},
+	};
+
+	let result = quote! {
+		#cthook_prelude
+		#signature {
+			let mut args = unsafe { ::byondapi::parse_args(__argc, __argv) };
+			match #func_name(args) {
+				Ok(val) => val,
+				Err(_) => ::byondapi::value::ByondValue::null()
+			}
+
+		}
+		fn #func_name(mut args: ::std::vec::Vec<::byondapi::value::ByondValue>) -> ::eyre::Result<::byondapi::value::ByondValue>
 		#body
 	};
 	result.into()

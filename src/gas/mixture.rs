@@ -18,6 +18,8 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use std::collections::BTreeMap;
 
+use eyre::Result;
+
 type SpecificFireInfo = (usize, f32, f32);
 
 struct GasCache(AtomicF32);
@@ -137,10 +139,7 @@ impl Mixture {
 	/// Allows closures to iterate over each gas.
 	/// # Errors
 	/// If the closure errors.
-	pub fn for_each_gas(
-		&self,
-		mut f: impl FnMut(GasIDX, f32) -> Result<(), auxtools::Runtime>,
-	) -> Result<(), auxtools::Runtime> {
+	pub fn for_each_gas(&self, mut f: impl FnMut(GasIDX, f32) -> Result<()>) -> Result<()> {
 		for (i, g) in self.enumerate() {
 			f(i, g)?;
 		}
@@ -151,8 +150,8 @@ impl Mixture {
 	/// If the closure errors.
 	pub fn for_each_gas_mut(
 		&mut self,
-		mut f: impl FnMut(GasIDX, &mut f32) -> Result<(), auxtools::Runtime>,
-	) -> Result<(), auxtools::Runtime> {
+		mut f: impl FnMut(GasIDX, &mut f32) -> Result<()>,
+	) -> Result<()> {
 		for (i, g) in self.moles.iter_mut().enumerate() {
 			f(i, g)?;
 		}

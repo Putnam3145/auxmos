@@ -50,12 +50,12 @@ fn is_registered_mix(i: u32) -> bool {
 	})
 }
 
-fn register_mix(v: &ByondValue) {
+fn register_mix(v: ByondValue) {
 	REGISTERED_GAS_MIXES.with(|thin| {
 		thin.borrow_mut()
 			.as_mut()
 			.expect("Wrong thread tried to access REGISTERED_GAS_MIXES, must be the main thread!")
-			.insert(unsafe { v.raw.data.id })
+			.insert(v)
 	});
 }
 
@@ -228,7 +228,7 @@ impl GasArena {
 	/// # Panics
 	/// If not called from the main thread
 	/// If `NEXT_GAS_IDS` is not initialized, somehow.
-	pub fn register_mix(mix: &ByondValue) -> Result<ByondValue> {
+	pub fn register_mix(mix: ByondValue) -> Result<ByondValue> {
 		let init_volume = mix.read_number("initial_volume").map_err(|_| {
 			eyre::eyre!(
 				"Attempt to interpret non-number value as number {} {}:{}",
@@ -288,32 +288,14 @@ impl GasArena {
 	/// # Panics
 	/// If not called from the main thread
 	/// If `NEXT_GAS_IDS` hasn't been initialized, somehow.
-	pub fn unregister_mix(mix: u32) {
-		if is_registered_mix(mix) {
-			use raw_types::values::{ValueData, ValueTag};
-			unsafe {
-				let mut raw = raw_types::values::ByondValue {
-					tag: ValueTag::Null,
-					data: ValueData { id: 0 },
-				};
-				let this_mix = raw_types::values::ByondValue {
-					tag: ValueTag::Datum,
-					data: ValueData { id: mix },
-				};
-				let err = raw_types::funcs::get_variable(
-					&mut raw,
-					this_mix,
-					"_extools_pointer_gasmixture".get_id(),
-				);
-				if err == 1 {
-					let idx = raw.data.number.to_bits();
-					{
-						let mut next_gas_ids = NEXT_GAS_IDS.write();
-						next_gas_ids.as_mut().unwrap().push(idx as usize);
-					}
-					unregister_mix(mix);
-				}
+	pub fn unregister_mix(mix: ByondValue) {
+		let mix_ref = mix.get_ref().unwrap();
+		if is_registered_mix(mix_ref) {
+			if let Ok(idx) = mix.read_number("_extools_pointer_gasmixture") {
+				let mut next_gas_ids = NEXT_GAS_IDS.write();
+				next_gas_ids.as_mut().unwrap().push(idx as usize);
 			}
+			unregister_mix(mix_ref);
 		}
 	}
 }
@@ -321,7 +303,7 @@ impl GasArena {
 /// Gets the mix for the given value, and calls the provided closure with a reference to that mix as an argument.
 /// # Errors
 /// If a gasmixture ID is not a number or the callback returns an error.
-pub fn with_mix<T, F>(mix: &ByondValue, f: F) -> Result<T>
+pub fn with_mix<T, F>(mix: ByondValue, f: F) -> Result<T>
 where
 	F: FnMut(&Mixture) -> Result<T>,
 {
@@ -343,7 +325,7 @@ where
 /// As `with_mix`, but mutable.
 /// # Errors
 /// If a gasmixture ID is not a number or the callback returns an error.
-pub fn with_mix_mut<T, F>(mix: &ByondValue, f: F) -> Result<T>
+pub fn with_mix_mut<T, F>(mix: ByondValue, f: F) -> Result<T>
 where
 	F: FnMut(&mut Mixture) -> Result<T>,
 {
@@ -365,7 +347,7 @@ where
 /// As `with_mix`, but with two mixes.
 /// # Errors
 /// If a gasmixture ID is not a number or the callback returns an error.
-pub fn with_mixes<T, F>(src_mix: &ByondValue, arg_mix: &ByondValue, f: F) -> Result<T>
+pub fn with_mixes<T, F>(src_mix: ByondValue, arg_mix: ByondValue, f: F) -> Result<T>
 where
 	F: FnMut(&Mixture, &Mixture) -> Result<T>,
 {
@@ -399,7 +381,7 @@ where
 /// As `with_mix_mut`, but with two mixes.
 /// # Errors
 /// If a gasmixture ID is not a number or the callback returns an error.
-pub fn with_mixes_mut<T, F>(src_mix: &ByondValue, arg_mix: &ByondValue, f: F) -> Result<T>
+pub fn with_mixes_mut<T, F>(src_mix: ByondValue, arg_mix: ByondValue, f: F) -> Result<T>
 where
 	F: FnMut(&mut Mixture, &mut Mixture) -> Result<T>,
 {
@@ -433,7 +415,7 @@ where
 /// Allows different lock levels for each gas. Instead of relevant refs to the gases, returns the `RWLock` object.
 /// # Errors
 /// If a gasmixture ID is not a number or the callback returns an error.
-pub fn with_mixes_custom<T, F>(src_mix: &ByondValue, arg_mix: &ByondValue, f: F) -> Result<T>
+pub fn with_mixes_custom<T, F>(src_mix: ByondValue, arg_mix: ByondValue, f: F) -> Result<T>
 where
 	F: FnMut(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T>,
 {

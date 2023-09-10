@@ -1,4 +1,4 @@
-use byondapi::prelude::*;
+use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
 
 use super::*;
 
@@ -20,20 +20,11 @@ fn thread_running_hook() {
 }
 
 #[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
-fn finish_process_turfs() {
-	let arg_limit = args
-		.get(0)
-		.ok_or_else(|| eyre::eyre!("Wrong number of arguments to turf finishing: 0"))?
-		.as_number()
-		.map_err(|_| {
-			eyre::eyre!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?;
-	if process_callbacks_for_millis(arg_limit as u64) {
+fn finish_process_turfs(time_remaining: ByondValue) {
+	if !time_remaining.is_num() {
+		return Err(eyre::eyre!("Turf finishing did not receive a number"));
+	}
+	if process_callbacks_for_millis(time_remaining.get_number().unwrap() as u64) {
 		Ok(ByondValue::from(true))
 	} else {
 		Ok(ByondValue::from(false))
@@ -41,8 +32,8 @@ fn finish_process_turfs() {
 }
 
 #[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
-fn process_turf_hook(remaining: ByondValue) {
-	let remaining_time = Duration::from_millis(remaining.as_number().unwrap_or(50.0) as u64);
+fn process_turf_hook(src: ByondValue, remaining: ByondValue) {
+	let remaining_time = Duration::from_millis(remaining.get_number().unwrap_or(50.0) as u64);
 	let fdm_max_steps = src.read_number("share_max_steps").unwrap_or(1.0) as i32;
 	let equalize_enabled = cfg!(feature = "fastmos")
 		&& src.read_number("equalize_enabled").map_err(|_| {
@@ -57,11 +48,7 @@ fn process_turf_hook(remaining: ByondValue) {
 	Ok(ByondValue::null())
 }
 
-fn process_turf(
-	remaining: Duration,
-	fdm_max_steps: i32,
-	equalize_enabled: bool,
-) -> Result<(), Runtime> {
+fn process_turf(remaining: Duration, fdm_max_steps: i32, equalize_enabled: bool) -> Result<()> {
 	//this will block until process_turfs is called
 	let (low_pressure_turfs, _high_pressure_turfs) = {
 		let start_time = Instant::now();

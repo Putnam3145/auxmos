@@ -13,7 +13,7 @@ pub type ReactionPriority = FloatOrd<f32>;
 
 pub type ReactionIdentifier = u64;
 
-use eyre::Result;
+use eyre::{Context, Result};
 
 #[derive(Clone)]
 pub struct Reaction {
@@ -31,7 +31,7 @@ use hashbrown::HashMap;
 
 enum ReactionSide {
 	ByondSide(ByondValue),
-	RustSide(fn(&ByondValue, &ByondValue) -> Result<ByondValue>),
+	RustSide(fn(ByondValue, ByondValue) -> Result<ByondValue>),
 }
 
 thread_local! {
@@ -50,14 +50,16 @@ fn clean_up_reaction_values() {
 /// If the reaction itself has a runtime.
 pub fn react_by_id(
 	id: ReactionIdentifier,
-	src: &ByondValue,
-	holder: &ByondValue,
+	src: ByondValue,
+	holder: ByondValue,
 ) -> Result<ByondValue> {
 	REACTION_VALUES.with(|r| {
 		r.borrow().get(&id).map_or_else(
 			|| Err(eyre::eyre!("Reaction with invalid id")),
 			|reaction| match reaction {
-				ReactionSide::ByondSide(val) => val.call("react", &[src, holder]),
+				ReactionSide::ByondSide(val) => val
+					.call("react", &[src, holder])
+					.wrap_err("calling byond side react in react_by_id"),
 				ReactionSide::RustSide(func) => func(src, holder),
 			},
 		)
@@ -70,7 +72,7 @@ impl Reaction {
 		let priority = FloatOrd(
 			reaction
 				.read_number("priority")
-				.map_err(|_| eyre::eyre!("Reaction priorty must be a number!"))?,
+				.map_err(|_| eyre::eyre!("Reaction priority must be a number!"))?,
 		);
 		let string_id = reaction
 			.read_string("id")
@@ -89,24 +91,21 @@ impl Reaction {
 		let our_reaction = {
 			if let Some(min_reqs) = reaction
 				.read_var("min_requirements")
-				.map_or_else(None, |value| value.is_list().then_some(value))
+				.map_or(None, |value| value.is_list().then_some(value))
 			{
 				let mut min_gas_reqs: Vec<(GasIDX, f32)> = Vec::new();
 				for i in 0..total_num_gases() {
 					if let Ok(req_amount) = min_reqs
-						.get(gas_idx_to_id(i).unwrap_or_else(|_| ByondValue::null()))
-						.and_then(|v| v.as_number())
+						.read_list_index(gas_idx_to_id(i))
+						.and_then(|v| v.get_number())
 					{
 						min_gas_reqs.push((i, req_amount));
 					}
 				}
-				let min_temp_req = min_reqs.get("TEMP").and_then(|v| v.as_number()).ok();
-				let max_temp_req = min_reqs.get("MAX_TEMP").and_then(|v| v.as_number()).ok();
-				let min_ener_req = min_reqs.get("ENER").and_then(|v| v.as_number()).ok();
-				let min_fire_req = min_reqs
-					.get("FIRE_REAGENTS")
-					.and_then(|v| v.as_number())
-					.ok();
+				let min_temp_req = min_reqs.read_number("TEMP").ok();
+				let max_temp_req = min_reqs.read_number("MAX_TEMP").ok();
+				let min_ener_req = min_reqs.read_number("ENER").ok();
+				let min_fire_req = min_reqs.read_number("FIRE_REAGENTS").ok();
 				Ok(Reaction {
 					id,
 					priority,
@@ -169,7 +168,7 @@ impl Reaction {
 	/// Calls the reaction with the given arguments.
 	/// # Errors
 	/// If the reaction itself has a runtime error, this will propagate it up.
-	pub fn react(&self, src: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
+	pub fn react(&self, src: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 		react_by_id(self.id, src, holder)
 	}
 }

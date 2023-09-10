@@ -1,8 +1,10 @@
-use auxtools::*;
+use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
 
 use coarsetime::{Duration, Instant};
 
-type DeferredFunc = Box<dyn FnOnce() -> Result<(), Runtime> + Send + Sync>;
+use eyre::Result;
+
+type DeferredFunc = Box<dyn FnOnce() -> Result<()> + Send + Sync>;
 
 type CallbackChannel = (flume::Sender<DeferredFunc>, flume::Receiver<DeferredFunc>);
 
@@ -10,38 +12,34 @@ pub type CallbackSender = flume::Sender<DeferredFunc>;
 
 pub type CallbackReceiver = flume::Receiver<DeferredFunc>;
 
-static mut CALLBACK_CHANNEL: Option<CallbackChannel> = None;
+static CALLBACK_CHANNEL: std::sync::OnceLock<CallbackChannel> = std::sync::OnceLock::new();
 
-#[init(partial)]
-fn start_callbacks() -> Result<(), String> {
-	unsafe {
-		CALLBACK_CHANNEL = Some(flume::bounded(1_000_000));
-	}
-	Ok(())
-}
-
-#[shutdown]
-fn clean_callbacks() {
-	unsafe { CALLBACK_CHANNEL = None }
+pub fn clean_callbacks() {
+	CALLBACK_CHANNEL
+		.get()
+		.map(|(_, rx)| rx.drain().for_each(|thing| std::mem::drop(thing)));
 }
 
 fn with_callback_receiver<T>(f: impl Fn(&flume::Receiver<DeferredFunc>) -> T) -> T {
-	f(unsafe { &CALLBACK_CHANNEL.as_ref().unwrap().1 })
+	f(&CALLBACK_CHANNEL.get_or_init(|| flume::bounded(1_000_000)).1)
 }
 
 /// This gives you a copy of the callback sender. Send to it with try_send or send, then later it'll be processed
 /// if one of the process_callbacks functions is called for any reason.
 pub fn byond_callback_sender() -> flume::Sender<DeferredFunc> {
-	unsafe { CALLBACK_CHANNEL.as_ref().unwrap().0.clone() }
+	CALLBACK_CHANNEL
+		.get_or_init(|| flume::bounded(1_000_000))
+		.0
+		.clone()
 }
 
 /// Goes through every single outstanding callback and calls them.
 fn process_callbacks() {
-	let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
+	//let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
-				_ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
+				//_ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
 			}
 		}
 	})
@@ -49,12 +47,12 @@ fn process_callbacks() {
 
 /// Goes through every single outstanding callback and calls them, until a given time limit is reached.
 fn process_callbacks_for(duration: Duration) -> bool {
-	let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
+	//let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
 	let timer = Instant::now();
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
-				_ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
+				//_ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
 			}
 			if timer.elapsed() >= duration {
 				return true;
@@ -75,21 +73,18 @@ pub fn process_callbacks_for_millis(millis: u64) -> bool {
 /// Time limit is in milliseconds.
 /// This has to be manually hooked in the code, e.g.
 /// ```
-/// #[hook("/proc/process_atmos_callbacks")]
-/// fn atmos_callback_handle() {
-///     auxcallback::callback_processing_hook(args)
+/// #[bind("/proc/process_atmos_callbacks")]
+/// fn atmos_callback_handle(remaining: ByondValue) {
+///     auxcallback::callback_processing_hook(remaining)
 /// }
 /// ```
 
-pub fn callback_processing_hook(args: &mut Vec<Value>) -> DMResult {
-	match args.len() {
-		0 => {
-			process_callbacks();
-			Ok(Value::null())
-		}
-		_ => {
-			let arg_limit = args.get(0).unwrap().as_number()? as u64;
-			Ok(Value::from(process_callbacks_for_millis(arg_limit)))
-		}
+pub fn callback_processing_hook(time_remaining: ByondValue) -> Result<ByondValue> {
+	if time_remaining.is_num() {
+		let limit = time_remaining.get_number().unwrap() as u64;
+		Ok(ByondValue::from(process_callbacks_for_millis(limit)))
+	} else {
+		process_callbacks();
+		Ok(ByondValue::null())
 	}
 }

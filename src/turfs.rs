@@ -16,6 +16,7 @@ mod superconduct;
 
 use byondapi::prelude::*;
 
+use byondapi::typecheck_trait::ByondTypeCheck;
 use rayon::prelude::*;
 
 use crate::{constants::*, gas::Mixture, GasArena};
@@ -242,22 +243,17 @@ impl TurfGases {
 			self.graph.remove_node(index);
 		}
 	}
-	pub fn update_adjacencies(&mut self, idx: TurfID, adjacent_list: List) -> Result<()> {
+	pub fn update_adjacencies(&mut self, idx: TurfID, adjacent_list: ByondValue) -> Result<()> {
 		if let Some(&this_index) = self.map.get(&idx) {
 			self.remove_adjacencies(this_index);
-			for i in 1..=adjacent_list.len() {
-				let adj_val = adjacent_list.get(i)?;
-				//let adjacent_num = adjacent_list.get(&adj_val)?.as_number()? as u8;
-				if let Some(&adj_index) = self.map.get(&unsafe { adj_val.raw.data.id }) {
-					let flags = AdjacentFlags::from_bits_truncate(
-						adjacent_list
-							.get(adj_val)
-							.and_then(|g| g.as_number())
-							.unwrap_or(0.0) as u8,
-					);
-					self.graph.add_edge(this_index, adj_index, flags);
-				}
-			}
+			adjacent_list
+				.iter()
+				.filter_map(|(k, v)| Some((, v.get_number().unwrap_or(0.0) as u8)))
+				.filter_map(|(adj_ref, flag)| Some((self.map.get(&adj_ref)?, flag)))
+				.for_each(|(adj_index, flag)| {
+					let flags = AdjacentFlags::from_bits_truncate(flag);
+					self.graph.add_edge(this_index, *adj_index, flags);
+				})
 		};
 		Ok(())
 	}
@@ -401,7 +397,6 @@ fn initialize_turf_statics() -> Result<()> {
 	Ok(())
 }
 
-#[shutdown]
 fn shutdown_turfs() {
 	wait_for_tasks();
 	*DIRTY_TURFS.lock() = None;
@@ -442,9 +437,9 @@ where
 }
 
 #[byondapi_hooks::bind("/turf/proc/update_air_ref")]
-fn hook_register_turf() {
-	let id = unsafe { src.raw.data.id };
-	let flag = determine_turf_flag(src);
+fn hook_register_turf(src: ByondValue) {
+	let id = src.get_ref()?;
+	let flag = determine_turf_flag(&src);
 	if let Ok(blocks) = src.read_number("blocks_air") {
 		if blocks > 0.0 {
 			with_turf_gases_write(|arena| arena.remove_turf(id));
@@ -455,7 +450,7 @@ fn hook_register_turf() {
 	}
 	if flag >= 0 {
 		let mut to_insert: TurfMixture = TurfMixture::default();
-		let air = src.get("air")?;
+		let air = src.read_var("air")?;
 		to_insert.mix = air
 			.read_number("_extools_pointer_gasmixture")
 			.map_err(|_| {
@@ -472,7 +467,7 @@ fn hook_register_turf() {
 
 		if let Ok(is_planet) = src.read_number("planetary_atmos") {
 			if is_planet != 0.0 {
-				if let Ok(at_str) = src.get_string("initial_gas_mix") {
+				if let Ok(at_str) = src.read_string("initial_gas_mix") {
 					with_planetary_atmos_upgradeable_read(|lock| {
 						to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
 						if lock
@@ -516,7 +511,7 @@ const OPEN_TURF: i32 = 2;
 //hardcoded because we can't have nice things
 fn determine_turf_flag(src: &ByondValue) -> i32 {
 	let path = src
-		.get_type()
+		.read_string("type")
 		.unwrap_or_else(|_| "TYPPENOTFOUND".to_string());
 	if !path.as_str().starts_with("/turf/open") {
 		CLOSED_TURF
@@ -530,10 +525,14 @@ fn determine_turf_flag(src: &ByondValue) -> i32 {
 }
 
 #[byondapi_hooks::bind("/turf/proc/__update_auxtools_turf_adjacency_info")]
-fn hook_infos() {
-	let id = unsafe { src.raw.data.id };
+fn hook_infos(src: ByondValue) {
+	let id = src.get_ref()?;
 	with_turf_gases_write(|arena| -> Result<()> {
-		if let Ok(adjacent_list) = src.get_list("atmos_adjacent_turfs") {
+		if let Some(adjacent_list) = src
+			.read_var("atmos_adjacent_turfs")
+			.ok()
+			.map_or(None, |adjs| adjs.is_list().then_some(adjs))
+		{
 			arena.update_adjacencies(id, adjacent_list)?;
 		} else if let Some(&idx) = arena.map.get(&id) {
 			arena.remove_adjacencies(idx);
@@ -553,10 +552,10 @@ fn hook_infos() {
 /// If auxgm wasn't implemented properly or there's an invalid gas mixture.
 fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 	use super::gas;
-	match src.get("air") {
+	match src.read_var("air") {
 		Err(_) => Ok(ByondValue::null()),
 		Ok(air) => {
-			let overlay_types = List::new();
+			let overlay_types = ByondValue::new_list();
 			let gas_overlays = ByondValue::globals()
 				.get("gas_data")?
 				.get_list("overlays")?;

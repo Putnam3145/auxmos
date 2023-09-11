@@ -19,7 +19,7 @@ use std::{
 
 use hashbrown::HashMap;
 
-use eyre::{Context, Result};
+use eyre::Result;
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
 
@@ -279,11 +279,15 @@ fn hook_register_gas(gas: ByondValue) {
 }
 
 #[byondapi_hooks::bind("/proc/auxtools_atmos_init")]
-fn hook_init() {
-	let data = ByondValue::globals().get("gas_data")?.get_list("datums")?;
-	for i in 1..=data.len() {
-		hook_register_gas(data.get(data.get(i)?)?)?;
-	}
+fn hook_init(gas_data: ByondValue) {
+	let data = gas_data.read_list("datums")?.to_vec();
+	data.into_iter()
+		.map(hook_register_gas)
+		.map(|res| res.map(|thin| drop(thin)))
+		.collect::<Result<()>>()?;
+	//for i in 1..=data.len() {
+	//	hook_register_gas(data.get(data.get(i)?)?)?;
+	//}
 	*REACTION_INFO.write() = Some(get_reaction_info());
 	Ok(ByondValue::from(true))
 }
@@ -472,7 +476,8 @@ pub fn gas_idx_to_id(idx: GasIDX) -> ByondValue {
 		ByondValue::new_str(
 			stuff
 				.get(&idx)
-				.unwrap_or_else(|| panic!("Invalid gas index: {idx}")),
+				.unwrap_or_else(|| panic!("Invalid gas index: {idx}"))
+				.as_bytes(),
 		)
 		.unwrap_or_else(|_| panic!("Cannot convert gas index to byond string: {idx}"))
 	})

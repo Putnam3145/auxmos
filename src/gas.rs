@@ -55,7 +55,7 @@ fn register_mix(v: ByondValue) {
 		thin.borrow_mut()
 			.as_mut()
 			.expect("Wrong thread tried to access REGISTERED_GAS_MIXES, must be the main thread!")
-			.insert(v)
+			.insert(v.get_ref().unwrap())
 	});
 }
 

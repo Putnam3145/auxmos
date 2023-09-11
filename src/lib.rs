@@ -7,10 +7,6 @@ mod reaction;
 
 mod parser;
 
-use auxtools::{byond_string, hook, runtime};
-
-use auxcleanup::{datum_del, DelDatumFunc};
-
 use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
 
 use gas::{
@@ -319,7 +315,7 @@ fn add_hook(src: ByondValue, num_val: ByondValue) {
 ///Args: (amount). Subtracts the given amount from each gas.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/subtract")]
 fn subtract_hook(src: ByondValue, num_val: ByondValue) {
-	let vf = num_val.try_into().unwrap_or_default();
+	let vf: f32 = num_val.try_into().unwrap_or_default();
 	with_mix_mut(src, |mix| {
 		mix.add(-vf);
 		Ok(ByondValue::null())
@@ -354,7 +350,7 @@ fn remove_by_flag_hook(
 	flag_val: ByondValue,
 	amount_val: ByondValue,
 ) {
-	let flag = flag_val.try_into().map_or(0, |n| n as u32);
+	let flag = flag_val.try_into().map_or(0, |n: f32| n as u32);
 	let amount = amount_val.try_into().unwrap_or(0.0);
 	let pertinent_gases = with_gas_info(|gas_info| {
 		gas_info
@@ -375,7 +371,7 @@ fn remove_by_flag_hook(
 ///Args: (flag). As get_gases(), but only returns gases with the given flag.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/get_by_flag")]
 fn get_by_flag_hook(src: ByondValue, flag_val: ByondValue) {
-	let flag = flag_val.try_into().map_or(0, |n| n as u32);
+	let flag = flag_val.try_into().map_or(0, |n: f32| n as u32);
 	let pertinent_gases = with_gas_info(|gas_info| {
 		gas_info
 			.iter()
@@ -463,7 +459,7 @@ fn react_hook(src: ByondValue, holder: ByondValue) {
 	for reaction in reactions {
 		ret |= ReactionReturn::from_bits_truncate(
 			react_by_id(reaction, src, holder)?
-				.try_into()
+				.get_number()
 				.unwrap_or_default() as u32,
 		);
 		if ret.contains(ReactionReturn::STOP_REACTIONS) {

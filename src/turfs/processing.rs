@@ -335,20 +335,19 @@ fn fdm(
 						.for_each(|(id, diffs)| {
 							let sender = byond_callback_sender();
 							drop(sender.try_send(Box::new(move || {
-								let turf = unsafe { ByondValue::turf_by_id_unchecked(id) };
+								let turf = ByondValue::new_ref(0x01, id);
 								for (id, diff) in diffs.iter().copied() {
 									if id != 0 {
-										let enemy_tile =
-											unsafe { ByondValue::turf_by_id_unchecked(id) };
+										let enemy_tile = ByondValue::new_ref(0x01, id);
 										if diff > 5.0 {
 											turf.call(
 												"consider_pressure_difference",
-												&[&enemy_tile, &ByondValue::from(diff)],
+												&[enemy_tile, ByondValue::from(diff)],
 											)?;
 										} else if diff < -5.0 {
 											enemy_tile.call(
 												"consider_pressure_difference",
-												&[&turf.clone(), &ByondValue::from(-diff)],
+												&[turf.clone(), ByondValue::from(-diff)],
 											)?;
 										}
 									}
@@ -418,11 +417,11 @@ fn post_process() {
 
 				if should_react {
 					drop(sender.try_send(Box::new(move || {
-						let turf = unsafe { ByondValue::turf_by_id_unchecked(id) };
+						let turf = ByondValue::new_ref(0x01, id);
 						if cfg!(target_os = "linux") {
-							turf.get("air")?.call("vv_react", &[&turf])?;
+							turf.read_var("air")?.call("vv_react", &[turf])?;
 						} else {
-							turf.get("air")?.call("react", &[&turf])?;
+							turf.read_var("air")?.call("react", &[turf])?;
 						}
 						Ok(())
 					})));
@@ -431,7 +430,7 @@ fn post_process() {
 				if should_update_vis
 					&& sender
 						.try_send(Box::new(move || {
-							let turf = unsafe { ByondValue::turf_by_id_unchecked(id) };
+							let turf = ByondValue::new_ref(0x01, id);
 							update_visuals(turf)?;
 							Ok(())
 						}))

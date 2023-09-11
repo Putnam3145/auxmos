@@ -248,7 +248,7 @@ impl TurfGases {
 			self.remove_adjacencies(this_index);
 			adjacent_list
 				.iter()
-				.filter_map(|(k, v)| Some((, v.get_number().unwrap_or(0.0) as u8)))
+				.filter_map(|(k, v)| Some((k.get_ref().ok()?, v.get_number().unwrap_or(0.0) as u8)))
 				.filter_map(|(adj_ref, flag)| Some((self.map.get(&adj_ref)?, flag)))
 				.for_each(|(adj_index, flag)| {
 					let flags = AdjacentFlags::from_bits_truncate(flag);
@@ -555,7 +555,8 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 	match src.read_var("air") {
 		Err(_) => Ok(ByondValue::null()),
 		Ok(air) => {
-			let overlay_types = ByondValue::new_list();
+			let overlay_types = ByondValue::new_list()?;
+			let overlay_types: ByondValueList = overlay_types.try_into()?;
 			let gas_overlays = ByondValue::globals()
 				.get("gas_data")?
 				.get_list("overlays")?;
@@ -575,11 +576,11 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 					if let Some(amt) = gas::types::gas_visibility(idx) {
 						if moles > amt {
 							let this_overlay_list =
-								gas_overlays.get(gas::gas_idx_to_id(idx)?)?.as_list()?;
+								gas_overlays.get(gas::gas_idx_to_id(idx))?.as_list()?;
 							if let Ok(this_gas_overlay) =
 								this_overlay_list.get(gas::mixture::visibility_step(moles))
 							{
-								overlay_types.append(this_gas_overlay);
+								overlay_types.push(this_gas_overlay);
 							}
 						}
 					}
@@ -587,7 +588,7 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 				})
 			})?;
 
-			src.call("set_visuals", &[ByondValue::from(overlay_types)])
+			Ok(src.call("set_visuals", &[ByondValue::try_from(overlay_types)?])?)
 		}
 	}
 }

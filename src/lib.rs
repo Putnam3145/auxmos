@@ -7,7 +7,7 @@ mod reaction;
 
 mod parser;
 
-use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
+use byondapi::{map::byond_length, prelude::*, typecheck_trait::ByondTypeCheck};
 
 use gas::{
 	amt_gases, constants, gas_idx_from_string, gas_idx_from_value, gas_idx_to_id, tot_gases, types,
@@ -38,21 +38,21 @@ fn register_gasmixture_hook(src: ByondValue) {
 /// This version is only if auxcleanup is not being used; it should be called from /datum/gas_mixture/Del.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/__gasmixture_unregister")]
 fn unregister_gasmixture_hook(src: ByondValue) {
-	gas::GasArena::unregister_mix(src);
+	gas::GasArena::unregister_mix(&src);
 	Ok(ByondValue::null())
 }
 
 /// Returns: Heat capacity, in J/K (probably).
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/heat_capacity")]
 fn heat_cap_hook(src: ByondValue) {
-	with_mix(src, |mix| Ok(ByondValue::from(mix.heat_capacity())))
+	with_mix(&src, |mix| Ok(ByondValue::from(mix.heat_capacity())))
 }
 
 /// Args: (min_heat_cap). Sets the mix's minimum heat capacity.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/set_min_heat_capacity")]
 fn min_heat_cap_hook(src: ByondValue, arg_min: ByondValue) {
 	let min = arg_min.get_number()?;
-	with_mix_mut(src, |mix| {
+	with_mix_mut(&src, |mix| {
 		mix.set_min_heat_capacity(min);
 		Ok(ByondValue::null())
 	})
@@ -61,37 +61,37 @@ fn min_heat_cap_hook(src: ByondValue, arg_min: ByondValue) {
 /// Returns: Amount of substance, in moles.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/total_moles")]
 fn total_moles_hook(src: ByondValue) {
-	with_mix(src, |mix| Ok(ByondValue::from(mix.total_moles())))
+	with_mix(&src, |mix| Ok(ByondValue::from(mix.total_moles())))
 }
 
 /// Returns: the mix's pressure, in kilopascals.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/return_pressure")]
 fn return_pressure_hook(src: ByondValue) {
-	with_mix(src, |mix| Ok(ByondValue::from(mix.return_pressure())))
+	with_mix(&src, |mix| Ok(ByondValue::from(mix.return_pressure())))
 }
 
 /// Returns: the mix's temperature, in kelvins.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/return_temperature")]
 fn return_temperature_hook(src: ByondValue) {
-	with_mix(src, |mix| Ok(ByondValue::from(mix.get_temperature())))
+	with_mix(&src, |mix| Ok(ByondValue::from(mix.get_temperature())))
 }
 
 /// Returns: the mix's volume, in liters.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/return_volume")]
 fn return_volume_hook(src: ByondValue) {
-	with_mix(src, |mix| Ok(ByondValue::from(mix.volume)))
+	with_mix(&src, |mix| Ok(ByondValue::from(mix.volume)))
 }
 
 /// Returns: the mix's thermal energy, the product of the mixture's heat capacity and its temperature.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/thermal_energy")]
 fn thermal_energy_hook(src: ByondValue) {
-	with_mix(src, |mix| Ok(ByondValue::from(mix.thermal_energy())))
+	with_mix(&src, |mix| Ok(ByondValue::from(mix.thermal_energy())))
 }
 
 /// Args: (mixture). Merges the gas from the giver into src, without modifying the giver mix.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/merge")]
 fn merge_hook(src: ByondValue, giver: ByondValue) {
-	with_mixes_custom(src, giver, |src_mix, giver_mix| {
+	with_mixes_custom(&src, &giver, |src_mix, giver_mix| {
 		src_mix.write().merge(&giver_mix.read());
 		Ok(ByondValue::null())
 	})
@@ -100,8 +100,8 @@ fn merge_hook(src: ByondValue, giver: ByondValue) {
 /// Args: (mixture, ratio). Takes the given ratio of gas from src and puts it into the argument mixture. Ratio is a number between 0 and 1.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/__remove_ratio")]
 fn remove_ratio_hook(src: ByondValue, into: ByondValue, ratio_arg: ByondValue) {
-	let ratio = ratio_arg.try_into().unwrap_or_default();
-	with_mixes_mut(src, into, |src_mix, into_mix| {
+	let ratio = ratio_arg.get_number().unwrap_or_default();
+	with_mixes_mut(&src, &into, |src_mix, into_mix| {
 		src_mix.remove_ratio_into(ratio, into_mix);
 		Ok(ByondValue::null())
 	})
@@ -110,8 +110,8 @@ fn remove_ratio_hook(src: ByondValue, into: ByondValue, ratio_arg: ByondValue) {
 /// Args: (mixture, amount). Takes the given amount of gas from src and puts it into the argument mixture. Amount is amount of substance in moles.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/__remove")]
 fn remove_hook(src: ByondValue, into: ByondValue, amount_arg: ByondValue) {
-	let amount = amount_arg.try_into().unwrap_or_default();
-	with_mixes_mut(src, into, |src_mix, into_mix| {
+	let amount = amount_arg.get_number().unwrap_or_default();
+	with_mixes_mut(&src, &into, |src_mix, into_mix| {
 		src_mix.remove_into(amount, into_mix);
 		Ok(ByondValue::null())
 	})
@@ -120,7 +120,7 @@ fn remove_hook(src: ByondValue, into: ByondValue, amount_arg: ByondValue) {
 /// Arg: (mixture). Makes src into a copy of the argument mixture.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/copy_from")]
 fn copy_from_hook(src: ByondValue, giver: ByondValue) {
-	with_mixes_custom(src, giver, |src_mix, giver_mix| {
+	with_mixes_custom(&src, &giver, |src_mix, giver_mix| {
 		src_mix.write().copy_from_mutable(&giver_mix.read());
 		Ok(ByondValue::null())
 	})
@@ -129,20 +129,19 @@ fn copy_from_hook(src: ByondValue, giver: ByondValue) {
 /// Args: (mixture, conductivity) or (null, conductivity, temperature, heat_capacity). Adjusts temperature of src based on parameters. Returns: temperature of sharer after sharing is complete.
 #[byondapi_hooks::bind_raw_args("/datum/gas_mixture/proc/temperature_share")]
 fn temperature_share_hook() {
-	let src = args[0];
 	let arg_num = args.len();
 	match arg_num {
-		2 => with_mixes_mut(src, args[0], |src_mix, share_mix| {
+		2 => with_mixes_mut(&args[0], &args[0], |src_mix, share_mix| {
 			Ok(ByondValue::from(src_mix.temperature_share(
 				share_mix,
-				args[1].try_into().unwrap_or_default(),
+				args[1].get_number().unwrap_or_default(),
 			)))
 		}),
-		3 => with_mix_mut(src, |mix| {
+		3 => with_mix_mut(&args[0], |mix| {
 			Ok(ByondValue::from(mix.temperature_share_non_gas(
-				args[0].try_into().unwrap_or_default(),
-				args[1].try_into().unwrap_or_default(),
-				args[2].try_into().unwrap_or_default(),
+				args[0].get_number().unwrap_or_default(),
+				args[1].get_number().unwrap_or_default(),
+				args[2].get_number().unwrap_or_default(),
 			)))
 		}),
 		_ => Err(eyre::eyre!("Invalid args for temperature_share")),
@@ -152,11 +151,11 @@ fn temperature_share_hook() {
 /// Returns: a list of the gases in the mixture, associated with their IDs.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/get_gases")]
 fn get_gases_hook(src: ByondValue) {
-	with_mix(src, |mix| {
+	with_mix(&src, |mix| {
 		let mut gases_list: ByondValueList = ByondValue::new_list()?.try_into().unwrap();
 		mix.for_each_gas(|idx, gas| {
 			if gas > GAS_MIN_MOLES {
-				gases_list.push(&gas_idx_to_id(idx));
+				gases_list.push(&gas_idx_to_id(idx))?;
 			}
 			Ok(())
 		})?;
@@ -167,7 +166,7 @@ fn get_gases_hook(src: ByondValue) {
 /// Args: (temperature). Sets the temperature of the mixture. Will be set to 2.7 if it's too low.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/set_temperature")]
 fn set_temperature_hook(src: ByondValue, arg_temp: ByondValue) {
-	let v: f32 = arg_temp.try_into().map_err(|_| {
+	let v = arg_temp.get_number().map_err(|_| {
 		eyre::eyre!(
 			"Attempt to interpret non-number value as number {} {}:{}",
 			std::file!(),
@@ -176,7 +175,7 @@ fn set_temperature_hook(src: ByondValue, arg_temp: ByondValue) {
 		)
 	})?;
 	if v.is_finite() {
-		with_mix_mut(src, |mix| {
+		with_mix_mut(&src, |mix| {
 			mix.set_temperature(v.max(2.7));
 			Ok(ByondValue::null())
 		})
@@ -190,9 +189,9 @@ fn set_temperature_hook(src: ByondValue, arg_temp: ByondValue) {
 /// Args: (gas_id). Returns the heat capacity from the given gas, in J/K (probably).
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/partial_heat_capacity")]
 fn partial_heat_capacity(src: ByondValue, gas_id: ByondValue) {
-	with_mix(src, |mix| {
+	with_mix(&src, |mix| {
 		Ok(ByondValue::from(
-			mix.partial_heat_capacity(gas_idx_from_value(gas_id)?),
+			mix.partial_heat_capacity(gas_idx_from_value(&gas_id)?),
 		))
 	})
 }
@@ -200,7 +199,7 @@ fn partial_heat_capacity(src: ByondValue, gas_id: ByondValue) {
 /// Args: (volume). Sets the volume of the gas.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/set_volume")]
 fn set_volume_hook(src: ByondValue, vol_arg: ByondValue) {
-	let volume = vol_arg.try_into().map_err(|_| {
+	let volume = vol_arg.get_number().map_err(|_| {
 		eyre::eyre!(
 			"Attempt to interpret non-number value as number {} {}:{}",
 			std::file!(),
@@ -208,7 +207,7 @@ fn set_volume_hook(src: ByondValue, vol_arg: ByondValue) {
 			std::column!()
 		)
 	})?;
-	with_mix_mut(src, |mix| {
+	with_mix_mut(&src, |mix| {
 		mix.volume = volume;
 		Ok(ByondValue::null())
 	})
@@ -217,32 +216,34 @@ fn set_volume_hook(src: ByondValue, vol_arg: ByondValue) {
 /// Args: (gas_id). Returns: the amount of substance of the given gas, in moles.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/get_moles")]
 fn get_moles_hook(src: ByondValue, gas_id: ByondValue) {
-	with_mix(src, |mix| {
-		Ok(ByondValue::from(mix.get_moles(gas_idx_from_value(gas_id)?)))
+	with_mix(&src, |mix| {
+		Ok(ByondValue::from(
+			mix.get_moles(gas_idx_from_value(&gas_id)?),
+		))
 	})
 }
 
 /// Args: (gas_id, moles). Sets the amount of substance of the given gas, in moles.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/set_moles")]
 fn set_moles_hook(src: ByondValue, gas_id: ByondValue, amt_val: ByondValue) {
-	let vf: f32 = amt_val.try_into()?;
+	let vf = amt_val.get_number()?;
 	if !vf.is_finite() {
 		return Err(eyre::eyre!("Attempted to set moles to NaN or infinity."));
 	}
 	if vf < 0.0 {
 		return Err(eyre::eyre!("Attempted to set moles to a negative number."));
 	}
-	with_mix_mut(src, |mix| {
-		mix.set_moles(gas_idx_from_value(gas_id)?, vf);
+	with_mix_mut(&src, |mix| {
+		mix.set_moles(gas_idx_from_value(&gas_id)?, vf);
 		Ok(ByondValue::null())
 	})
 }
 /// Args: (gas_id, moles). Adjusts the given gas's amount by the given amount, e.g. (GAS_O2, -0.1) will remove 0.1 moles of oxygen from the mixture.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/adjust_moles")]
 fn adjust_moles_hook(src: ByondValue, id_val: ByondValue, num_val: ByondValue) {
-	let vf = num_val.try_into().unwrap_or_default();
-	with_mix_mut(src, |mix| {
-		mix.adjust_moles(gas_idx_from_value(id_val)?, vf);
+	let vf = num_val.get_number().unwrap_or_default();
+	with_mix_mut(&src, |mix| {
+		mix.adjust_moles(gas_idx_from_value(&id_val)?, vf);
 		Ok(ByondValue::null())
 	})
 }
@@ -255,8 +256,8 @@ fn adjust_moles_temp_hook(
 	num_val: ByondValue,
 	temp_val: ByondValue,
 ) {
-	let vf: f32 = num_val.try_into().unwrap_or_default();
-	let temp = temp_val.try_into().unwrap_or(2.7);
+	let vf = num_val.get_number().unwrap_or_default();
+	let temp = temp_val.get_number().unwrap_or(2.7);
 	if vf < 0.0 {
 		return Err(eyre::eyre!(
 			"Attempted to add a negative gas in adjust_moles_temp."
@@ -266,9 +267,9 @@ fn adjust_moles_temp_hook(
 		return Ok(ByondValue::null());
 	}
 	let mut new_mix = Mixture::new();
-	new_mix.set_moles(gas_idx_from_value(id_val)?, vf);
+	new_mix.set_moles(gas_idx_from_value(&id_val)?, vf);
 	new_mix.set_temperature(temp);
-	with_mix_mut(src, |mix| {
+	with_mix_mut(&src, |mix| {
 		mix.merge(&new_mix);
 		Ok(ByondValue::null())
 	})
@@ -282,31 +283,34 @@ fn adjust_multi_hook() {
 			"Incorrect arg len for adjust_multi (is even, must be odd to account for src)."
 		))
 	} else {
-		let src = args[0];
-		let adjustments = args
-			.chunks(2)
-			.filter_map(|chunk| {
-				(chunk.len() == 2)
-					.then(|| {
-						gas_idx_from_value(chunk[0])
-							.ok()
-							.map(|idx| (idx, chunk[1].get_number().unwrap_or_default()))
-					})
-					.flatten()
+		if let Some((src, rest)) = args.split_first() {
+			let adjustments = rest
+				.chunks(2)
+				.filter_map(|chunk| {
+					(chunk.len() == 2)
+						.then(|| {
+							gas_idx_from_value(&chunk[0])
+								.ok()
+								.map(|idx| (idx, chunk[1].get_number().unwrap_or_default()))
+						})
+						.flatten()
+				})
+				.collect::<Vec<_>>();
+			with_mix_mut(src, |mix| {
+				mix.adjust_multi(&adjustments);
+				Ok(ByondValue::null())
 			})
-			.collect::<Vec<_>>();
-		with_mix_mut(src, |mix| {
-			mix.adjust_multi(&adjustments);
-			Ok(ByondValue::null())
-		})
+		} else {
+			Err(eyre::eyre!("Invalid number of args for adjust_multi"))
+		}
 	}
 }
 
 ///Args: (amount). Adds the given amount to each gas.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/add")]
 fn add_hook(src: ByondValue, num_val: ByondValue) {
-	let vf = num_val.try_into().unwrap_or_default();
-	with_mix_mut(src, |mix| {
+	let vf = num_val.get_number().unwrap_or_default();
+	with_mix_mut(&src, |mix| {
 		mix.add(vf);
 		Ok(ByondValue::null())
 	})
@@ -315,8 +319,8 @@ fn add_hook(src: ByondValue, num_val: ByondValue) {
 ///Args: (amount). Subtracts the given amount from each gas.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/subtract")]
 fn subtract_hook(src: ByondValue, num_val: ByondValue) {
-	let vf: f32 = num_val.try_into().unwrap_or_default();
-	with_mix_mut(src, |mix| {
+	let vf = num_val.get_number().unwrap_or_default();
+	with_mix_mut(&src, |mix| {
 		mix.add(-vf);
 		Ok(ByondValue::null())
 	})
@@ -325,8 +329,8 @@ fn subtract_hook(src: ByondValue, num_val: ByondValue) {
 ///Args: (coefficient). Multiplies all gases by this amount.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/multiply")]
 fn multiply_hook(src: ByondValue, num_val: ByondValue) {
-	let vf = num_val.try_into().unwrap_or(1.0);
-	with_mix_mut(src, |mix| {
+	let vf = num_val.get_number().unwrap_or(1.0);
+	with_mix_mut(&src, |mix| {
 		mix.multiply(vf);
 		Ok(ByondValue::null())
 	})
@@ -335,8 +339,8 @@ fn multiply_hook(src: ByondValue, num_val: ByondValue) {
 ///Args: (coefficient). Divides all gases by this amount.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/divide")]
 fn divide_hook(src: ByondValue, num_val: ByondValue) {
-	let vf = num_val.try_into().unwrap_or(1.0).recip();
-	with_mix_mut(src, |mix| {
+	let vf = num_val.get_number().unwrap_or(1.0).recip();
+	with_mix_mut(&src, |mix| {
 		mix.multiply(vf);
 		Ok(ByondValue::null())
 	})
@@ -350,8 +354,8 @@ fn remove_by_flag_hook(
 	flag_val: ByondValue,
 	amount_val: ByondValue,
 ) {
-	let flag = flag_val.try_into().map_or(0, |n: f32| n as u32);
-	let amount = amount_val.try_into().unwrap_or(0.0);
+	let flag = flag_val.get_number().map_or(0, |n: f32| n as u32);
+	let amount = amount_val.get_number().unwrap_or(0.0);
 	let pertinent_gases = with_gas_info(|gas_info| {
 		gas_info
 			.iter()
@@ -362,7 +366,7 @@ fn remove_by_flag_hook(
 	if pertinent_gases.is_empty() {
 		return Ok(ByondValue::from(false));
 	}
-	with_mixes_mut(src, into, |src_gas, dest_gas| {
+	with_mixes_mut(&src, &into, |src_gas, dest_gas| {
 		let tot = src_gas.total_moles();
 		src_gas.transfer_gases_to(amount / tot, &pertinent_gases, dest_gas);
 		Ok(ByondValue::from(true))
@@ -371,7 +375,7 @@ fn remove_by_flag_hook(
 ///Args: (flag). As get_gases(), but only returns gases with the given flag.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/get_by_flag")]
 fn get_by_flag_hook(src: ByondValue, flag_val: ByondValue) {
-	let flag = flag_val.try_into().map_or(0, |n: f32| n as u32);
+	let flag = flag_val.get_number().map_or(0, |n: f32| n as u32);
 	let pertinent_gases = with_gas_info(|gas_info| {
 		gas_info
 			.iter()
@@ -382,7 +386,7 @@ fn get_by_flag_hook(src: ByondValue, flag_val: ByondValue) {
 	if pertinent_gases.is_empty() {
 		return Ok(ByondValue::from(0.0));
 	}
-	with_mix(src, |mix| {
+	with_mix(&src, |mix| {
 		Ok(ByondValue::from(
 			pertinent_gases
 				.iter()
@@ -394,7 +398,7 @@ fn get_by_flag_hook(src: ByondValue, flag_val: ByondValue) {
 /// Args: (mixture, ratio, gas_list). Takes gases given by `gas_list` and moves `ratio` amount of those gases from `src` into `mixture`.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/scrub_into")]
 fn scrub_into_hook(src: ByondValue, into: ByondValue, ratio_v: ByondValue, gas_list: ByondValue) {
-	let ratio = ratio_v.try_into().map_err(|_| {
+	let ratio = ratio_v.get_number().map_err(|_| {
 		eyre::eyre!(
 			"Attempt to interpret non-number value as number {} {}:{}",
 			std::file!(),
@@ -402,21 +406,17 @@ fn scrub_into_hook(src: ByondValue, into: ByondValue, ratio_v: ByondValue, gas_l
 			std::column!()
 		)
 	})?;
-	let gases_to_scrub: ByondValueList = gas_list.try_into().map_err(|_| {
-		eyre::eyre!(
-			"Attempt to interpret non-list value as list {} {}:{}",
-			std::file!(),
-			std::line!(),
-			std::column!()
-		)
-	})?;
-	if gases_to_scrub.len() == 0 {
+	if !gas_list.is_list() {
+		return Err(eyre::eyre!("Non-list gas_list passed to scrub_into!"));
+	}
+	if byond_length(&gas_list)?.get_number()? as u32 == 0 {
 		return Ok(ByondValue::from(false));
 	}
-	let gas_scrub_vec = (1..=gases_to_scrub.len())
-		.filter_map(|idx| gas_idx_from_value(gases_to_scrub[idx]).ok())
+	let gas_scrub_vec = gas_list
+		.iter()?
+		.filter_map(|(k, _)| Some(gas_idx_from_value(&k).ok()?))
 		.collect::<Vec<_>>();
-	with_mixes_mut(src, into, |src_gas, dest_gas| {
+	with_mixes_mut(&src, &into, |src_gas, dest_gas| {
 		src_gas.transfer_gases_to(ratio, &gas_scrub_vec, dest_gas);
 		Ok(ByondValue::from(true))
 	})
@@ -425,7 +425,7 @@ fn scrub_into_hook(src: ByondValue, into: ByondValue, ratio_v: ByondValue, gas_l
 /// Marks the mix as immutable, meaning it will never change. This cannot be undone.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/mark_immutable")]
 fn mark_immutable_hook(src: ByondValue) {
-	with_mix_mut(src, |mix| {
+	with_mix_mut(&src, |mix| {
 		mix.mark_immutable();
 		Ok(ByondValue::null())
 	})
@@ -434,7 +434,7 @@ fn mark_immutable_hook(src: ByondValue) {
 /// Clears the gas mixture my removing all of its gases.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/clear")]
 fn clear_hook(src: ByondValue) {
-	with_mix_mut(src, |mix| {
+	with_mix_mut(&src, |mix| {
 		mix.clear();
 		Ok(ByondValue::null())
 	})
@@ -443,7 +443,7 @@ fn clear_hook(src: ByondValue) {
 /// Returns: true if the two mixtures are different enough for processing, false otherwise.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/compare")]
 fn compare_hook(src: ByondValue, other: ByondValue) {
-	with_mixes(src, other, |gas_one, gas_two| {
+	with_mixes(&src, &other, |gas_one, gas_two| {
 		Ok(ByondValue::from(
 			gas_one.temperature_compare(gas_two)
 				|| gas_one.compare_with(gas_two, MINIMUM_MOLES_DELTA_TO_MOVE),
@@ -455,10 +455,10 @@ fn compare_hook(src: ByondValue, other: ByondValue) {
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/react")]
 fn react_hook(src: ByondValue, holder: ByondValue) {
 	let mut ret = ReactionReturn::NO_REACTION;
-	let reactions = with_mix(src, |mix| Ok(mix.all_reactable()))?;
+	let reactions = with_mix(&src, |mix| Ok(mix.all_reactable()))?;
 	for reaction in reactions {
 		ret |= ReactionReturn::from_bits_truncate(
-			react_by_id(reaction, src, holder)?
+			react_by_id(reaction, src.clone(), holder.clone())?
 				.get_number()
 				.unwrap_or_default() as u32,
 		);
@@ -472,8 +472,7 @@ fn react_hook(src: ByondValue, holder: ByondValue) {
 /// Args: (heat). Adds a given amount of heat to the mixture, i.e. in joules taking into account capacity.
 #[byondapi_hooks::bind_raw_args("/datum/gas_mixture/proc/adjust_heat")]
 fn adjust_heat_hook() {
-	let src = args[0];
-	with_mix_mut(src, |mix| {
+	with_mix_mut(&args[0], |mix| {
 		mix.adjust_heat(
 			args.get(0)
 				.ok_or_else(|| eyre::eyre!("Wrong number of args for adjust heat: 0"))?
@@ -494,8 +493,8 @@ fn adjust_heat_hook() {
 /// Args: (mixture, amount). Takes the `amount` given and transfers it from `src` to `mixture`.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/transfer_to")]
 fn transfer_hook(src: ByondValue, other: ByondValue, moles: ByondValue) {
-	with_mixes_mut(src, other, |our_mix, other_mix| {
-		other_mix.merge(&our_mix.remove(moles.try_into().map_err(|_| {
+	with_mixes_mut(&src, &other, |our_mix, other_mix| {
+		other_mix.merge(&our_mix.remove(moles.get_number().map_err(|_| {
 			eyre::eyre!(
 				"Attempt to interpret non-number value as number {} {}:{}",
 				std::file!(),
@@ -510,8 +509,8 @@ fn transfer_hook(src: ByondValue, other: ByondValue, moles: ByondValue) {
 /// Args: (mixture, ratio). Transfers `ratio` of `src` to `mixture`.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/transfer_ratio_to")]
 fn transfer_ratio_hook(src: ByondValue, other: ByondValue, ratio: ByondValue) {
-	with_mixes_mut(src, other, |our_mix, other_mix| {
-		other_mix.merge(&our_mix.remove_ratio(ratio.try_into().map_err(|_| {
+	with_mixes_mut(&src, &other, |our_mix, other_mix| {
+		other_mix.merge(&our_mix.remove_ratio(ratio.get_number().map_err(|_| {
 			eyre::eyre!(
 				"Attempt to interpret non-number value as number {} {}:{}",
 				std::file!(),
@@ -526,7 +525,7 @@ fn transfer_ratio_hook(src: ByondValue, other: ByondValue, ratio: ByondValue) {
 /// Args: (mixture). Makes `src` a copy of `mixture`, with volumes taken into account.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/equalize_with")]
 fn equalize_with_hook(src: ByondValue, total: ByondValue) {
-	with_mixes_custom(src, total, |src_lock, total_lock| {
+	with_mixes_custom(&src, &total, |src_lock, total_lock| {
 		let src_gas = &mut src_lock.write();
 		let vol = src_gas.volume;
 		let total_gas = total_lock.read();
@@ -539,8 +538,8 @@ fn equalize_with_hook(src: ByondValue, total: ByondValue) {
 /// Args: (temperature). Returns: how much fuel for fire is in the mixture at the given temperature. If temperature is omitted, just uses current temperature instead.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/get_fuel_amount")]
 fn fuel_amount_hook(src: ByondValue, temp: ByondValue) {
-	with_mix(src, |air| {
-		Ok(ByondValue::from(temp.try_into().ok().map_or_else(
+	with_mix(&src, |air| {
+		Ok(ByondValue::from(temp.get_number().ok().map_or_else(
 			|| air.get_fuel_amount(),
 			|new_temp| {
 				let mut test_air = air.copy_to_mutable();
@@ -554,8 +553,8 @@ fn fuel_amount_hook(src: ByondValue, temp: ByondValue) {
 /// Args: (temperature). Returns: how much oxidizer for fire is in the mixture at the given temperature. If temperature is omitted, just uses current temperature instead.
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/get_oxidation_power")]
 fn oxidation_power_hook(src: ByondValue, temp: ByondValue) {
-	with_mix(src, |air| {
-		Ok(ByondValue::from(temp.try_into().ok().map_or_else(
+	with_mix(&src, |air| {
+		Ok(ByondValue::from(temp.get_number().ok().map_or_else(
 			|| air.get_oxidation_power(),
 			|new_temp| {
 				let mut test_air = air.clone();
@@ -606,13 +605,11 @@ fn share_ratio_hook(other_gas: ByondValue, ratio_val: ByondValue, one_way_val: B
 #[byondapi_hooks::bind("/proc/equalize_all_gases_in_list")]
 fn equalize_all_hook(gas_list: ByondValue) {
 	use std::collections::BTreeSet;
-	if !gas_list.is_list() {
-		return Err(eyre::eyre!("Non-list value passed to equalize list!"));
-	}
 	let gas_list = gas_list
-		.iter_keys()
-		.filter_map(|v| {
-			v.read_number("_extools_pointer_gasmixture")
+		.iter()?
+		.filter_map(|(value, _)| {
+			value
+				.read_number("_extools_pointer_gasmixture")
 				.ok()
 				.map(|f| f.to_bits() as usize)
 		})
@@ -655,12 +652,12 @@ fn hook_max_gas_mixes() {
 
 #[byondapi_hooks::bind("/datum/gas_mixture/proc/__auxtools_parse_gas_string")]
 fn parse_gas_string(src: ByondValue, string: ByondValue) {
-	let actual_string: String = string.try_into()?;
+	let actual_string = string.get_string()?;
 
 	let (_, vec) = parser::parse_gas_string(&actual_string)
 		.map_err(|_| eyre::eyre!(format!("Failed to parse gas string: {actual_string}")))?;
 
-	with_mix_mut(src, move |air| {
+	with_mix_mut(&src, move |air| {
 		air.clear();
 		for (gas, moles) in vec.iter() {
 			if let Ok(idx) = gas_idx_from_string(gas) {

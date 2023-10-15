@@ -187,12 +187,13 @@ impl GasType {
 					Some(FireProductInfo::Generic(
 						product_info
 							.iter()
+							.unwrap()
 							.filter_map(|(k, v)| {
-								k.get_string()
-									.and_then(|s_str| {
-										v.get_number().map(|amt| (GasRef::Deferred(s_str), amt))
-									})
-									.ok()
+								k.get_string().ok().and_then(|s_str| {
+									v.get_number()
+										.ok()
+										.map(|amt| (GasRef::Deferred(s_str), amt))
+								})
 							})
 							.collect(),
 					))
@@ -288,20 +289,18 @@ fn hook_init(gas_data: ByondValue) {
 	//for i in 1..=data.len() {
 	//	hook_register_gas(data.get(data.get(i)?)?)?;
 	//}
-	*REACTION_INFO.write() = Some(get_reaction_info());
+	//
+	let ssair = byondapi::global_call::call_global("get_ssair", &[])?;
+	*REACTION_INFO.write() = Some(get_reaction_info(ssair));
 	Ok(ByondValue::from(true))
 }
 
-fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
-	let gas_reactions = ByondValue::globals()
-		.get("SSair")
-		.unwrap()
-		.get_list("gas_reactions")
-		.unwrap();
+fn get_reaction_info(ssair: ByondValue) -> BTreeMap<ReactionPriority, Reaction> {
+	let gas_reactions = ssair.read_var("gas_reactions").unwrap();
 	let mut reaction_cache: BTreeMap<ReactionPriority, Reaction> = Default::default();
 	let sender = byond_callback_sender();
-	for i in 1..=gas_reactions.len() {
-		match Reaction::from_byond_reaction(&gas_reactions.get(i).unwrap()) {
+	for (reaction, _) in gas_reactions.iter().unwrap() {
+		match Reaction::from_byond_reaction(reaction) {
 			Ok(reaction) => {
 				if let std::collections::btree_map::Entry::Vacant(e) =
 					reaction_cache.entry(reaction.get_priority())
@@ -327,7 +326,8 @@ fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
 
 #[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
 fn update_reactions() {
-	*REACTION_INFO.write() = Some(get_reaction_info());
+	let ssair = byondapi::global_call::call_global("get_ssair", &[])?;
+	*REACTION_INFO.write() = Some(get_reaction_info(ssair));
 	Ok(ByondValue::from(true))
 }
 
@@ -453,7 +453,7 @@ pub fn gas_idx_from_string(id: &str) -> Result<GasIDX> {
 /// Returns the appropriate index to be used by the game for a given Byond string.
 /// # Errors
 /// If the given string is not a string or is not a valid gas ID.
-pub fn gas_idx_from_value(string_val: ByondValue) -> Result<GasIDX> {
+pub fn gas_idx_from_value(string_val: &ByondValue) -> Result<GasIDX> {
 	CACHED_GAS_IDS.with(|c| {
 		let mut cache = c.borrow_mut();
 		if let Some(idx) = cache.get(&string_val.get_ref().unwrap()) {

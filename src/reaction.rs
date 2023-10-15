@@ -68,7 +68,7 @@ pub fn react_by_id(
 
 impl Reaction {
 	/// Takes a `/datum/gas_reaction` and makes a byond reaction out of it.
-	pub fn from_byond_reaction(reaction: &ByondValue) -> Result<Self> {
+	pub fn from_byond_reaction(reaction: ByondValue) -> Result<Self> {
 		let priority = FloatOrd(
 			reaction
 				.read_number("priority")

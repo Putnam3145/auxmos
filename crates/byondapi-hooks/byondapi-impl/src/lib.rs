@@ -23,7 +23,6 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 	let func_name_ffi_disp = quote!(#func_name_ffi).to_string();
 
 	let args = &input.sig.inputs;
-	let args_len = args.len();
 
 	//Check for returns
 	match &input.sig.output {
@@ -58,16 +57,17 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 			let index = arg_names.len() - 1;
 			proc_arg_unpacker.push(
 				(quote! {
-					args[#index]
+					args.get(#index).map(::byondapi::value::ByondValue::clone).unwrap_or_default()
 				})
 				.into(),
 			);
 		}
 	}
+
 	let arg_names_disp = quote!(#arg_names).to_string();
 
 	//Submit to inventory
-	let cthook_prelude = match proc {
+	let cthook_prelude = match &proc {
 		Some(Lit::Str(p)) => {
 			quote! {
 				::byondapi_hooks::inventory::submit!({
@@ -88,29 +88,27 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 			.into()
 		}
 		None => quote! {
-			quote! {
-				::byondapi_hooks::inventory::submit!({
-					::byondapi_hooks::Bind{
-						proc_path: #func_name_disp,
-						func_name: #func_name_ffi_disp,
-						func_arguments: Some(#arg_names_disp)
-					}
-				});
-
-			}
+			::byondapi_hooks::inventory::submit!({
+				::byondapi_hooks::Bind{
+					proc_path: #func_name_disp,
+					func_name: #func_name_ffi_disp,
+					func_arguments: Some(#arg_names_disp)
+				}
+			});
 		},
 	};
 
 	let result = quote! {
 		#cthook_prelude
 		#signature {
-			let mut args = unsafe { ::byondapi::parse_args(__argc, __argv) };
-			if #args_len > args.len() {
-				args.extend((0..#args_len - args.len()).map(|_| ::byondapi::value::ByondValue::default()))
-			}
+			let args = unsafe { ::byondapi::parse_args(__argc, __argv) };
 			match #func_name(#proc_arg_unpacker) {
 				Ok(val) => val,
-				Err(_) => ::byondapi::value::ByondValue::null()
+				Err(e) => {
+					let error_string = ::byondapi::value::ByondValue::try_from(::std::format!("{e:?}")).unwrap();
+					::byondapi::global_call::call_global("stack_trace", &[error_string]).unwrap();
+					::byondapi::value::ByondValue::null()
+				}
 			}
 
 		}
@@ -202,11 +200,15 @@ pub fn bind_raw_args(attr: TokenStream, item: TokenStream) -> TokenStream {
 			let mut args = unsafe { ::byondapi::parse_args(__argc, __argv) };
 			match #func_name(args) {
 				Ok(val) => val,
-				Err(_) => ::byondapi::value::ByondValue::null()
+				Err(e) => {
+					let error_string = ::byondapi::value::ByondValue::try_from(::std::format!("{e:?}")).unwrap();
+					::byondapi::global_call::call_global("stack_trace", &[error_string]).unwrap();
+					::byondapi::value::ByondValue::null()
+				}
 			}
 
 		}
-		fn #func_name(mut args: ::std::vec::Vec<::byondapi::value::ByondValue>) -> ::eyre::Result<::byondapi::value::ByondValue>
+		fn #func_name(args: &mut [::byondapi::value::ByondValue]) -> ::eyre::Result<::byondapi::value::ByondValue>
 		#body
 	};
 	result.into()

@@ -5,9 +5,9 @@ pub use byondapi_impl::{bind, bind_raw_args};
 pub use inventory;
 
 pub struct Bind {
-	proc_path: &'static str,
-	func_name: &'static str,
-	func_arguments: Option<&'static str>,
+	pub proc_path: &'static str,
+	pub func_name: &'static str,
+	pub func_arguments: Option<&'static str>,
 }
 
 inventory::collect!(Bind);

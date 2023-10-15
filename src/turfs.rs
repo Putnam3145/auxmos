@@ -25,7 +25,7 @@ use fxhash::FxBuildHasher;
 
 use bitflags::bitflags;
 
-use parking_lot::{const_mutex, const_rwlock, Mutex, RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{const_rwlock, RwLock, RwLockUpgradableReadGuard};
 
 use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef, Direction};
 
@@ -247,7 +247,7 @@ impl TurfGases {
 		if let Some(&this_index) = self.map.get(&idx) {
 			self.remove_adjacencies(this_index);
 			adjacent_list
-				.iter()
+				.iter()?
 				.filter_map(|(k, v)| Some((k.get_ref().ok()?, v.get_number().unwrap_or(0.0) as u8)))
 				.filter_map(|(adj_ref, flag)| Some((self.map.get(&adj_ref)?, flag)))
 				.for_each(|(adj_index, flag)| {
@@ -371,11 +371,6 @@ static PLANETARY_ATMOS: RwLock<Option<IndexMap<u32, Mixture, FxBuildHasher>>> = 
 //whether there is any tasks running
 static TASKS: RwLock<()> = const_rwlock(());
 
-// Turfs need updating before the thread starts
-static DIRTY_TURFS: Mutex<Option<IndexMap<TurfID, DirtyFlags, FxBuildHasher>>> = const_mutex(None);
-
-static ANY_TURF_DIRTY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 pub fn wait_for_tasks() {
 	match TASKS.try_write_for(Duration::from_secs(5)) {
 		Some(_) => (),
@@ -393,19 +388,13 @@ fn initialize_turf_statics() -> Result<()> {
 		map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
 	});
 	*PLANETARY_ATMOS.write() = Some(Default::default());
-	*DIRTY_TURFS.lock() = Some(Default::default());
 	Ok(())
 }
 
 fn shutdown_turfs() {
 	wait_for_tasks();
-	*DIRTY_TURFS.lock() = None;
 	*TURF_GASES.write() = None;
 	*PLANETARY_ATMOS.write() = None;
-}
-
-fn check_turfs_dirty() -> bool {
-	ANY_TURF_DIRTY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 fn with_turf_gases_read<T, F>(f: F) -> T
@@ -556,10 +545,10 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 		Err(_) => Ok(ByondValue::null()),
 		Ok(air) => {
 			let overlay_types = ByondValue::new_list()?;
-			let overlay_types: ByondValueList = overlay_types.try_into()?;
-			let gas_overlays = ByondValue::globals()
-				.get("gas_data")?
-				.get_list("overlays")?;
+			let mut overlay_types: ByondValueList = overlay_types.try_into()?;
+			let gas_overlays = byondapi::global_call::call_global("get_ssair", &[])?
+				.read_var("gas_data")?
+				.read_var("overlays")?;
 			let ptr = air
 				.read_number("_extools_pointer_gasmixture")
 				.map_err(|_| {
@@ -576,11 +565,11 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 					if let Some(amt) = gas::types::gas_visibility(idx) {
 						if moles > amt {
 							let this_overlay_list =
-								gas_overlays.get(gas::gas_idx_to_id(idx))?.as_list()?;
-							if let Ok(this_gas_overlay) =
-								this_overlay_list.get(gas::mixture::visibility_step(moles))
+								gas_overlays.read_list_index(gas::gas_idx_to_id(idx))?;
+							if let Ok(this_gas_overlay) = this_overlay_list
+								.read_list_index(gas::mixture::visibility_step(moles) as f32)
 							{
-								overlay_types.push(this_gas_overlay);
+								overlay_types.push(&this_gas_overlay)?;
 							}
 						}
 					}

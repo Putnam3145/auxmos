@@ -10,7 +10,7 @@ edition = "2018"
 crate-type = ["lib"]
 
 [dependencies]
-flume = "0.10.14"
-coarsetime = "0.1.23"
+flume = "0.11.0"
+coarsetime = "0.1.29"
 byondapi = { git = "https://github.com/jupyterkat/byondapi-rs", package = "byondapi" }
 eyre = "0.6.8"

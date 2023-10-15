@@ -21,7 +21,7 @@ pub fn send_to_groups(sent: BTreeSet<TurfID>) {
 }
 
 #[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
-fn groups_hook(src: ByondValue, remaining: ByondValue) {
+fn groups_hook(mut src: ByondValue, remaining: ByondValue) {
 	let group_pressure_goal = src
 		.read_number("excited_group_pressure_goal")
 		.unwrap_or(0.5);
@@ -72,7 +72,7 @@ fn excited_group_processing(
 			continue;
 		}
 
-		if start_time.elapsed() >= remaining_time || check_turfs_dirty() {
+		if start_time.elapsed() >= remaining_time {
 			is_cancelled = true;
 			break;
 		}
@@ -95,7 +95,7 @@ fn excited_group_processing(
 			found_turfs.insert(initial_turf);
 			GasArena::with_all_mixtures(|all_mixtures| {
 				loop {
-					if turfs.len() >= 2500 || check_turfs_dirty() {
+					if turfs.len() >= 2500 {
 						break;
 					}
 					if let Some(idx) = border_turfs.pop_front() {

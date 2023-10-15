@@ -44,11 +44,18 @@ fn process_turf_hook(src: ByondValue, remaining: ByondValue) {
 				std::column!()
 			)
 		})? != 0.0;
-	process_turf(remaining_time, fdm_max_steps, equalize_enabled)?;
+
+	let ssair = byondapi::global_call::call_global("get_ssair", &[])?;
+	process_turf(remaining_time, fdm_max_steps, equalize_enabled, ssair)?;
 	Ok(ByondValue::null())
 }
 
-fn process_turf(remaining: Duration, fdm_max_steps: i32, equalize_enabled: bool) -> Result<()> {
+fn process_turf(
+	remaining: Duration,
+	fdm_max_steps: i32,
+	equalize_enabled: bool,
+	ssair: ByondValue,
+) -> Result<()> {
 	//this will block until process_turfs is called
 	let (low_pressure_turfs, _high_pressure_turfs) = {
 		let start_time = Instant::now();
@@ -56,7 +63,6 @@ fn process_turf(remaining: Duration, fdm_max_steps: i32, equalize_enabled: bool)
 			fdm((&start_time, remaining), fdm_max_steps, equalize_enabled);
 		let bench = start_time.elapsed().as_millis();
 		let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
-		let ssair = auxtools::ByondValue::globals().get("SSair")?;
 		let prev_cost = ssair.read_number("cost_turfs").map_err(|_| {
 			eyre::eyre!(
 				"Attempt to interpret non-number value as number {} {}:{}",
@@ -65,19 +71,19 @@ fn process_turf(remaining: Duration, fdm_max_steps: i32, equalize_enabled: bool)
 				std::column!()
 			)
 		})?;
-		ssair.set(
-			"cost_turfs",
-			ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
-		)?;
-		ssair.set("low_pressure_turfs", ByondValue::from(lpt as f32))?;
-		ssair.set("high_pressure_turfs", ByondValue::from(hpt as f32))?;
+		ssair
+			.read_var("cost_turfs")?
+			.set_number(0.8 * prev_cost + 0.2 * (bench as f32));
+		ssair.read_var("low_pressure_turfs")?.set_number(lpt as f32);
+		ssair
+			.read_var("high_pressure_turfs")?
+			.set_number(hpt as f32);
 		(low_pressure_turfs, high_pressure_turfs)
 	};
 	{
 		let start_time = Instant::now();
 		post_process();
 		let bench = start_time.elapsed().as_millis();
-		let ssair = auxtools::ByondValue::globals().get("SSair")?;
 		let prev_cost = ssair.read_number("cost_post_process").map_err(|_| {
 			eyre::eyre!(
 				"Attempt to interpret non-number value as number {} {}:{}",
@@ -86,10 +92,9 @@ fn process_turf(remaining: Duration, fdm_max_steps: i32, equalize_enabled: bool)
 				std::column!()
 			)
 		})?;
-		ssair.set(
-			"cost_post_process",
-			ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
-		)?;
+		ssair
+			.read_var("cost_post_process")?
+			.set_number(0.8 * prev_cost + 0.2 * (bench as f32));
 	}
 	{
 		planet_process();

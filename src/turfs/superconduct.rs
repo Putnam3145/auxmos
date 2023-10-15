@@ -442,11 +442,7 @@ fn process_heat_start() -> Result<(), String> {
 									}
 								}
 							}
-							if check_turfs_dirty() {
-								Err(())
-							} else {
-								Ok(())
-							}
+							Ok(())
 						});
 				});
 			});

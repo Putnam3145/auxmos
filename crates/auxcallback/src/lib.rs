@@ -1,3 +1,5 @@
+use std::convert::TryFrom;
+
 use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
 
 use coarsetime::{Duration, Instant};
@@ -39,7 +41,8 @@ fn process_callbacks() {
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
-				//_ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
+				let error_string = ByondValue::try_from(::std::format!("{e:?}")).unwrap();
+				byondapi::global_call::call_global("stack_trace", &[error_string]).unwrap();
 			}
 		}
 	})
@@ -52,7 +55,8 @@ fn process_callbacks_for(duration: Duration) -> bool {
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
-				//_ = stack_trace.call(&[&Value::from_string(e.message.as_str()).unwrap()]);
+				let error_string = ByondValue::try_from(::std::format!("{e:?}")).unwrap();
+				byondapi::global_call::call_global("stack_trace", &[error_string]).unwrap();
 			}
 			if timer.elapsed() >= duration {
 				return true;

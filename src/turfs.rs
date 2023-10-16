@@ -1,6 +1,6 @@
-mod processing;
+pub mod processing;
 
-mod groups;
+pub mod groups;
 
 #[cfg(feature = "monstermos")]
 mod monstermos;
@@ -9,7 +9,7 @@ mod monstermos;
 mod putnamos;
 
 #[cfg(feature = "katmos")]
-mod katmos;
+pub mod katmos;
 
 #[cfg(feature = "superconductivity")]
 mod superconduct;
@@ -380,7 +380,7 @@ pub fn wait_for_tasks() {
 	}
 }
 
-fn initialize_turf_statics() -> Result<()> {
+pub fn initialize_turfs() {
 	// 10x 255x255 zlevels
 	// double that for edges since each turf can have up to 6 edges but eehhhh
 	*TURF_GASES.write() = Some(TurfGases {
@@ -388,10 +388,9 @@ fn initialize_turf_statics() -> Result<()> {
 		map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
 	});
 	*PLANETARY_ATMOS.write() = Some(Default::default());
-	Ok(())
 }
 
-fn shutdown_turfs() {
+pub fn shutdown_turfs() {
 	wait_for_tasks();
 	*TURF_GASES.write() = None;
 	*PLANETARY_ATMOS.write() = None;

@@ -38,7 +38,7 @@ thread_local! {
 	static REACTION_VALUES: RefCell<HashMap<ReactionIdentifier, ReactionSide, FxBuildHasher>> = Default::default();
 }
 
-fn clean_up_reaction_values() {
+pub fn clean_up_reaction_values() {
 	crate::turfs::wait_for_tasks();
 	REACTION_VALUES.with(|reaction_values| {
 		reaction_values.borrow_mut().clear();

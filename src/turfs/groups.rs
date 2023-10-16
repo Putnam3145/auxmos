@@ -8,7 +8,7 @@ use parking_lot::{const_mutex, Mutex};
 
 static GROUPS_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = const_mutex(None);
 
-fn flush_groups_channel() {
+pub fn flush_groups_channel() {
 	*GROUPS_CHANNEL.lock() = None;
 }
 

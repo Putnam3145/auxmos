@@ -217,16 +217,15 @@ static GAS_INFO_BY_IDX: RwLock<Option<Vec<GasType>>> = const_rwlock(None);
 
 static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = const_rwlock(None);
 
-fn initialize_gas_info_structs() -> Result<()> {
+pub fn initialize_gas_info_structs() {
 	unsafe {
 		GAS_INFO_BY_STRING = Some(DashMap::with_hasher(FxBuildHasher::default()));
 	};
 	*GAS_INFO_BY_IDX.write() = Some(Vec::new());
 	*GAS_SPECIFIC_HEATS.write() = Some(Vec::new());
-	Ok(())
 }
 
-fn destroy_gas_info_structs() {
+pub fn destroy_gas_info_structs() {
 	crate::turfs::wait_for_tasks();
 	unsafe {
 		GAS_INFO_BY_STRING = None;

@@ -5,6 +5,7 @@ mod turfs;
 
 mod reaction;
 
+mod init_shutdown;
 mod parser;
 
 use byondapi::{map::byond_length, prelude::*, typecheck_trait::ByondTypeCheck};

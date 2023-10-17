@@ -424,7 +424,7 @@ where
 	f(PLANETARY_ATMOS.upgradable_read())
 }
 
-#[byondapi_hooks::bind("/turf/proc/update_air_ref")]
+#[byondapi_binds::bind("/turf/proc/update_air_ref")]
 fn hook_register_turf(src: ByondValue) {
 	let id = src.get_ref()?;
 	let flag = determine_turf_flag(&src);
@@ -512,14 +512,14 @@ fn determine_turf_flag(src: &ByondValue) -> i32 {
 	}
 }
 
-#[byondapi_hooks::bind("/turf/proc/__update_auxtools_turf_adjacency_info")]
+#[byondapi_binds::bind("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn hook_infos(src: ByondValue) {
 	let id = src.get_ref()?;
 	with_turf_gases_write(|arena| -> Result<()> {
 		if let Some(adjacent_list) = src
 			.read_var("atmos_adjacent_turfs")
 			.ok()
-			.map_or(None, |adjs| adjs.is_list().then_some(adjs))
+			.and_then(|adjs| adjs.is_list().then_some(adjs))
 		{
 			arena.update_adjacencies(id, adjacent_list)?;
 		} else if let Some(&idx) = arena.map.get(&id) {

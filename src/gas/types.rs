@@ -211,25 +211,22 @@ impl GasType {
 	}
 }
 
-static mut GAS_INFO_BY_STRING: Option<DashMap<Box<str>, GasType, FxBuildHasher>> = None;
+static GAS_INFO_BY_STRING: RwLock<Option<DashMap<Box<str>, GasType, FxBuildHasher>>> =
+	const_rwlock(None);
 
 static GAS_INFO_BY_IDX: RwLock<Option<Vec<GasType>>> = const_rwlock(None);
 
 static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = const_rwlock(None);
 
 pub fn initialize_gas_info_structs() {
-	unsafe {
-		GAS_INFO_BY_STRING = Some(DashMap::with_hasher(FxBuildHasher::default()));
-	};
+	*GAS_INFO_BY_STRING.write() = Some(DashMap::with_hasher(FxBuildHasher::default()));
 	*GAS_INFO_BY_IDX.write() = Some(Vec::new());
 	*GAS_SPECIFIC_HEATS.write() = Some(Vec::new());
 }
 
 pub fn destroy_gas_info_structs() {
 	crate::turfs::wait_for_tasks();
-	unsafe {
-		GAS_INFO_BY_STRING = None;
-	};
+	*GAS_INFO_BY_STRING.write() = None;
 	*GAS_INFO_BY_IDX.write() = None;
 	*GAS_SPECIFIC_HEATS.write() = None;
 	TOTAL_NUM_GASES.store(0, Ordering::Release);
@@ -241,11 +238,13 @@ pub fn destroy_gas_info_structs() {
 	});
 }
 
-#[byondapi_hooks::bind("/proc/_auxtools_register_gas")]
+#[byondapi_binds::bind("/proc/_auxtools_register_gas")]
 fn hook_register_gas(gas: ByondValue) {
 	let gas_id = gas.read_string("id")?;
 	match {
-		unsafe { GAS_INFO_BY_STRING.as_ref() }
+		GAS_INFO_BY_STRING
+			.read()
+			.as_ref()
 			.unwrap()
 			.get_mut(&gas_id as &str)
 	} {
@@ -259,7 +258,9 @@ fn hook_register_gas(gas: ByondValue) {
 			let gas_cache = GasType::new(&gas, TOTAL_NUM_GASES.load(Ordering::Acquire))?;
 			let cached_id = gas_id.clone();
 			let cached_idx = gas_cache.idx;
-			unsafe { GAS_INFO_BY_STRING.as_ref() }
+			GAS_INFO_BY_STRING
+				.read()
+				.as_ref()
 				.unwrap()
 				.insert(gas_id.into_boxed_str(), gas_cache.clone());
 			GAS_SPECIFIC_HEATS
@@ -278,13 +279,12 @@ fn hook_register_gas(gas: ByondValue) {
 	Ok(ByondValue::null())
 }
 
-#[byondapi_hooks::bind("/proc/auxtools_atmos_init")]
+#[byondapi_binds::bind("/proc/auxtools_atmos_init")]
 fn hook_init(gas_data: ByondValue) {
 	let data = gas_data.read_list("datums")?.to_vec();
 	data.into_iter()
 		.map(hook_register_gas)
-		.map(|res| res.map(|thin| drop(thin)))
-		.collect::<Result<()>>()?;
+		.try_for_each(|res| res.map(drop))?;
 	//for i in 1..=data.len() {
 	//	hook_register_gas(data.get(data.get(i)?)?)?;
 	//}
@@ -323,7 +323,7 @@ fn get_reaction_info(ssair: ByondValue) -> BTreeMap<ReactionPriority, Reaction> 
 	reaction_cache
 }
 
-#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
+#[byondapi_binds::bind("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
 fn update_reactions() {
 	let ssair = byondapi::global_call::call_global("get_ssair", &[])?;
 	*REACTION_INFO.write() = Some(get_reaction_info(ssair));
@@ -360,7 +360,7 @@ pub fn gas_fusion_power(idx: &GasIDX) -> f32 {
 		.read()
 		.as_ref()
 		.unwrap_or_else(|| panic!("Gases not loaded yet! Uh oh!"))
-		.get(*idx as usize)
+		.get(*idx)
 		.unwrap()
 		.fusion_power
 }
@@ -427,7 +427,7 @@ pub fn update_gas_refs() {
 		});
 }
 
-#[byondapi_hooks::bind("/proc/finalize_gas_refs")]
+#[byondapi_binds::bind("/proc/finalize_gas_refs")]
 fn finalize_gas_refs() {
 	update_gas_refs();
 	Ok(ByondValue::null())
@@ -442,7 +442,9 @@ thread_local! {
 /// # Errors
 /// If gases aren't loaded or an invalid gas ID is given.
 pub fn gas_idx_from_string(id: &str) -> Result<GasIDX> {
-	Ok(unsafe { GAS_INFO_BY_STRING.as_ref() }
+	Ok(GAS_INFO_BY_STRING
+		.read()
+		.as_ref()
 		.ok_or_else(|| eyre::eyre!("Gases not loaded yet! Uh oh!"))?
 		.get(id)
 		.ok_or_else(|| eyre::eyre!("Invalid gas ID: {}", id))?
@@ -498,7 +500,9 @@ pub fn register_gas_manually(gas_id: &'static str, specific_heat: f32) {
 		fire_products: None,
 	};
 	let cached_idx = gas_cache.idx;
-	unsafe { GAS_INFO_BY_STRING.as_ref() }
+	GAS_INFO_BY_STRING
+		.read()
+		.as_ref()
 		.unwrap()
 		.insert(gas_id.into(), gas_cache.clone());
 
@@ -517,7 +521,7 @@ pub fn register_gas_manually(gas_id: &'static str, specific_heat: f32) {
 
 #[cfg(test)]
 pub fn set_gas_statics_manually() {
-	initialize_gas_info_structs().unwrap();
+	initialize_gas_info_structs();
 }
 
 #[cfg(test)]

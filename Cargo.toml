@@ -3,7 +3,7 @@ members = ["crates/*"]
 
 [workspace.dependencies]
 byondapi = { git = "https://github.com/jupyterkat/byondapi-rs", package = "byondapi" }
-byondapi-hooks = { path = "./crates/byondapi-hooks" }
+byondapi-binds = { path = "./crates/byondapi-binds" }
 
 [package]
 name = "auxmos"
@@ -14,7 +14,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["turf_processing"]
+default = ["turf_processing", "all_reaction_hooks", "katmos"]
 zas_hooks = []
 turf_processing = []
 superconductivity = ["turf_processing"]
@@ -37,10 +37,9 @@ all_reaction_hooks = [
 crate-type = ["cdylib"]
 
 [dependencies]
-auxtools = { git = "https://github.com/willox/auxtools" }
 auxcallback = { path = "./crates/auxcallback" }
 byondapi = { git = "https://github.com/jupyterkat/byondapi-rs", package = "byondapi" }
-byondapi-hooks = { path = "./crates/byondapi-hooks" }
+byondapi-binds = { path = "./crates/byondapi-binds" }
 itertools = "0.11.0"
 rayon = "1.8.0"
 float-ord = "0.3.2"

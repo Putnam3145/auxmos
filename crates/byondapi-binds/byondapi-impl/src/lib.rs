@@ -29,7 +29,7 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 		syn::ReturnType::Default => {} //
 
 		syn::ReturnType::Type(_, ty) => {
-			return syn::Error::new(ty.span(), "Do not specify the return value of hooks")
+			return syn::Error::new(ty.span(), "Do not specify the return value of binds")
 				.to_compile_error()
 				.into()
 		}
@@ -55,12 +55,9 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 		if let syn::Pat::Ident(p) = &*arg.pat {
 			arg_names.push(p.ident.clone());
 			let index = arg_names.len() - 1;
-			proc_arg_unpacker.push(
-				(quote! {
-					args.get(#index).map(::byondapi::value::ByondValue::clone).unwrap_or_default()
-				})
-				.into(),
-			);
+			proc_arg_unpacker.push(quote! {
+				args.get(#index).map(::byondapi::value::ByondValue::clone).unwrap_or_default()
+			});
 		}
 	}
 
@@ -70,8 +67,8 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 	let cthook_prelude = match &proc {
 		Some(Lit::Str(p)) => {
 			quote! {
-				::byondapi_hooks::inventory::submit!({
-					::byondapi_hooks::Bind {
+				::byondapi_binds::inventory::submit!({
+					::byondapi_binds::Bind {
 						proc_path: #p,
 						func_name: #func_name_ffi_disp,
 						func_arguments: Some(#arg_names_disp)
@@ -88,8 +85,8 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 			.into()
 		}
 		None => quote! {
-			::byondapi_hooks::inventory::submit!({
-				::byondapi_hooks::Bind{
+			::byondapi_binds::inventory::submit!({
+				::byondapi_binds::Bind{
 					proc_path: #func_name_disp,
 					func_name: #func_name_ffi_disp,
 					func_arguments: Some(#arg_names_disp)
@@ -163,8 +160,8 @@ pub fn bind_raw_args(attr: TokenStream, item: TokenStream) -> TokenStream {
 	let cthook_prelude = match proc {
 		Some(Lit::Str(p)) => {
 			quote! {
-				::byondapi_hooks::inventory::submit!({
-					::byondapi_hooks::Bind {
+				::byondapi_binds::inventory::submit!({
+					::byondapi_binds::Bind {
 						proc_path: #p,
 						func_name: #func_name_ffi_disp,
 						func_arguments: None
@@ -182,8 +179,8 @@ pub fn bind_raw_args(attr: TokenStream, item: TokenStream) -> TokenStream {
 		}
 		None => quote! {
 			quote! {
-				::byondapi_hooks::inventory::submit!({
-					::byondapi_hooks::Bind{
+				::byondapi_binds::inventory::submit!({
+					::byondapi_binds::Bind{
 						proc_path: #func_name_disp,
 						func_name: #func_name_ffi_disp,
 						func_arguments: None,

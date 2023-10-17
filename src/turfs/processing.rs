@@ -14,12 +14,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use coarsetime::{Duration, Instant};
 
-#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/thread_running")]
+#[byondapi_binds::bind("/datum/controller/subsystem/air/proc/thread_running")]
 fn thread_running_hook() {
 	Ok(ByondValue::from(TASKS.try_write().is_none()))
 }
 
-#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
+#[byondapi_binds::bind("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
 fn finish_process_turfs(time_remaining: ByondValue) {
 	if !time_remaining.is_num() {
 		return Err(eyre::eyre!("Turf finishing did not receive a number"));
@@ -31,7 +31,7 @@ fn finish_process_turfs(time_remaining: ByondValue) {
 	}
 }
 
-#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
+#[byondapi_binds::bind("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
 fn process_turf_hook(src: ByondValue, remaining: ByondValue) {
 	let remaining_time = Duration::from_millis(remaining.get_number().unwrap_or(50.0) as u64);
 	let fdm_max_steps = src.read_number("share_max_steps").unwrap_or(1.0) as i32;

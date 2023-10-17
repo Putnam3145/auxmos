@@ -1,4 +1,5 @@
 use byondapi::prelude::*;
+use eyre::Result;
 
 use crate::gas::{
 	constants::*, gas_fusion_power, gas_idx_from_string, with_gas_info, with_mix, with_mix_mut,
@@ -22,10 +23,10 @@ pub fn func_from_id(id: &str) -> Option<ReactFunc> {
 	}
 }
 
-type ReactFunc = fn(&ByondValue, &ByondValue) -> Result<ByondValue>;
+type ReactFunc = fn(ByondValue, ByondValue) -> Result<ByondValue>;
 
 #[cfg(feature = "plasma_fire_hook")]
-fn plasma_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
+fn plasma_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 	const PLASMA_UPPER_TEMPERATURE: f32 = 1390.0 + T0C;
 	const OXYGEN_BURN_RATE_BASE: f32 = 1.4;
 	const PLASMA_OXYGEN_FULLBURN: f32 = 10.0;
@@ -36,7 +37,7 @@ fn plasma_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue
 	let co2 = gas_idx_from_string(GAS_CO2)?;
 	let tritium = gas_idx_from_string(GAS_TRITIUM)?;
 	let (oxygen_burn_rate, plasma_burn_rate, initial_oxy, initial_plasma, initial_energy) =
-		with_mix(byond_air, |air| {
+		with_mix(&byond_air, |air| {
 			let temperature_scale = {
 				if air.get_temperature() > PLASMA_UPPER_TEMPERATURE {
 					1.0
@@ -72,7 +73,7 @@ fn plasma_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue
 		})?;
 	let fire_amount = plasma_burn_rate * (1.0 + oxygen_burn_rate);
 	if fire_amount > 0.0 {
-		let temperature = with_mix_mut(byond_air, |air| {
+		let temperature = with_mix_mut(&byond_air, |air| {
 			air.set_moles(plasma, initial_plasma - plasma_burn_rate);
 			air.set_moles(o2, initial_oxy - (plasma_burn_rate * oxygen_burn_rate));
 			if initial_oxy / initial_plasma > SUPER_SATURATION_THRESHOLD {
@@ -86,34 +87,22 @@ fn plasma_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue
 			air.garbage_collect();
 			Ok(new_temp)
 		})?;
-		let cached_results = byond_air.get_list("reaction_results").map_err(|_| {
-			eyre::eyre!(
-				"Attempt to interpret non-list value as list {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?;
-		cached_results.set("fire", ByondValue::from(fire_amount))?;
+		let mut cached_results = byond_air.read_var("reaction_results")?;
+		cached_results.write_list_index("fire", fire_amount)?;
 		if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
-			if let Some(fire_expose) = Proc::find("/proc/fire_expose") {
-				fire_expose.call(&[holder, byond_air, &ByondValue::from(temperature)])?;
-			} else {
-				Proc::find("/proc/stack_trace")
-					.ok_or_else(|| eyre::eyre!("Couldn't find stack_trace!"))?
-					.call(&[ByondValue::from_string(
-						"fire_expose not found! Auxmos hooked fires do not work without it!",
-					)?])?;
-			}
+			byondapi::global_call::call_global(
+				"fire_expose",
+				&[holder, byond_air, temperature.into()],
+			)?;
 		}
-		Ok(ByondValue::from(1.0))
+		Ok(1.0.into())
 	} else {
-		Ok(ByondValue::from(0.0))
+		Ok(0.0.into())
 	}
 }
 
 #[cfg(feature = "trit_fire_hook")]
-fn tritium_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
+fn tritium_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 	const TRITIUM_BURN_OXY_FACTOR: f32 = 100.0;
 	const TRITIUM_BURN_TRIT_FACTOR: f32 = 10.0;
 	const TRITIUM_MINIMUM_RADIATION_FACTOR: f32 = 0.1;
@@ -121,7 +110,7 @@ fn tritium_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValu
 	let o2 = gas_idx_from_string(GAS_O2)?;
 	let tritium = gas_idx_from_string(GAS_TRITIUM)?;
 	let water = gas_idx_from_string(GAS_H2O)?;
-	let (burned_fuel, energy_released, temperature) = with_mix_mut(byond_air, |air| {
+	let (burned_fuel, energy_released, temperature) = with_mix_mut(&byond_air, |air| {
 		let initial_oxy = air.get_moles(o2);
 		let initial_trit = air.get_moles(tritium);
 		let initial_energy = air.thermal_energy();
@@ -145,46 +134,29 @@ fn tritium_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValu
 		air.adjust_moles(water, burned_fuel / TRITIUM_BURN_OXY_FACTOR);
 		let energy_released = FIRE_HYDROGEN_ENERGY_RELEASED * burned_fuel;
 		let new_temp = (initial_energy + energy_released) / air.heat_capacity();
-		let cached_results = byond_air.get_list("reaction_results").map_err(|_| {
-			eyre::eyre!(
-				"Attempt to interpret non-list value as list {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?;
-		cached_results.set("fire", ByondValue::from(burned_fuel))?;
+		let mut cached_results = byond_air.read_var("reaction_results")?;
+		cached_results.write_list_index("fire", burned_fuel)?;
 		air.set_temperature(new_temp);
 		air.garbage_collect();
 		Ok((burned_fuel, energy_released, new_temp))
 	})?;
 	if burned_fuel > TRITIUM_MINIMUM_RADIATION_FACTOR {
-		if let Some(radiation_burn) = Proc::find("/proc/radiation_burn") {
-			radiation_burn.call(&[holder, &ByondValue::from(energy_released)])?;
-		} else {
-			drop(Proc::find("/proc/stack_trace")
-			.ok_or_else(|| eyre::eyre!("Couldn't find stack_trace!"))?
-			.call(&[&ByondValue::from_string(
-				"radiation_burn not found! Auxmos hooked trit fires won't irradiated without it!"
-			)?]));
-		}
+		byondapi::global_call::call_global(
+			"radiation_burn",
+			&[holder.clone(), energy_released.into()],
+		)?;
 	}
 	if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
-		if let Some(fire_expose) = Proc::find("/proc/fire_expose") {
-			fire_expose.call(&[holder, byond_air, &ByondValue::from(temperature)])?;
-		} else {
-			Proc::find("/proc/stack_trace")
-				.ok_or_else(|| eyre::eyre!("Couldn't find stack_trace!"))?
-				.call(&[&ByondValue::from_string(
-					"fire_expose not found! Auxmos hooked fires do not work without it!",
-				)?])?;
-		}
+		byondapi::global_call::call_global(
+			"fire_expose",
+			&[holder, byond_air, temperature.into()],
+		)?;
 	}
-	Ok(ByondValue::from(1.0))
+	Ok(1.0.into())
 }
 
 #[cfg(feature = "fusion_hook")]
-fn fusion(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
+fn fusion(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 	const TOROID_CALCULATED_THRESHOLD: f32 = 5.96; // changing it by 0.1 generally doubles or halves fusion temps
 	const INSTABILITY_GAS_POWER_FACTOR: f32 = 3.0;
 	const PLASMA_BINDING_ENERGY: f32 = 20_000_000.0;
@@ -213,7 +185,7 @@ fn fusion(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
 		scale_factor,
 		temperature_scale,
 		gas_power,
-	) = with_mix(byond_air, |air| {
+	) = with_mix(&byond_air, |air| {
 		Ok((
 			air.thermal_energy(),
 			air.get_moles(plas),
@@ -233,7 +205,7 @@ fn fusion(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
 		}
 	};
 	let instability = (gas_power * INSTABILITY_GAS_POWER_FACTOR).rem_euclid(toroidal_size);
-	byond_air.call("set_analyzer_results", &[&ByondValue::from(instability)])?;
+	byond_air.call("set_analyzer_results", &[instability.into()])?;
 	let mut thermal_energy = initial_energy;
 
 	//We have to scale the amounts of carbon and plasma down a significant amount in order to show the chaotic dynamics we want
@@ -287,7 +259,7 @@ fn fusion(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
 	let standard_waste_gas_output =
 		scale_factor * (FUSION_TRITIUM_CONVERSION_COEFFICIENT * FUSION_TRITIUM_MOLES_USED);
 
-	let standard_energy = with_mix_mut(byond_air, |air| {
+	let standard_energy = with_mix_mut(&byond_air, |air| {
 		air.set_moles(plas, plasma);
 		air.set_moles(co2, carbon);
 
@@ -316,21 +288,20 @@ fn fusion(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
 		Ok(standard_energy)
 	})?;
 	if reaction_energy != 0.0 {
-		Proc::find("/proc/fusion_ball").unwrap().call(&[
-			holder,
-			&ByondValue::from(reaction_energy),
-			&ByondValue::from(standard_energy),
-		])?;
-		Ok(ByondValue::from(1.0))
+		byondapi::global_call::call_global(
+			"fusion_ball",
+			&[holder, reaction_energy.into(), standard_energy.into()],
+		)?;
+		Ok(1.0.into())
 	} else if reaction_energy == 0.0 && instability <= FUSION_INSTABILITY_ENDOTHERMALITY {
-		Ok(ByondValue::from(1.0))
+		Ok(1.0.into())
 	} else {
-		Ok(ByondValue::from(0.0))
+		Ok(0.0.into())
 	}
 }
 
 #[cfg(feature = "generic_fire_hook")]
-fn generic_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValue> {
+fn generic_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 	use fxhash::FxBuildHasher;
 	use hashbrown::HashMap;
 	let mut burn_results: HashMap<GasIDX, f32, FxBuildHasher> = HashMap::with_capacity_and_hasher(
@@ -339,7 +310,7 @@ fn generic_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValu
 	);
 	let mut radiation_released = 0.0;
 	with_gas_info(|gas_info| {
-		if let Some(fire_amount) = with_mix(byond_air, |air| {
+		if let Some(fire_amount) = with_mix(&byond_air, |air| {
 			let (mut fuels, mut oxidizers) = air.get_fire_info_with_lock(gas_info);
 			let oxidation_power = oxidizers
 				.iter()
@@ -372,7 +343,7 @@ fn generic_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValu
 				}
 				for (i, a, _) in oxidizers.iter().copied().chain(fuels.iter().copied()) {
 					let amt = FIRE_MAXIMUM_BURN_RATE * a;
-					let this_gas_info = &gas_info[i as usize];
+					let this_gas_info = &gas_info[i];
 					radiation_released += amt * this_gas_info.fire_radiation_released;
 					if let Some(product_info) = this_gas_info.fire_products.as_ref() {
 						match product_info {
@@ -407,14 +378,14 @@ fn generic_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValu
 				))
 			}
 		})? {
-			let temperature = with_mix_mut(byond_air, |air| {
+			let temperature = with_mix_mut(&byond_air, |air| {
 				// internal energy + PV, which happens to be reducible to this
 				let initial_enthalpy = air.get_temperature()
 					* (air.heat_capacity() + R_IDEAL_GAS_EQUATION * air.total_moles());
 				let mut delta_enthalpy = 0.0;
 				for (&i, &amt) in &burn_results {
 					air.adjust_moles(i, amt);
-					delta_enthalpy -= amt * gas_info[i as usize].enthalpy;
+					delta_enthalpy -= amt * gas_info[i].enthalpy;
 				}
 				air.set_temperature(
 					(initial_enthalpy + delta_enthalpy)
@@ -422,40 +393,30 @@ fn generic_fire(byond_air: &ByondValue, holder: &ByondValue) -> Result<ByondValu
 				);
 				Ok(air.get_temperature())
 			})?;
-			let cached_results = byond_air.get_list("reaction_results").map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-list value as list {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?;
-			cached_results.set("fire", ByondValue::from(fire_amount))?;
+			let mut cached_results = byond_air.read_var("reaction_results")?;
+			cached_results.write_list_index("fire", fire_amount)?;
 			if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
-				if let Some(fire_expose) = Proc::find("/proc/fire_expose") {
-					fire_expose.call(&[holder, byond_air, &ByondValue::from(temperature)])?;
-				} else {
-					Proc::find("/proc/stack_trace")
-						.ok_or_else(|| eyre::eyre!("Couldn't find stack_trace!"))?
-						.call(&[&ByondValue::from_string(
-							"fire_expose not found! Auxmos hooked fires do not work without it!",
-						)?])?;
-				}
+				byondapi::global_call::call_global(
+					"fire_expose",
+					&[holder.clone(), byond_air, temperature.into()],
+				)?;
 			}
 			if radiation_released > 0.0 {
-				if let Some(radiation_burn) = Proc::find("/proc/radiation_burn") {
-					radiation_burn.call(&[holder, &ByondValue::from(radiation_released)])?;
+				byondapi::global_call::call_global(
+					"radiation_burn",
+					&[holder.clone(), radiation_released.into()],
+				)?;
+			}
+			Ok({
+				if fire_amount > 0.0 {
+					1.0
 				} else {
-					drop(Proc::find("/proc/stack_trace")
-					.ok_or_else(|| eyre::eyre!("Couldn't find stack_trace!"))?
-					.call(&[&ByondValue::from_string(
-						"radiation_burn not found! Auxmos hooked fires won't irradiate without it!"
-					)?]));
+					0.0
 				}
 			}
-			Ok(ByondValue::from(if fire_amount > 0.0 { 1.0 } else { 0.0 }))
+			.into())
 		} else {
-			Ok(ByondValue::from(0.0))
+			Ok(0.0.into())
 		}
 	})
 }

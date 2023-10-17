@@ -503,7 +503,8 @@ impl Mixture {
 		reactions
 			.values()
 			.rev()
-			.filter_map(|thin| thin.check_conditions(self).then(|| thin.get_id()))
+			.filter(|thin| thin.check_conditions(self))
+			.map(|thin| thin.get_id())
 			.collect()
 	}
 	/// Gets all of the reactions this mix should do.
@@ -721,12 +722,12 @@ mod tests {
 		into.set_moles(1, 22.0);
 		into.set_temperature(293.15);
 		let mut source = Mixture::new();
-		source.set_moles(3, 100.0);
+		source.set_moles(2, 100.0);
 		source.set_temperature(313.15);
 		into.merge(&source);
 		// make sure that the merge successfuly moved the moles
-		assert_eq!(into.get_moles(3), 100.0);
-		assert_eq!(source.get_moles(3), 100.0); // source is not modified by merge
+		assert_eq!(into.get_moles(2), 100.0);
+		assert_eq!(source.get_moles(2), 100.0); // source is not modified by merge
 										/*
 										make sure that the merge successfuly changed the temperature of the mix merged into:
 										test gases have heat capacities of (82 * 20 + 22 * 20) and (100 * 20) respectively, so total thermal energies of

@@ -20,7 +20,7 @@ pub fn send_to_groups(sent: BTreeSet<TurfID>) {
 	GROUPS_CHANNEL.try_lock().map(|mut opt| opt.replace(sent));
 }
 
-#[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
+#[byondapi_binds::bind("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
 fn groups_hook(mut src: ByondValue, remaining: ByondValue) {
 	let group_pressure_goal = src
 		.read_number("excited_group_pressure_goal")

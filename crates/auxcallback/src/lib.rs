@@ -17,9 +17,9 @@ pub type CallbackReceiver = flume::Receiver<DeferredFunc>;
 static CALLBACK_CHANNEL: std::sync::OnceLock<CallbackChannel> = std::sync::OnceLock::new();
 
 pub fn clean_callbacks() {
-	CALLBACK_CHANNEL
-		.get()
-		.map(|(_, rx)| rx.drain().for_each(|thing| std::mem::drop(thing)));
+	if let Some((_, rx)) = CALLBACK_CHANNEL.get() {
+		rx.drain().for_each(std::mem::drop)
+	};
 }
 
 fn with_callback_receiver<T>(f: impl Fn(&flume::Receiver<DeferredFunc>) -> T) -> T {

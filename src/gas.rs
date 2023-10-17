@@ -166,8 +166,6 @@ impl GasArena {
 	where
 		F: FnOnce(&mut Mixture, &mut Mixture) -> Result<T>,
 	{
-		let src = src;
-		let arg = arg;
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
 		if src == arg {
@@ -200,8 +198,6 @@ impl GasArena {
 	where
 		F: FnOnce(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T>,
 	{
-		let src = src;
-		let arg = arg;
 		let lock = GAS_MIXTURES.read();
 		let gas_mixtures = lock.as_ref().unwrap();
 		if src == arg {

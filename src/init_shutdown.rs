@@ -15,7 +15,10 @@ pub fn auxmos_shutdown() {
 	super::turfs::shutdown_turfs();
 	super::turfs::groups::flush_groups_channel();
 	super::reaction::clean_up_reaction_values();
+	auxcallback::clean_callbacks();
 	#[cfg(feature = "katmos")]
-	super::turfs::katmos::flush_equalize_channel();
+	{
+		super::turfs::katmos::flush_equalize_channel();
+	}
 	Ok(ByondValue::null())
 }

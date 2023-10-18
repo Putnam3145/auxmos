@@ -12,30 +12,6 @@
 			CRASH("Could not find libauxmos.so")
 	return known_auxmos_var
 
-/datum/controller/subsystem/air/proc/process_excited_groups_auxtools(remaining)
-	call_ext(AUXMOS, "byond:groups_hook_ffi")(src, remaining)
-
-/proc/__auxmos_shutdown()
-	call_ext(AUXMOS, "byond:auxmos_shutdown_ffi")()
-
-/proc/__auxmos_init()
-	call_ext(AUXMOS, "byond:auxmos_init_ffi")()
-
-/proc/finalize_gas_refs()
-	call_ext(AUXMOS, "byond:finalize_gas_refs_ffi")()
-
-/datum/controller/subsystem/air/proc/auxtools_update_reactions()
-	call_ext(AUXMOS, "byond:update_reactions_ffi")()
-
-/proc/auxtools_atmos_init(gas_data)
-	call_ext(AUXMOS, "byond:hook_init_ffi")(gas_data)
-
-/proc/_auxtools_register_gas(gas)
-	call_ext(AUXMOS, "byond:hook_register_gas_ffi")(gas)
-
-/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools(remaining)
-	call_ext(AUXMOS, "byond:equalize_hook_ffi")(remaining)
-
 /datum/controller/subsystem/air/proc/process_turfs_auxtools(remaining)
 	call_ext(AUXMOS, "byond:process_turf_hook_ffi")(src, remaining)
 
@@ -44,6 +20,18 @@
 
 /datum/controller/subsystem/air/proc/thread_running()
 	call_ext(AUXMOS, "byond:thread_running_hook_ffi")()
+
+/turf/proc/__update_auxtools_turf_adjacency_info()
+	call_ext(AUXMOS, "byond:hook_infos_ffi")(src)
+
+/turf/proc/update_air_ref()
+	call_ext(AUXMOS, "byond:hook_register_turf_ffi")(src)
+
+/proc/__auxmos_shutdown()
+	call_ext(AUXMOS, "byond:auxmos_shutdown_ffi")()
+
+/proc/__auxmos_init()
+	call_ext(AUXMOS, "byond:auxmos_init_ffi")()
 
 /datum/gas_mixture/proc/__auxtools_parse_gas_string(string)
 	call_ext(AUXMOS, "byond:parse_gas_string_ffi")(src, string)
@@ -180,10 +168,19 @@
 /proc/process_atmos_callbacks(remaining)
 	call_ext(AUXMOS, "byond:atmos_callback_handle_ffi")(remaining)
 
-/turf/proc/__update_auxtools_turf_adjacency_info()
-	call_ext(AUXMOS, "byond:hook_infos_ffi")(src)
+/proc/finalize_gas_refs()
+	call_ext(AUXMOS, "byond:finalize_gas_refs_ffi")()
 
-/turf/proc/update_air_ref()
-	call_ext(AUXMOS, "byond:hook_register_turf_ffi")(src)
+/datum/controller/subsystem/air/proc/auxtools_update_reactions()
+	call_ext(AUXMOS, "byond:update_reactions_ffi")()
+
+/proc/auxtools_atmos_init(gas_data)
+	call_ext(AUXMOS, "byond:hook_init_ffi")(gas_data)
+
+/proc/_auxtools_register_gas(gas)
+	call_ext(AUXMOS, "byond:hook_register_gas_ffi")(gas)
+
+/datum/controller/subsystem/air/proc/process_excited_groups_auxtools(remaining)
+	call_ext(AUXMOS, "byond:groups_hook_ffi")(src, remaining)
 
 #undef AUXMOS

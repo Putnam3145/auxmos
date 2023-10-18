@@ -77,7 +77,7 @@ pub fn shut_down_gases() {
 	crate::turfs::wait_for_tasks();
 	GAS_MIXTURES.write().as_mut().unwrap().clear();
 	NEXT_GAS_IDS.write().as_mut().unwrap().clear();
-	REGISTERED_GAS_MIXES.with(|thing| *thing.borrow_mut() = None);
+	REGISTERED_GAS_MIXES.with(|thing| thing.borrow_mut().as_mut().unwrap().clear());
 }
 
 impl GasArena {

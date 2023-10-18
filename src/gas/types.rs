@@ -226,9 +226,9 @@ pub fn initialize_gas_info_structs() {
 
 pub fn destroy_gas_info_structs() {
 	crate::turfs::wait_for_tasks();
-	*GAS_INFO_BY_STRING.write() = None;
-	*GAS_INFO_BY_IDX.write() = None;
-	*GAS_SPECIFIC_HEATS.write() = None;
+	GAS_INFO_BY_STRING.write().as_mut().unwrap().clear();
+	GAS_INFO_BY_IDX.write().as_mut().unwrap().clear();
+	GAS_SPECIFIC_HEATS.write().as_mut().unwrap().clear();
 	TOTAL_NUM_GASES.store(0, Ordering::Release);
 	CACHED_GAS_IDS.with(|gas_ids| {
 		gas_ids.borrow_mut().clear();

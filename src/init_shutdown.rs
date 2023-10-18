@@ -1,12 +1,16 @@
 use byondapi::prelude::*;
 
-#[byondapi_binds::bind("/proc/__auxmos_init")]
-pub fn auxmos_init() {
-	super::gas::initialize_gases();
-	super::types::initialize_gas_info_structs();
-	super::turfs::initialize_turfs();
-	Ok(ByondValue::null())
-}
+//#[byondapi_binds::bind("/proc/__auxmos_init")]
+//pub fn auxmos_init() {
+//	super::gas::initialize_gases();
+//	super::types::initialize_gas_info_structs();
+//	super::turfs::initialize_turfs();
+//	Ok(ByondValue::null())
+//}
+
+byondapi::inventory::submit! {byondapi::InitFunc(super::gas::initialize_gases)}
+byondapi::inventory::submit! {byondapi::InitFunc(super::types::initialize_gas_info_structs)}
+byondapi::inventory::submit! {byondapi::InitFunc(super::turfs::initialize_turfs)}
 
 #[byondapi_binds::bind("/proc/__auxmos_shutdown")]
 pub fn auxmos_shutdown() {

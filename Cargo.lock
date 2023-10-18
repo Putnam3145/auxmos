@@ -123,9 +123,10 @@ checksum = "7f30e7476521f6f8af1a1c4c0b8cc94f0bee37d91763d0ca2665f299b6cd8aec"
 [[package]]
 name = "byondapi"
 version = "0.2.1"
-source = "git+https://github.com/jupyterkat/byondapi-rs#c9a4b06ab93543e46bd68d43ba19a2bbb74f84af"
+source = "git+https://github.com/jupyterkat/byondapi-rs#4b8a873a94bfa96b56a14e314da34daaac663b12"
 dependencies = [
  "byondapi-sys",
+ "inventory",
  "lazy_static",
  "libloading 0.8.1",
  "walkdir",
@@ -152,7 +153,7 @@ dependencies = [
 [[package]]
 name = "byondapi-sys"
 version = "0.10.1"
-source = "git+https://github.com/jupyterkat/byondapi-rs#c9a4b06ab93543e46bd68d43ba19a2bbb74f84af"
+source = "git+https://github.com/jupyterkat/byondapi-rs#4b8a873a94bfa96b56a14e314da34daaac663b12"
 dependencies = [
  "bindgen",
  "libloading 0.8.1",

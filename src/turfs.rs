@@ -332,6 +332,10 @@ impl TurfGases {
 			.filter_map(|neighbor| self.graph.node_weight(neighbor))
 			.filter_map(move |idx| Some((&idx.id, all_mixtures.get(idx.mix)?)))
 	}
+	pub fn clear(&mut self) {
+		self.graph.clear();
+		self.map.clear();
+	}
 
 	/*
 	pub fn adjacent_infos(
@@ -392,8 +396,8 @@ pub fn initialize_turfs() {
 
 pub fn shutdown_turfs() {
 	wait_for_tasks();
-	*TURF_GASES.write() = None;
-	*PLANETARY_ATMOS.write() = None;
+	TURF_GASES.write().as_mut().unwrap().clear();
+	PLANETARY_ATMOS.write().as_mut().unwrap().clear();
 }
 
 fn with_turf_gases_read<T, F>(f: F) -> T

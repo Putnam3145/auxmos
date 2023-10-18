@@ -63,5 +63,4 @@ GLOBAL_REAL_VAR(list/__auxtools_initialized)
 		)
 		.unwrap()
 	}
-	file.write_all(r#"#undef AUXMOS"#.as_bytes()).unwrap();
 }

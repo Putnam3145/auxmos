@@ -17,7 +17,13 @@ pub fn generate_bindings() {
 	_ = std::fs::remove_file("./bindings.dm");
 	let mut file = std::fs::File::create("./bindings.dm").unwrap();
 	file.write_all(
-		r#"#define AUXMOS "auxmos"
+		r#"#define AUXMOS (__detect_auxmos())
+
+/proc/__detect_auxmos()
+	if (world.system_type == UNIX)
+		return "libauxmos"
+	else
+		return "auxmos"
 
 "#
 		.as_bytes(),

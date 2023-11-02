@@ -6,4 +6,6 @@ Binaries in releases are without these optimizations for compatibility. But it r
 
 You can build auxmos like any rust project, though you're gonna need clang installed. And `LIBCLANG_PATH` environment variable set to the bin path of clang in case of windows. Auxmos only supports `i686-unknown-linux-gnu` or `i686-pc-windows-msvc` targets on the build.
 
+Use `cargo t generate_binds` to generate the `bindings.dm` file to include in your codebase, for the byond to actually use the library, or use the one on the repository here (generated with feature `katmos`).
+
 The `master` branch is to be considered unstable; use the releases if you want to make sure it actually works. [The latest release is here](https://github.com/Putnam3145/auxmos/releases/latest).

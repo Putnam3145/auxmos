@@ -715,7 +715,7 @@ mod tests {
 	}
 
 	#[test]
-	fn test_merge() {
+	fn test_gases() {
 		initialize_gases();
 		let mut into = Mixture::new();
 		into.set_moles(0, 82.0);
@@ -744,11 +744,8 @@ mod tests {
 			into.get_temperature(),
 			(into.get_temperature() - 302.953)
 		);
-		destroy_gas_statics();
-	}
-	#[test]
-	fn test_remove() {
-		initialize_gases();
+
+		// test merges
 		// also tests multiply, copy_from_mutable
 		let mut removed = Mixture::new();
 		removed.set_moles(0, 22.0);

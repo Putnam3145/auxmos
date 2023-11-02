@@ -56,7 +56,7 @@ fn groups_hook(mut src: ByondValue, remaining: ByondValue) {
 		"num_group_turfs_processed",
 		&ByondValue::from(num_eq as f32),
 	)?;
-	Ok(ByondValue::from(is_cancelled))
+	Ok(is_cancelled.into())
 }
 
 // Finds small differences in turf pressures and equalizes them.

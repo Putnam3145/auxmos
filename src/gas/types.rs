@@ -19,7 +19,7 @@ use std::{
 
 use hashbrown::HashMap;
 
-use eyre::Result;
+use eyre::{Context, Result};
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
 
@@ -157,14 +157,7 @@ impl GasType {
 			id: gas.read_string("id")?.into_boxed_str(),
 			name: gas.read_string("name")?.into_boxed_str(),
 			flags: gas.read_number("flags").unwrap_or_default() as u32,
-			specific_heat: gas.read_number("specific_heat").map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?,
+			specific_heat: gas.read_number("specific_heat")?,
 			fusion_power: gas.read_number("fusion_power").unwrap_or_default(),
 			moles_visible: gas.read_number("moles_visible").ok(),
 			fire_info: {
@@ -281,21 +274,17 @@ fn hook_register_gas(gas: ByondValue) {
 
 #[byondapi_binds::bind("/proc/auxtools_atmos_init")]
 fn hook_init(gas_data: ByondValue) {
-	let data = gas_data.read_list("datums")?.to_vec();
-	data.into_iter()
-		.map(hook_register_gas)
-		.try_for_each(|res| res.map(drop))?;
-	//for i in 1..=data.len() {
-	//	hook_register_gas(data.get(data.get(i)?)?)?;
-	//}
-	//
-	let ssair = byondapi::global_call::call_global("get_ssair", &[])?;
-	*REACTION_INFO.write() = Some(get_reaction_info(ssair));
-	Ok(ByondValue::from(true))
+	let data = gas_data.read_var("datums")?;
+	data.iter()?
+		.map(|(_, gas)| hook_register_gas(gas))
+		.try_for_each(|res| res.map(drop))
+		.wrap_err("auxtools_atmos_init failed to register gas")?;
+	*REACTION_INFO.write() = Some(get_reaction_info());
+	Ok(true.into())
 }
 
-fn get_reaction_info(ssair: ByondValue) -> BTreeMap<ReactionPriority, Reaction> {
-	let gas_reactions = ssair.read_var("gas_reactions").unwrap();
+fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
+	let gas_reactions = byondapi::global_call::call_global("get_reactions", &[]).unwrap();
 	let mut reaction_cache: BTreeMap<ReactionPriority, Reaction> = Default::default();
 	let sender = byond_callback_sender();
 	for (reaction, _) in gas_reactions.iter().unwrap() {
@@ -325,9 +314,8 @@ fn get_reaction_info(ssair: ByondValue) -> BTreeMap<ReactionPriority, Reaction> 
 
 #[byondapi_binds::bind("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
 fn update_reactions() {
-	let ssair = byondapi::global_call::call_global("get_ssair", &[])?;
-	*REACTION_INFO.write() = Some(get_reaction_info(ssair));
-	Ok(ByondValue::from(true))
+	*REACTION_INFO.write() = Some(get_reaction_info());
+	Ok(true.into())
 }
 
 /// Calls the given closure with all reaction info as an argument.
@@ -457,12 +445,12 @@ pub fn gas_idx_from_string(id: &str) -> Result<GasIDX> {
 pub fn gas_idx_from_value(string_val: &ByondValue) -> Result<GasIDX> {
 	CACHED_GAS_IDS.with(|c| {
 		let mut cache = c.borrow_mut();
-		if let Some(idx) = cache.get(&string_val.get_ref().unwrap()) {
+		if let Some(idx) = cache.get(&string_val.get_strid().unwrap()) {
 			Ok(*idx)
 		} else {
 			let id = &string_val.get_string()?;
 			let idx = gas_idx_from_string(id)?;
-			cache.insert(string_val.get_ref().unwrap(), idx);
+			cache.insert(string_val.get_strid().unwrap(), idx);
 			Ok(idx)
 		}
 	})

@@ -429,9 +429,9 @@ where
 }
 
 #[byondapi_binds::bind("/turf/proc/update_air_ref")]
-fn hook_register_turf(src: ByondValue) {
+fn hook_register_turf(src: ByondValue, flag: ByondValue) {
 	let id = src.get_ref()?;
-	let flag = determine_turf_flag(&src);
+	let flag = flag.get_number()? as i32;
 	if let Ok(blocks) = src.read_number("blocks_air") {
 		if blocks > 0.0 {
 			with_turf_gases_write(|arena| arena.remove_turf(id));
@@ -443,17 +443,7 @@ fn hook_register_turf(src: ByondValue) {
 	if flag >= 0 {
 		let mut to_insert: TurfMixture = TurfMixture::default();
 		let air = src.read_var("air")?;
-		to_insert.mix = air
-			.read_number("_extools_pointer_gasmixture")
-			.map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize;
+		to_insert.mix = air.read_number("_extools_pointer_gasmixture")? as usize;
 		to_insert.flags = SimulationFlags::from_bits_truncate(flag as u8);
 		to_insert.id = id;
 
@@ -495,6 +485,7 @@ fn hook_register_turf(src: ByondValue) {
 	Ok(ByondValue::null())
 }
 
+/* will come back to you later
 const PLANET_TURF: i32 = 1;
 const SPACE_TURF: i32 = 0;
 const CLOSED_TURF: i32 = -1;
@@ -515,6 +506,7 @@ fn determine_turf_flag(src: &ByondValue) -> i32 {
 		OPEN_TURF
 	}
 }
+*/
 
 #[byondapi_binds::bind("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn hook_infos(src: ByondValue) {
@@ -549,20 +541,8 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 		Ok(air) => {
 			let overlay_types = ByondValue::new_list()?;
 			let mut overlay_types: ByondValueList = overlay_types.try_into()?;
-			let gas_overlays = byondapi::global_call::call_global("get_ssair", &[])?
-				.read_var("gas_data")?
-				.read_var("overlays")?;
-			let ptr = air
-				.read_number("_extools_pointer_gasmixture")
-				.map_err(|_| {
-					eyre::eyre!(
-						"Attempt to interpret non-number value as number {} {}:{}",
-						std::file!(),
-						std::line!(),
-						std::column!()
-					)
-				})?
-				.to_bits() as usize;
+			let gas_overlays = byondapi::global_call::call_global("get_overlays", &[])?;
+			let ptr = air.read_number("_extools_pointer_gasmixture")? as usize;
 			GasArena::with_gas_mixture(ptr, |mix| {
 				mix.for_each_gas(|idx, moles| {
 					if let Some(amt) = gas::types::gas_visibility(idx) {

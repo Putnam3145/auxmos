@@ -1,4 +1,4 @@
-use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
+use byondapi::prelude::*;
 
 use super::*;
 
@@ -16,37 +16,21 @@ use coarsetime::{Duration, Instant};
 
 #[byondapi_binds::bind("/datum/controller/subsystem/air/proc/thread_running")]
 fn thread_running_hook() {
-	Ok(ByondValue::from(TASKS.try_write().is_none()))
+	Ok(TASKS.try_write().is_none().into())
 }
 
 #[byondapi_binds::bind("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
 fn finish_process_turfs(time_remaining: ByondValue) {
-	if !time_remaining.is_num() {
-		return Err(eyre::eyre!("Turf finishing did not receive a number"));
-	}
-	if process_callbacks_for_millis(time_remaining.get_number().unwrap() as u64) {
-		Ok(ByondValue::from(true))
-	} else {
-		Ok(ByondValue::from(false))
-	}
+	Ok(process_callbacks_for_millis(time_remaining.get_number()? as u64).into())
 }
 
 #[byondapi_binds::bind("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
 fn process_turf_hook(src: ByondValue, remaining: ByondValue) {
 	let remaining_time = Duration::from_millis(remaining.get_number().unwrap_or(50.0) as u64);
 	let fdm_max_steps = src.read_number("share_max_steps").unwrap_or(1.0) as i32;
-	let equalize_enabled = cfg!(feature = "fastmos")
-		&& src.read_number("equalize_enabled").map_err(|_| {
-			eyre::eyre!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})? != 0.0;
+	let equalize_enabled = cfg!(feature = "fastmos") && src.read_number("equalize_enabled")? != 0.0;
 
-	let ssair = byondapi::global_call::call_global("get_ssair", &[])?;
-	process_turf(remaining_time, fdm_max_steps, equalize_enabled, ssair)?;
+	process_turf(remaining_time, fdm_max_steps, equalize_enabled, src)?;
 	Ok(ByondValue::null())
 }
 
@@ -63,14 +47,7 @@ fn process_turf(
 			fdm((&start_time, remaining), fdm_max_steps, equalize_enabled);
 		let bench = start_time.elapsed().as_millis();
 		let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
-		let prev_cost = ssair.read_number("cost_turfs").map_err(|_| {
-			eyre::eyre!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?;
+		let prev_cost = ssair.read_number("cost_turfs")?;
 		ssair
 			.read_var("cost_turfs")?
 			.set_number(0.8 * prev_cost + 0.2 * (bench as f32));
@@ -84,14 +61,7 @@ fn process_turf(
 		let start_time = Instant::now();
 		post_process();
 		let bench = start_time.elapsed().as_millis();
-		let prev_cost = ssair.read_number("cost_post_process").map_err(|_| {
-			eyre::eyre!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?;
+		let prev_cost = ssair.read_number("cost_post_process")?;
 		ssair
 			.read_var("cost_post_process")?
 			.set_number(0.8 * prev_cost + 0.2 * (bench as f32));

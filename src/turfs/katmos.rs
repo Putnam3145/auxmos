@@ -440,8 +440,7 @@ fn explosively_depressurize(
 
 			let _average_moles = total_moles / (progression_order.len() - space_turf_len) as f32;
 
-			let hpd = byondapi::global_call::call_global("get_ssair", &[])?
-				.read_var("high_pressure_delta")?;
+			let hpd = byondapi::global_call::call_global("get_hpds", &[])?;
 			let mut hpd_list: ByondValueList = (&hpd).try_into()?;
 
 			for &cur_index in progression_order.iter().rev() {
@@ -461,7 +460,7 @@ fn explosively_depressurize(
 					cur_mixture.clear_vol((_average_moles / DECOMP_REMOVE_RATIO).abs());
 				}
 				let mut byond_turf = ByondValue::new_ref(TURF_TYPE, cur_mixture.id);
-				if byondapi::map::byond_locatein(&byond_turf, &hpd)?.get_number()? as u32 == 0 {
+				if byondapi::map::byond_locatein(&byond_turf, &hpd)?.is_null() {
 					hpd_list.push(&byond_turf)?;
 				}
 				let adj_index = cur_info.curr_transfer_dir.unwrap();
@@ -725,12 +724,11 @@ fn send_pressure_differences(
 }
 
 #[byondapi_binds::bind("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
-fn equalize_hook(remaining: ByondValue) {
-	let mut ssair = byondapi::global_call::call_global("get_ssair", &[])?;
-	let equalize_hard_turf_limit = ssair
+fn equalize_hook(mut src: ByondValue, remaining: ByondValue) {
+	let equalize_hard_turf_limit = src
 		.read_number("equalize_hard_turf_limit")
 		.unwrap_or(2000.0) as usize;
-	let planet_enabled: bool = ssair.read_number("planet_equalize_enabled").unwrap_or(1.0) != 0.0;
+	let planet_enabled: bool = src.read_number("planet_equalize_enabled").unwrap_or(1.0) != 0.0;
 	let remaining_time = Duration::from_millis(remaining.get_number().unwrap_or(50.0) as u64);
 	let start_time = Instant::now();
 	let (num_eq, is_cancelled) = with_equalizes(|thing| {
@@ -747,20 +745,13 @@ fn equalize_hook(remaining: ByondValue) {
 	});
 
 	let bench = start_time.elapsed().as_millis();
-	let prev_cost = ssair.read_number("cost_equalize").map_err(|_| {
-		eyre::eyre!(
-			"Attempt to interpret non-number value as number {} {}:{}",
-			std::file!(),
-			std::line!(),
-			std::column!()
-		)
-	})?;
-	ssair.write_var(
+	let prev_cost = src.read_number("cost_equalize")?;
+	src.write_var(
 		"cost_equalize",
 		&ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
 	)?;
-	ssair.write_var("num_equalize_processed", &ByondValue::from(num_eq as f32))?;
-	Ok(ByondValue::from(is_cancelled))
+	src.write_var("num_equalize_processed", &ByondValue::from(num_eq as f32))?;
+	Ok(is_cancelled.into())
 }
 
 fn equalize(

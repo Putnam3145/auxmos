@@ -9,13 +9,9 @@ use byondapi::prelude::*;
 
 pub use types::*;
 
-use fxhash::FxBuildHasher;
-
 use parking_lot::{const_rwlock, RwLock};
 
 pub use mixture::Mixture;
-
-use std::{cell::RefCell, collections::HashSet};
 
 pub type GasIDX = usize;
 
@@ -35,49 +31,15 @@ static GAS_MIXTURES: RwLock<Option<Vec<RwLock<Mixture>>>> = const_rwlock(None);
 
 static NEXT_GAS_IDS: RwLock<Option<Vec<usize>>> = const_rwlock(None);
 
-thread_local! {
-	static REGISTERED_GAS_MIXES: RefCell<Option<HashSet<u32, FxBuildHasher>>> = RefCell::new(None);
-}
-
-//is registered mix may be called when byond's del datum runs after world shutdown is done.
-//this is allowed to fail because of that
-fn is_registered_mix(i: u32) -> bool {
-	REGISTERED_GAS_MIXES.with(|thin| {
-		thin.borrow()
-			.as_ref()
-			.map(|opt| opt.contains(&i))
-			.unwrap_or(false)
-	})
-}
-
-fn register_mix(v: ByondValue) {
-	REGISTERED_GAS_MIXES.with(|thin| {
-		thin.borrow_mut()
-			.as_mut()
-			.expect("Wrong thread tried to access REGISTERED_GAS_MIXES, must be the main thread!")
-			.insert(v.get_ref().unwrap())
-	});
-}
-
-//Unregister mix may be called when byond's del datum runs after world shutdown is done.
-//this is allowed to fail because of that
-fn unregister_mix(i: u32) {
-	REGISTERED_GAS_MIXES.with(|thin| {
-		thin.borrow_mut().as_mut().map(|opt| opt.remove(&i));
-	});
-}
-
 pub fn initialize_gases() {
 	*GAS_MIXTURES.write() = Some(Vec::with_capacity(240_000));
 	*NEXT_GAS_IDS.write() = Some(Vec::with_capacity(2000));
-	REGISTERED_GAS_MIXES.with(|thing| *thing.borrow_mut() = Some(Default::default()));
 }
 
 pub fn shut_down_gases() {
 	crate::turfs::wait_for_tasks();
 	GAS_MIXTURES.write().as_mut().unwrap().clear();
 	NEXT_GAS_IDS.write().as_mut().unwrap().clear();
-	REGISTERED_GAS_MIXES.with(|thing| thing.borrow_mut().as_mut().unwrap().clear());
 }
 
 impl GasArena {
@@ -224,14 +186,7 @@ impl GasArena {
 	/// If not called from the main thread
 	/// If `NEXT_GAS_IDS` is not initialized, somehow.
 	pub fn register_mix(mut mix: ByondValue) -> Result<ByondValue> {
-		let init_volume = mix.read_number("initial_volume").map_err(|_| {
-			eyre::eyre!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?;
+		let init_volume = mix.read_number("initial_volume")?;
 		if NEXT_GAS_IDS.read().as_ref().unwrap().is_empty() {
 			let mut gas_lock = GAS_MIXTURES.write();
 			let gas_mixtures = gas_lock.as_mut().unwrap();
@@ -240,7 +195,7 @@ impl GasArena {
 
 			mix.write_var(
 				"_extools_pointer_gasmixture",
-				&ByondValue::from(f32::from_bits(next_idx as u32)),
+				&ByondValue::from(next_idx as f32),
 			)
 			.unwrap();
 
@@ -270,13 +225,9 @@ impl GasArena {
 				.unwrap()
 				.write()
 				.clear_with_vol(init_volume);
-			mix.write_var(
-				"_extools_pointer_gasmixture",
-				&ByondValue::from(f32::from_bits(idx as u32)),
-			)
-			.unwrap();
+			mix.write_var("_extools_pointer_gasmixture", &ByondValue::from(idx as f32))
+				.unwrap();
 		}
-		register_mix(mix);
 		Ok(ByondValue::null())
 	}
 	/// Marks the ByondValue's gas mixture as unused, allowing it to be reallocated to another.
@@ -284,13 +235,11 @@ impl GasArena {
 	/// If not called from the main thread
 	/// If `NEXT_GAS_IDS` hasn't been initialized, somehow.
 	pub fn unregister_mix(mix: &ByondValue) {
-		let mix_ref = mix.get_ref().unwrap();
-		if is_registered_mix(mix_ref) {
-			if let Ok(idx) = mix.read_number("_extools_pointer_gasmixture") {
-				let mut next_gas_ids = NEXT_GAS_IDS.write();
-				next_gas_ids.as_mut().unwrap().push(idx as usize);
-			}
-			unregister_mix(mix_ref);
+		if let Ok(idx) = mix.read_number("_extools_pointer_gasmixture") {
+			let mut next_gas_ids = NEXT_GAS_IDS.write();
+			next_gas_ids.as_mut().unwrap().push(idx as usize);
+		} else {
+			panic!("Tried to unregister uninitialized mix")
 		}
 	}
 }
@@ -302,19 +251,7 @@ pub fn with_mix<T, F>(mix: &ByondValue, f: F) -> Result<T>
 where
 	F: FnOnce(&Mixture) -> Result<T>,
 {
-	GasArena::with_gas_mixture(
-		mix.read_number("_extools_pointer_gasmixture")
-			.map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		f,
-	)
+	GasArena::with_gas_mixture(mix.read_number("_extools_pointer_gasmixture")? as usize, f)
 }
 
 /// As `with_mix`, but mutable.
@@ -324,19 +261,7 @@ pub fn with_mix_mut<T, F>(mix: &ByondValue, f: F) -> Result<T>
 where
 	F: FnOnce(&mut Mixture) -> Result<T>,
 {
-	GasArena::with_gas_mixture_mut(
-		mix.read_number("_extools_pointer_gasmixture")
-			.map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		f,
-	)
+	GasArena::with_gas_mixture_mut(mix.read_number("_extools_pointer_gasmixture")? as usize, f)
 }
 
 /// As `with_mix`, but with two mixes.
@@ -347,28 +272,8 @@ where
 	F: FnOnce(&Mixture, &Mixture) -> Result<T>,
 {
 	GasArena::with_gas_mixtures(
-		src_mix
-			.read_number("_extools_pointer_gasmixture")
-			.map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		arg_mix
-			.read_number("_extools_pointer_gasmixture")
-			.map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
+		src_mix.read_number("_extools_pointer_gasmixture")? as usize,
+		arg_mix.read_number("_extools_pointer_gasmixture")? as usize,
 		f,
 	)
 }
@@ -381,28 +286,8 @@ where
 	F: FnOnce(&mut Mixture, &mut Mixture) -> Result<T>,
 {
 	GasArena::with_gas_mixtures_mut(
-		src_mix
-			.read_number("_extools_pointer_gasmixture")
-			.map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		arg_mix
-			.read_number("_extools_pointer_gasmixture")
-			.map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
+		src_mix.read_number("_extools_pointer_gasmixture")? as usize,
+		arg_mix.read_number("_extools_pointer_gasmixture")? as usize,
 		f,
 	)
 }
@@ -415,28 +300,8 @@ where
 	F: FnMut(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T>,
 {
 	GasArena::with_gas_mixtures_custom(
-		src_mix
-			.read_number("_extools_pointer_gasmixture")
-			.map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
-		arg_mix
-			.read_number("_extools_pointer_gasmixture")
-			.map_err(|_| {
-				eyre::eyre!(
-					"Attempt to interpret non-number value as number {} {}:{}",
-					std::file!(),
-					std::line!(),
-					std::column!()
-				)
-			})?
-			.to_bits() as usize,
+		src_mix.read_number("_extools_pointer_gasmixture")? as usize,
+		arg_mix.read_number("_extools_pointer_gasmixture")? as usize,
 		f,
 	)
 }

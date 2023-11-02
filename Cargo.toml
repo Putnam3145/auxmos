@@ -46,11 +46,11 @@ float-ord = "0.3.2"
 flume = "0.11.0"
 parking_lot = "0.12.1"
 fxhash = "0.2.1"
-ahash = "0.8.3"
+ahash = "0.8.6"
 lazy_static = "1.4.0"
-indexmap = { version = "2.0.2", features = ["rayon"] }
+indexmap = { version = "2.1.0", features = ["rayon"] }
 dashmap = { version = "5.5.3", features = ["rayon"] }
-hashbrown = "0.14.1"
+hashbrown = "0.14.2"
 atomic_float = "0.1.0"
 petgraph = "0.6.4"
 bitflags = "2.4.1"

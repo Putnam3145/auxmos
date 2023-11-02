@@ -71,7 +71,8 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 					::byondapi_binds::Bind {
 						proc_path: #p,
 						func_name: #func_name_ffi_disp,
-						func_arguments: Some(#arg_names_disp)
+						func_arguments: #arg_names_disp,
+						is_variadic: false,
 					}
 				});
 			}
@@ -89,7 +90,8 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 				::byondapi_binds::Bind{
 					proc_path: #func_name_disp,
 					func_name: #func_name_ffi_disp,
-					func_arguments: Some(#arg_names_disp)
+					func_arguments: #arg_names_disp,
+					is_variadic: false,
 				}
 			});
 		},
@@ -148,6 +150,7 @@ pub fn bind_raw_args(attr: TokenStream, item: TokenStream) -> TokenStream {
 	}
 
 	let signature = quote! {
+		#[no_mangle]
 		pub unsafe extern "C" fn #func_name_ffi (
 			__argc: ::byondapi::sys::u4c,
 			__argv: *mut ::byondapi::value::ByondValue
@@ -164,7 +167,8 @@ pub fn bind_raw_args(attr: TokenStream, item: TokenStream) -> TokenStream {
 					::byondapi_binds::Bind {
 						proc_path: #p,
 						func_name: #func_name_ffi_disp,
-						func_arguments: None
+						func_arguments: "",
+						is_variadic: true,
 					}
 				});
 			}
@@ -183,7 +187,8 @@ pub fn bind_raw_args(attr: TokenStream, item: TokenStream) -> TokenStream {
 					::byondapi_binds::Bind{
 						proc_path: #func_name_disp,
 						func_name: #func_name_ffi_disp,
-						func_arguments: None,
+						func_arguments: "",
+						is_variadic: true,
 					}
 				});
 

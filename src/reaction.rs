@@ -105,23 +105,19 @@ impl Reaction {
 				let min_temp_req = min_reqs
 					.read_list_index("TEMP")
 					.ok()
-					.map(|item| item.get_number().ok())
-					.flatten();
+					.and_then(|item| item.get_number().ok());
 				let max_temp_req = min_reqs
 					.read_list_index("MAX_TEMP")
 					.ok()
-					.map(|item| item.get_number().ok())
-					.flatten();
+					.and_then(|item| item.get_number().ok());
 				let min_ener_req = min_reqs
 					.read_list_index("ENER")
 					.ok()
-					.map(|item| item.get_number().ok())
-					.flatten();
+					.and_then(|item| item.get_number().ok());
 				let min_fire_req = min_reqs
 					.read_list_index("FIRE_REAGENTS")
 					.ok()
-					.map(|item| item.get_number().ok())
-					.flatten();
+					.and_then(|item| item.get_number().ok());
 				Ok(Reaction {
 					id,
 					priority,

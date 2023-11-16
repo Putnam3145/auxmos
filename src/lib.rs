@@ -155,14 +155,15 @@ fn temperature_share_hook() {
 #[byondapi_binds::bind("/datum/gas_mixture/proc/get_gases")]
 fn get_gases_hook(src: ByondValue) {
 	with_mix(&src, |mix| {
-		let mut gases_list: ByondValueList = ByondValue::new_list()?.try_into().unwrap();
+		let mut gases_list = ByondValue::new_list()?;
 		mix.for_each_gas(|idx, gas| {
 			if gas > GAS_MIN_MOLES {
-				gases_list.push(&gas_idx_to_id(idx))?;
+				gases_list.push_list(gas_idx_to_id(idx))?;
 			}
 			Ok(())
 		})?;
-		Ok(ByondValue::try_from(gases_list)?)
+
+		Ok(gases_list)
 	})
 }
 

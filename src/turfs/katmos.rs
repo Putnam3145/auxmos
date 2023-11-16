@@ -441,7 +441,7 @@ fn explosively_depressurize(
 			let _average_moles = total_moles / (progression_order.len() - space_turf_len) as f32;
 
 			let hpd = byondapi::global_call::call_global("get_hpds", &[])?;
-			let mut hpd_list: ByondValueList = (&hpd).try_into()?;
+			let mut hpd_list = hpd.get_list()?;
 
 			for &cur_index in progression_order.iter().rev() {
 				let cur_orig = info.entry(cur_index).or_default();
@@ -461,7 +461,8 @@ fn explosively_depressurize(
 				}
 				let mut byond_turf = ByondValue::new_ref(TURF_TYPE, cur_mixture.id);
 				if byondapi::map::byond_locatein(&byond_turf, &hpd)?.is_null() {
-					hpd_list.push(&byond_turf)?;
+					hpd_list.push(byond_turf);
+					hpd.write_list(&hpd_list)?;
 				}
 				let adj_index = cur_info.curr_transfer_dir.unwrap();
 
@@ -479,10 +480,8 @@ fn explosively_depressurize(
 
 				let mut byond_turf_adj = ByondValue::new_ref(TURF_TYPE, cur_mixture.id);
 
-				byond_turf.write_var(
-					"pressure_difference",
-					&ByondValue::from(cur_info.curr_transfer_amount),
-				)?;
+				byond_turf
+					.write_var("pressure_difference", &cur_info.curr_transfer_amount.into())?;
 				byond_turf.write_var(
 					"pressure_direction",
 					&byondapi::global_call::call_global(
@@ -492,10 +491,8 @@ fn explosively_depressurize(
 				)?;
 
 				if adj_info.curr_transfer_dir.is_none() {
-					byond_turf_adj.write_var(
-						"pressure_difference",
-						&ByondValue::from(adj_info.curr_transfer_amount),
-					)?;
+					byond_turf_adj
+						.write_var("pressure_difference", &adj_info.curr_transfer_amount.into())?;
 					byond_turf_adj.write_var(
 						"pressure_direction",
 						&byondapi::global_call::call_global(
@@ -505,7 +502,7 @@ fn explosively_depressurize(
 					)?;
 				}
 
-				floor_rip_turfs.push((byond_turf, ByondValue::from(sum)));
+				floor_rip_turfs.push((byond_turf, sum.into()));
 			}
 			Ok(floor_rip_turfs)
 		})?;
@@ -713,10 +710,7 @@ fn send_pressure_differences(
 			let turf = ByondValue::new_ref(TURF_TYPE, cur_turf);
 			let other_turf = ByondValue::new_ref(TURF_TYPE, adj_turf);
 			if let Err(e) = turf.call("consider_pressure_difference", &[other_turf, real_amount]) {
-				byondapi::global_call::call_global(
-					"stack_trace",
-					&[ByondValue::new_str(format!("{e:?}"))?],
-				)?;
+				byondapi::global_call::call_global("stack_trace", &[format!("{e:?}").try_into()?])?;
 			}
 			Ok(())
 		})));
@@ -748,9 +742,9 @@ fn equalize_hook(mut src: ByondValue, remaining: ByondValue) {
 	let prev_cost = src.read_number("cost_equalize")?;
 	src.write_var(
 		"cost_equalize",
-		&ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+		&(0.8 * prev_cost + 0.2 * (bench as f32)).into(),
 	)?;
-	src.write_var("num_equalize_processed", &ByondValue::from(num_eq as f32))?;
+	src.write_var("num_equalize_processed", &(num_eq as f32).into())?;
 	Ok(is_cancelled.into())
 }
 

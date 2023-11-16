@@ -50,12 +50,9 @@ fn groups_hook(mut src: ByondValue, remaining: ByondValue) {
 	})?;
 	src.write_var(
 		"cost_groups",
-		&ByondValue::from(0.8 * prev_cost + 0.2 * (bench as f32)),
+		&(0.8 * prev_cost + 0.2 * (bench as f32)).into(),
 	)?;
-	src.write_var(
-		"num_group_turfs_processed",
-		&ByondValue::from(num_eq as f32),
-	)?;
+	src.write_var("num_group_turfs_processed", &(num_eq as f32).into())?;
 	Ok(is_cancelled.into())
 }
 

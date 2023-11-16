@@ -317,12 +317,12 @@ fn fdm(
 										if diff > 5.0 {
 											turf.call(
 												"consider_pressure_difference",
-												&[enemy_tile, ByondValue::from(diff)],
+												&[enemy_tile, diff.into()],
 											)?;
 										} else if diff < -5.0 {
 											enemy_tile.call(
 												"consider_pressure_difference",
-												&[turf.clone(), ByondValue::from(-diff)],
+												&[turf.clone(), (-diff).into()],
 											)?;
 										}
 									}

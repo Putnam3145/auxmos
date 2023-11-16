@@ -539,8 +539,7 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 	match src.read_var("air") {
 		Err(_) => Ok(ByondValue::null()),
 		Ok(air) => {
-			let overlay_types = ByondValue::new_list()?;
-			let mut overlay_types: ByondValueList = overlay_types.try_into()?;
+			let mut overlay_types = Vec::new();
 			let gas_overlays = byondapi::global_call::call_global("get_overlays", &[])?;
 			let ptr = air.read_number("_extools_pointer_gasmixture")? as usize;
 			GasArena::with_gas_mixture(ptr, |mix| {
@@ -552,7 +551,7 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 							if let Ok(this_gas_overlay) = this_overlay_list
 								.read_list_index(gas::mixture::visibility_step(moles) as f32)
 							{
-								overlay_types.push(&this_gas_overlay)?;
+								overlay_types.push(this_gas_overlay);
 							}
 						}
 					}
@@ -560,7 +559,7 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 				})
 			})?;
 
-			Ok(src.call("set_visuals", &[ByondValue::try_from(overlay_types)?])?)
+			Ok(src.call("set_visuals", &[overlay_types.as_slice().try_into()?])?)
 		}
 	}
 }

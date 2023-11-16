@@ -193,11 +193,8 @@ impl GasArena {
 			let next_idx = gas_mixtures.len();
 			gas_mixtures.push(RwLock::new(Mixture::from_vol(init_volume)));
 
-			mix.write_var(
-				"_extools_pointer_gasmixture",
-				&ByondValue::from(next_idx as f32),
-			)
-			.unwrap();
+			mix.write_var("_extools_pointer_gasmixture", &(next_idx as f32).into())
+				.unwrap();
 
 			let mut ids_lock = NEXT_GAS_IDS.write();
 			let cur_last = gas_mixtures.len();
@@ -225,7 +222,7 @@ impl GasArena {
 				.unwrap()
 				.write()
 				.clear_with_vol(init_volume);
-			mix.write_var("_extools_pointer_gasmixture", &ByondValue::from(idx as f32))
+			mix.write_var("_extools_pointer_gasmixture", &(idx as f32).into())
 				.unwrap();
 		}
 		Ok(ByondValue::null())

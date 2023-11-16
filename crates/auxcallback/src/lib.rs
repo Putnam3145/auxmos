@@ -1,4 +1,4 @@
-use std::convert::TryFrom;
+use std::convert::TryInto;
 
 use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
 
@@ -41,7 +41,7 @@ fn process_callbacks() {
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
-				let error_string = ByondValue::try_from(::std::format!("{e:?}")).unwrap();
+				let error_string = format!("{e:?}").try_into().unwrap();
 				byondapi::global_call::call_global("stack_trace", &[error_string]).unwrap();
 			}
 		}
@@ -55,7 +55,7 @@ fn process_callbacks_for(duration: Duration) -> bool {
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
-				let error_string = ByondValue::try_from(::std::format!("{e:?}")).unwrap();
+				let error_string = format!("{e:?}").try_into().unwrap();
 				byondapi::global_call::call_global("stack_trace", &[error_string]).unwrap();
 			}
 			if timer.elapsed() >= duration {
@@ -86,7 +86,7 @@ pub fn process_callbacks_for_millis(millis: u64) -> bool {
 pub fn callback_processing_hook(time_remaining: ByondValue) -> Result<ByondValue> {
 	if time_remaining.is_num() {
 		let limit = time_remaining.get_number().unwrap() as u64;
-		Ok(ByondValue::from(process_callbacks_for_millis(limit)))
+		Ok(process_callbacks_for_millis(limit).into())
 	} else {
 		process_callbacks();
 		Ok(ByondValue::null())

@@ -327,10 +327,13 @@ fn take_from_givers(
 	}
 }
 
-fn explosively_depressurize(
-	initial_index: NodeIndex,
-	equalize_hard_turf_limit: usize,
-) -> Result<()> {
+fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usize) -> Result<()> {
+	let initial_index = with_turf_gases_read(|arena| arena.get_id(initial_index));
+	if initial_index.is_none() {
+		return Ok(());
+	}
+	let initial_index = initial_index.unwrap();
+
 	//1st floodfill
 	let (space_turfs, warned_about_planet_atmos) = {
 		let mut cur_queue_idx = 0;
@@ -440,8 +443,7 @@ fn explosively_depressurize(
 
 			let _average_moles = total_moles / (progression_order.len() - space_turf_len) as f32;
 
-			let hpd = byondapi::global_call::call_global("get_hpds", &[])?;
-			let mut hpd_list = hpd.get_list()?;
+			let mut hpd = byondapi::global_call::call_global("get_hpds", &[])?;
 
 			for &cur_index in progression_order.iter().rev() {
 				let cur_orig = info.entry(cur_index).or_default();
@@ -461,8 +463,7 @@ fn explosively_depressurize(
 				}
 				let mut byond_turf = ByondValue::new_ref(TURF_TYPE, cur_mixture.id);
 				if byondapi::map::byond_locatein(&byond_turf, &hpd)?.is_null() {
-					hpd_list.push(byond_turf);
-					hpd.write_list(&hpd_list)?;
+					hpd.push_list(byond_turf)?;
 				}
 				let adj_index = cur_info.curr_transfer_dir.unwrap();
 
@@ -532,6 +533,7 @@ fn flood_fill_zones(
 	let mut ignore_zone = false;
 	while let Some(cur_index) = border_turfs.pop_front() {
 		let cur_turf = arena.get(cur_index).unwrap();
+		let cur_turf_id = cur_turf.id;
 
 		total_moles += cur_turf.total_moles();
 
@@ -557,7 +559,7 @@ fn flood_fill_zones(
 					// NOT ONE OF YOU IS GONNA SURVIVE THIS
 					// (I just made explosions less laggy, you're welcome)
 					drop(sender.try_send(Box::new(move || {
-						explosively_depressurize(cur_index, equalize_hard_turf_limit)
+						explosively_depressurize(cur_turf_id, equalize_hard_turf_limit)
 					})));
 					ignore_zone = true;
 				}
@@ -566,7 +568,7 @@ fn flood_fill_zones(
 					&& weight.contains(AdjacentFlags::ATMOS_ADJACENT_FIRELOCK)
 				{
 					drop(sender.try_send(Box::new(move || {
-						planet_equalize(cur_index, equalize_hard_turf_limit)
+						planet_equalize(cur_turf_id, equalize_hard_turf_limit)
 					})));
 					ignore_zone = true;
 				}
@@ -576,7 +578,13 @@ fn flood_fill_zones(
 	(!ignore_zone).then_some((turf_graph, total_moles))
 }
 
-fn planet_equalize(initial_index: NodeIndex, equalize_hard_turf_limit: usize) -> Result<()> {
+fn planet_equalize(initial_index: TurfID, equalize_hard_turf_limit: usize) -> Result<()> {
+	let initial_index = with_turf_gases_read(|arena| arena.get_id(initial_index));
+	if initial_index.is_none() {
+		return Ok(());
+	}
+	let initial_index = initial_index.unwrap();
+
 	let mut cur_queue_idx = 0;
 	let mut warned_about_space = false;
 	let mut planet_turfs: IndexSet<NodeIndex, FxBuildHasher> = Default::default();

@@ -124,7 +124,7 @@ checksum = "7f30e7476521f6f8af1a1c4c0b8cc94f0bee37d91763d0ca2665f299b6cd8aec"
 [[package]]
 name = "byondapi"
 version = "0.2.1"
-source = "git+https://github.com/jupyterkat/byondapi-rs#3ac193f0945e52f2217ac2cc324db5dfc0a7625f"
+source = "git+https://github.com/jupyterkat/byondapi-rs#e4fb95cae12eb6a665472e198f5e01b9929e79db"
 dependencies = [
  "byondapi-sys",
  "inventory",
@@ -154,7 +154,7 @@ dependencies = [
 [[package]]
 name = "byondapi-sys"
 version = "0.10.1"
-source = "git+https://github.com/jupyterkat/byondapi-rs#3ac193f0945e52f2217ac2cc324db5dfc0a7625f"
+source = "git+https://github.com/jupyterkat/byondapi-rs#e4fb95cae12eb6a665472e198f5e01b9929e79db"
 dependencies = [
  "bindgen",
  "libloading 0.8.1",
@@ -286,9 +286,9 @@ dependencies = [
 
 [[package]]
 name = "eyre"
-version = "0.6.8"
+version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c2b6b5a29c02cdc822728b7d7b8ae1bab3e3b05d44522770ddd49722eeac7eb"
+checksum = "80f656be11ddf91bd709454d15d5bd896fbaf4cc3314e69349e4d1569f5b46cd"
 dependencies = [
  "indenter",
  "once_cell",
@@ -685,9 +685,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.38.24"
+version = "0.38.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ad981d6c340a49cdc40a1028d9c6084ec7e9fa33fcb839cab656a267071e234"
+checksum = "dc99bc2d4f1fed22595588a013687477aedf3cdcfb26558c559edb67b4d9b22e"
 dependencies = [
  "bitflags 2.4.1",
  "errno",

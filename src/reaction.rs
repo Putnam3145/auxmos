@@ -15,7 +15,7 @@ pub type ReactionIdentifier = u64;
 
 use eyre::{Context, Result};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Reaction {
 	id: ReactionIdentifier,
 	priority: ReactionPriority,

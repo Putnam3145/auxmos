@@ -466,7 +466,7 @@ pub fn gas_idx_to_id(idx: GasIDX) -> ByondValue {
 			stuff
 				.get(&idx)
 				.unwrap_or_else(|| panic!("Invalid gas index: {idx}"))
-				.as_bytes(),
+				.as_ref(),
 		)
 		.unwrap_or_else(|_| panic!("Cannot convert gas index to byond string: {idx}"))
 	})

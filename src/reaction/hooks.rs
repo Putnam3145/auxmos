@@ -205,7 +205,7 @@ fn fusion(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 		}
 	};
 	let instability = (gas_power * INSTABILITY_GAS_POWER_FACTOR).rem_euclid(toroidal_size);
-	byond_air.call_id("set_analyzer_results", &[instability.into()])?;
+	byond_air.call_id(byond_string!("set_analyzer_results"), &[instability.into()])?;
 	let mut thermal_energy = initial_energy;
 
 	//We have to scale the amounts of carbon and plasma down a significant amount in order to show the chaotic dynamics we want

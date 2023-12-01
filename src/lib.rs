@@ -570,7 +570,7 @@ fn equalize_all_hook(gas_list: ByondValue) {
 			value
 				.read_number_id(byond_string!("_extools_pointer_gasmixture"))
 				.ok()
-				.map(|f| f.to_bits() as usize)
+				.map(|f| f as usize)
 		})
 		.collect::<BTreeSet<_>>();
 	GasArena::with_all_mixtures(move |all_mixtures| {

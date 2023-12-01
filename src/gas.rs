@@ -195,7 +195,7 @@ impl GasArena {
 
 			mix.write_var_id(
 				byond_string!("_extools_pointer_gasmixture"),
-				&f32::from_bits(next_idx as u32).into(),
+				&(next_idx as f32).into(),
 			)
 			.unwrap();
 
@@ -227,7 +227,7 @@ impl GasArena {
 				.clear_with_vol(init_volume);
 			mix.write_var_id(
 				byond_string!("_extools_pointer_gasmixture"),
-				&f32::from_bits(idx as u32).into(),
+				&(idx as f32).into(),
 			)
 			.unwrap();
 		}
@@ -255,8 +255,7 @@ where
 	F: FnOnce(&Mixture) -> Result<T>,
 {
 	GasArena::with_gas_mixture(
-		mix.read_number_id(byond_string!("_extools_pointer_gasmixture"))?
-			.to_bits() as usize,
+		mix.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize,
 		f,
 	)
 }
@@ -269,8 +268,7 @@ where
 	F: FnOnce(&mut Mixture) -> Result<T>,
 {
 	GasArena::with_gas_mixture_mut(
-		mix.read_number_id(byond_string!("_extools_pointer_gasmixture"))?
-			.to_bits() as usize,
+		mix.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize,
 		f,
 	)
 }
@@ -283,12 +281,8 @@ where
 	F: FnOnce(&Mixture, &Mixture) -> Result<T>,
 {
 	GasArena::with_gas_mixtures(
-		src_mix
-			.read_number_id(byond_string!("_extools_pointer_gasmixture"))?
-			.to_bits() as usize,
-		arg_mix
-			.read_number_id(byond_string!("_extools_pointer_gasmixture"))?
-			.to_bits() as usize,
+		src_mix.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize,
+		arg_mix.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize,
 		f,
 	)
 }
@@ -301,12 +295,8 @@ where
 	F: FnOnce(&mut Mixture, &mut Mixture) -> Result<T>,
 {
 	GasArena::with_gas_mixtures_mut(
-		src_mix
-			.read_number_id(byond_string!("_extools_pointer_gasmixture"))?
-			.to_bits() as usize,
-		arg_mix
-			.read_number_id(byond_string!("_extools_pointer_gasmixture"))?
-			.to_bits() as usize,
+		src_mix.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize,
+		arg_mix.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize,
 		f,
 	)
 }
@@ -319,12 +309,8 @@ where
 	F: FnMut(&RwLock<Mixture>, &RwLock<Mixture>) -> Result<T>,
 {
 	GasArena::with_gas_mixtures_custom(
-		src_mix
-			.read_number_id(byond_string!("_extools_pointer_gasmixture"))?
-			.to_bits() as usize,
-		arg_mix
-			.read_number_id(byond_string!("_extools_pointer_gasmixture"))?
-			.to_bits() as usize,
+		src_mix.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize,
+		arg_mix.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize,
 		f,
 	)
 }

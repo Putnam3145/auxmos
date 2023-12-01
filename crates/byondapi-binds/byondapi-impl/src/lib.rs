@@ -105,7 +105,7 @@ pub fn bind(attr: TokenStream, item: TokenStream) -> TokenStream {
 				Ok(val) => val,
 				Err(e) => {
 					let error_string = ::byondapi::value::ByondValue::try_from(::std::format!("{e:?}")).unwrap();
-					::byondapi::global_call::call_global("stack_trace", &[error_string]).unwrap();
+					::byondapi::global_call::call_global_id(byond_string!("stack_trace"), &[error_string]).unwrap();
 					::byondapi::value::ByondValue::null()
 				}
 			}
@@ -204,7 +204,7 @@ pub fn bind_raw_args(attr: TokenStream, item: TokenStream) -> TokenStream {
 				Ok(val) => val,
 				Err(e) => {
 					let error_string = ::byondapi::value::ByondValue::try_from(::std::format!("{e:?}")).unwrap();
-					::byondapi::global_call::call_global("stack_trace", &[error_string]).unwrap();
+					::byondapi::global_call::call_global_id(byond_string!("stack_trace"), &[error_string]).unwrap();
 					::byondapi::value::ByondValue::null()
 				}
 			}

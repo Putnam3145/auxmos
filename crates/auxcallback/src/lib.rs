@@ -42,7 +42,11 @@ fn process_callbacks() {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
 				let error_string = format!("{e:?}").try_into().unwrap();
-				byondapi::global_call::call_global("stack_trace", &[error_string]).unwrap();
+				byondapi::global_call::call_global_id(
+					byond_string!("stack_trace"),
+					&[error_string],
+				)
+				.unwrap();
 			}
 		}
 	})
@@ -56,7 +60,11 @@ fn process_callbacks_for(duration: Duration) -> bool {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
 				let error_string = format!("{e:?}").try_into().unwrap();
-				byondapi::global_call::call_global("stack_trace", &[error_string]).unwrap();
+				byondapi::global_call::call_global_id(
+					byond_string!("stack_trace"),
+					&[error_string],
+				)
+				.unwrap();
 			}
 			if timer.elapsed() >= duration {
 				return true;

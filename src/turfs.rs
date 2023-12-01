@@ -432,7 +432,7 @@ where
 fn hook_register_turf(src: ByondValue, flag: ByondValue) {
 	let id = src.get_ref()?;
 	let flag = flag.get_number()? as i32;
-	if let Ok(blocks) = src.read_number("blocks_air") {
+	if let Ok(blocks) = src.read_number_id(byond_string!("blocks_air")) {
 		if blocks > 0.0 {
 			with_turf_gases_write(|arena| arena.remove_turf(id));
 			#[cfg(feature = "superconductivity")]
@@ -442,14 +442,14 @@ fn hook_register_turf(src: ByondValue, flag: ByondValue) {
 	}
 	if flag >= 0 {
 		let mut to_insert: TurfMixture = TurfMixture::default();
-		let air = src.read_var("air")?;
-		to_insert.mix = air.read_number("_extools_pointer_gasmixture")? as usize;
+		let air = src.read_var_id(byond_string!("air"))?;
+		to_insert.mix = air.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize;
 		to_insert.flags = SimulationFlags::from_bits_truncate(flag as u8);
 		to_insert.id = id;
 
-		if let Ok(is_planet) = src.read_number("planetary_atmos") {
+		if let Ok(is_planet) = src.read_number_id(byond_string!("planetary_atmos")) {
 			if is_planet != 0.0 {
-				if let Ok(at_str) = src.read_string("initial_gas_mix") {
+				if let Ok(at_str) = src.read_string_id(byond_string!("initial_gas_mix")) {
 					with_planetary_atmos_upgradeable_read(|lock| {
 						to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
 						if lock
@@ -494,11 +494,11 @@ const OPEN_TURF: i32 = 2;
 //hardcoded because we can't have nice things
 fn determine_turf_flag(src: &ByondValue) -> i32 {
 	let path = src
-		.read_string("type")
+		.read_string_id(byond_string!("("type")
 		.unwrap_or_else(|_| "TYPPENOTFOUND".to_string());
 	if !path.as_str().starts_with("/turf/open") {
 		CLOSED_TURF
-	} else if src.read_number("planetary_atmos").unwrap_or(0.0) > 0.0 {
+	} else if src.read_number_id(byond_string!("planetary_atmos")).unwrap_or(0.0) > 0.0 {
 		PLANET_TURF
 	} else if path.as_str().starts_with("/turf/open/space") {
 		SPACE_TURF
@@ -513,7 +513,7 @@ fn hook_infos(src: ByondValue) {
 	let id = src.get_ref()?;
 	with_turf_gases_write(|arena| -> Result<()> {
 		if let Some(adjacent_list) = src
-			.read_var("atmos_adjacent_turfs")
+			.read_var_id(byond_string!("atmos_adjacent_turfs"))
 			.ok()
 			.and_then(|adjs| adjs.is_list().then_some(adjs))
 		{
@@ -536,12 +536,13 @@ fn hook_infos(src: ByondValue) {
 /// If auxgm wasn't implemented properly or there's an invalid gas mixture.
 fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 	use super::gas;
-	match src.read_var("air") {
+	match src.read_var_id(byond_string!("air")) {
 		Err(_) => Ok(ByondValue::null()),
 		Ok(air) => {
 			let mut overlay_types = Vec::new();
-			let gas_overlays = byondapi::global_call::call_global("get_overlays", &[])?;
-			let ptr = air.read_number("_extools_pointer_gasmixture")? as usize;
+			let gas_overlays =
+				byondapi::global_call::call_global_id(byond_string!("get_overlays"), &[])?;
+			let ptr = air.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize;
 			GasArena::with_gas_mixture(ptr, |mix| {
 				mix.for_each_gas(|idx, moles| {
 					if let Some(amt) = gas::types::gas_visibility(idx) {
@@ -559,7 +560,10 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 				})
 			})?;
 
-			Ok(src.call("set_visuals", &[overlay_types.as_slice().try_into()?])?)
+			Ok(src.call_id(
+				byond_string!("set_visuals"),
+				&[overlay_types.as_slice().try_into()?],
+			)?)
 		}
 	}
 }

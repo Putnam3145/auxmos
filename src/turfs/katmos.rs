@@ -382,8 +382,10 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 				Ok(())
 			})?;
 			for (cur, adj) in firelock_considerations {
-				ByondValue::new_ref(TURF_TYPE, cur)
-					.call("consider_firelocks", &[ByondValue::new_ref(TURF_TYPE, adj)])?;
+				ByondValue::new_ref(TURF_TYPE, cur).call_id(
+					byond_string!("consider_firelocks"),
+					&[ByondValue::new_ref(TURF_TYPE, adj)],
+				)?;
 			}
 
 			if warned_about_planet_atmos {
@@ -432,7 +434,7 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 							adj_info.curr_transfer_dir = Some(cur_index);
 
 							let cur_target_turf = ByondValue::new_ref(TURF_TYPE, cur_mixture.id)
-								.read_var("pressure_specific_target")?;
+								.read_var_id(byond_string!("pressure_specific_target"))?;
 							ByondValue::new_ref(TURF_TYPE, adj_mixture.id)
 								.write_var("pressure_specific_target", &cur_target_turf)?;
 							adj_orig.set(adj_info);
@@ -443,7 +445,7 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 
 			let _average_moles = total_moles / (progression_order.len() - space_turf_len) as f32;
 
-			let mut hpd = byondapi::global_call::call_global("get_hpds", &[])?;
+			let mut hpd = byondapi::global_call::call_global_id(byond_string!("get_hpds"), &[])?;
 
 			for &cur_index in progression_order.iter().rev() {
 				let cur_orig = info.entry(cur_index).or_default();
@@ -508,7 +510,7 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 			Ok(floor_rip_turfs)
 		})?;
 	for (turf, sum) in floor_rip_turfs {
-		turf.call("handle_decompression_floor_rip", &[sum])?;
+		turf.call_id(byond_string!("handle_decompression_floor_rip"), &[sum])?;
 	}
 
 	Ok(())
@@ -570,7 +572,6 @@ fn flood_fill_zones(
 					drop(sender.try_send(Box::new(move || {
 						planet_equalize(cur_turf_id, equalize_hard_turf_limit)
 					})));
-					ignore_zone = true;
 				}
 			}
 		}
@@ -628,10 +629,12 @@ fn planet_equalize(initial_index: TurfID, equalize_hard_turf_limit: usize) -> Re
 			Ok(())
 		})?;
 		for (cur, adj) in firelock_considerations {
-			ByondValue::new_ref(TURF_TYPE, cur)
-				.call("consider_firelocks", &[ByondValue::new_ref(TURF_TYPE, adj)])?;
+			ByondValue::new_ref(TURF_TYPE, cur).call_id(
+				byond_string!("consider_firelocks"),
+				&[ByondValue::new_ref(TURF_TYPE, adj)],
+			)?;
 		}
-		if warned_about_space {
+		if warned_about_space || planet_turfs.is_empty() {
 			break;
 		}
 	}
@@ -717,8 +720,14 @@ fn send_pressure_differences(
 			let real_amount = ByondValue::from(amt);
 			let turf = ByondValue::new_ref(TURF_TYPE, cur_turf);
 			let other_turf = ByondValue::new_ref(TURF_TYPE, adj_turf);
-			if let Err(e) = turf.call("consider_pressure_difference", &[other_turf, real_amount]) {
-				byondapi::global_call::call_global("stack_trace", &[format!("{e:?}").try_into()?])?;
+			if let Err(e) = turf.call_id(
+				byond_string!("consider_pressure_difference"),
+				&[other_turf, real_amount],
+			) {
+				byondapi::global_call::call_global_id(
+					byond_string!("stack_trace"),
+					&[format!("{e:?}").try_into()?],
+				)?;
 			}
 			Ok(())
 		})));
@@ -728,9 +737,8 @@ fn send_pressure_differences(
 #[byondapi_binds::bind("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
 fn equalize_hook(mut src: ByondValue, remaining: ByondValue) {
 	let equalize_hard_turf_limit = src
-		.read_number("equalize_hard_turf_limit")
+		.read_number_id(byond_string!("equalize_hard_turf_limit"))
 		.unwrap_or(2000.0) as usize;
-	let planet_enabled: bool = src.read_number("planet_equalize_enabled").unwrap_or(1.0) != 0.0;
 	let remaining_time = Duration::from_millis(remaining.get_number().unwrap_or(50.0) as u64);
 	let start_time = Instant::now();
 	let (num_eq, is_cancelled) = with_equalizes(|thing| {
@@ -738,7 +746,6 @@ fn equalize_hook(mut src: ByondValue, remaining: ByondValue) {
 			equalize(
 				equalize_hard_turf_limit,
 				&high_pressure_turfs,
-				planet_enabled,
 				(&start_time, remaining_time),
 			)
 		} else {
@@ -747,7 +754,7 @@ fn equalize_hook(mut src: ByondValue, remaining: ByondValue) {
 	});
 
 	let bench = start_time.elapsed().as_millis();
-	let prev_cost = src.read_number("cost_equalize")?;
+	let prev_cost = src.read_number_id(byond_string!("cost_equalize"))?;
 	src.write_var(
 		"cost_equalize",
 		&(0.8 * prev_cost + 0.2 * (bench as f32)).into(),
@@ -759,7 +766,6 @@ fn equalize_hook(mut src: ByondValue, remaining: ByondValue) {
 fn equalize(
 	equalize_hard_turf_limit: usize,
 	high_pressure_turfs: &BTreeSet<TurfID>,
-	_planet_enabled: bool,
 	(start_time, remaining_time): (&Instant, Duration),
 ) -> (usize, bool) {
 	let turfs_processed: AtomicUsize = AtomicUsize::new(0);

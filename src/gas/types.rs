@@ -154,51 +154,63 @@ impl GasType {
 	fn new(gas: &ByondValue, idx: GasIDX) -> Result<Self> {
 		Ok(Self {
 			idx,
-			id: gas.read_string("id")?.into_boxed_str(),
-			name: gas.read_string("name")?.into_boxed_str(),
-			flags: gas.read_number("flags").unwrap_or_default() as u32,
-			specific_heat: gas.read_number("specific_heat")?,
-			fusion_power: gas.read_number("fusion_power").unwrap_or_default(),
-			moles_visible: gas.read_number("moles_visible").ok(),
+			id: gas.read_string_id(byond_string!("id"))?.into_boxed_str(),
+			name: gas.read_string_id(byond_string!("name"))?.into_boxed_str(),
+			flags: gas
+				.read_number_id(byond_string!("flags"))
+				.unwrap_or_default() as u32,
+			specific_heat: gas.read_number_id(byond_string!("specific_heat"))?,
+			fusion_power: gas
+				.read_number_id(byond_string!("fusion_power"))
+				.unwrap_or_default(),
+			moles_visible: gas.read_number_id(byond_string!("moles_visible")).ok(),
 			fire_info: {
-				if let Ok(temperature) = gas.read_number("oxidation_temperature") {
+				if let Ok(temperature) = gas.read_number_id(byond_string!("oxidation_temperature"))
+				{
 					FireInfo::Oxidation(OxidationInfo {
 						temperature,
-						power: gas.read_number("oxidation_rate")?,
+						power: gas.read_number_id(byond_string!("oxidation_rate"))?,
 					})
-				} else if let Ok(temperature) = gas.read_number("fire_temperature") {
+				} else if let Ok(temperature) =
+					gas.read_number_id(byond_string!("fire_temperature"))
+				{
 					FireInfo::Fuel(FuelInfo {
 						temperature,
-						burn_rate: gas.read_number("fire_burn_rate")?,
+						burn_rate: gas.read_number_id(byond_string!("fire_burn_rate"))?,
 					})
 				} else {
 					FireInfo::None
 				}
 			},
-			fire_products: gas.read_var("fire_products").ok().and_then(|product_info| {
-				if product_info.is_list() {
-					Some(FireProductInfo::Generic(
-						product_info
-							.iter()
-							.unwrap()
-							.filter_map(|(k, v)| {
-								k.get_string().ok().and_then(|s_str| {
-									v.get_number()
-										.ok()
-										.map(|amt| (GasRef::Deferred(s_str), amt))
+			fire_products: gas
+				.read_var_id(byond_string!("fire_products"))
+				.ok()
+				.and_then(|product_info| {
+					if product_info.is_list() {
+						Some(FireProductInfo::Generic(
+							product_info
+								.iter()
+								.unwrap()
+								.filter_map(|(k, v)| {
+									k.get_string().ok().and_then(|s_str| {
+										v.get_number()
+											.ok()
+											.map(|amt| (GasRef::Deferred(s_str), amt))
+									})
 								})
-							})
-							.collect(),
-					))
-				} else if product_info.is_num() {
-					Some(FireProductInfo::Plasma) // if we add another snowflake later, add it, but for now we hack this in
-				} else {
-					None
-				}
-			}),
-			enthalpy: gas.read_number("enthalpy").unwrap_or_default(),
+								.collect(),
+						))
+					} else if product_info.is_num() {
+						Some(FireProductInfo::Plasma) // if we add another snowflake later, add it, but for now we hack this in
+					} else {
+						None
+					}
+				}),
+			enthalpy: gas
+				.read_number_id(byond_string!("enthalpy"))
+				.unwrap_or_default(),
 			fire_radiation_released: gas
-				.read_number("fire_radiation_released")
+				.read_number_id(byond_string!("fire_radiation_released"))
 				.unwrap_or_default(),
 		})
 	}
@@ -233,7 +245,7 @@ pub fn destroy_gas_info_structs() {
 
 #[byondapi_binds::bind("/proc/_auxtools_register_gas")]
 fn hook_register_gas(gas: ByondValue) {
-	let gas_id = gas.read_string("id")?;
+	let gas_id = gas.read_string_id(byond_string!("id"))?;
 	match {
 		GAS_INFO_BY_STRING
 			.read()
@@ -274,7 +286,7 @@ fn hook_register_gas(gas: ByondValue) {
 
 #[byondapi_binds::bind("/proc/auxtools_atmos_init")]
 fn hook_init(gas_data: ByondValue) {
-	let data = gas_data.read_var("datums")?;
+	let data = gas_data.read_var_id(byond_string!("datums"))?;
 	data.iter()?
 		.map(|(_, gas)| hook_register_gas(gas))
 		.try_for_each(|res| res.map(drop))
@@ -284,7 +296,8 @@ fn hook_init(gas_data: ByondValue) {
 }
 
 fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
-	let gas_reactions = byondapi::global_call::call_global("get_reactions", &[]).unwrap();
+	let gas_reactions =
+		byondapi::global_call::call_global_id(byond_string!("get_reactions"), &[]).unwrap();
 	let mut reaction_cache: BTreeMap<ReactionPriority, Reaction> = Default::default();
 	let sender = byond_callback_sender();
 	for (reaction, _) in gas_reactions.iter().unwrap() {

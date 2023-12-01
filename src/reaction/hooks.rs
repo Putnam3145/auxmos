@@ -87,7 +87,7 @@ fn plasma_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> 
 			air.garbage_collect();
 			Ok(new_temp)
 		})?;
-		let mut cached_results = byond_air.read_var("reaction_results")?;
+		let mut cached_results = byond_air.read_var_id(byond_string!("reaction_results"))?;
 		cached_results.write_list_index("fire", fire_amount)?;
 		if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
 			byondapi::global_call::call_global(
@@ -134,7 +134,7 @@ fn tritium_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue>
 		air.adjust_moles(water, burned_fuel / TRITIUM_BURN_OXY_FACTOR);
 		let energy_released = FIRE_HYDROGEN_ENERGY_RELEASED * burned_fuel;
 		let new_temp = (initial_energy + energy_released) / air.heat_capacity();
-		let mut cached_results = byond_air.read_var("reaction_results")?;
+		let mut cached_results = byond_air.read_var_id(byond_string!("reaction_results"))?;
 		cached_results.write_list_index("fire", burned_fuel)?;
 		air.set_temperature(new_temp);
 		air.garbage_collect();
@@ -205,7 +205,7 @@ fn fusion(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 		}
 	};
 	let instability = (gas_power * INSTABILITY_GAS_POWER_FACTOR).rem_euclid(toroidal_size);
-	byond_air.call("set_analyzer_results", &[instability.into()])?;
+	byond_air.call_id("set_analyzer_results", &[instability.into()])?;
 	let mut thermal_energy = initial_energy;
 
 	//We have to scale the amounts of carbon and plasma down a significant amount in order to show the chaotic dynamics we want
@@ -393,7 +393,7 @@ fn generic_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue>
 				);
 				Ok(air.get_temperature())
 			})?;
-			let mut cached_results = byond_air.read_var("reaction_results")?;
+			let mut cached_results = byond_air.read_var_id(byond_string!("reaction_results"))?;
 			cached_results.write_list_index("fire", fire_amount)?;
 			if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
 				byondapi::global_call::call_global(

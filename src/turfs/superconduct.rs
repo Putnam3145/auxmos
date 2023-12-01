@@ -171,7 +171,9 @@ pub fn supercond_update_ref(src: ByondValue) -> Result<()> {
 	if therm_cond > 0.0 && therm_cap > 0.0 {
 		let therm_info = ThermalInfo {
 			id,
-			adjacent_to_space: src.call("should_conduct_to_space", &[])?.as_number()? > 0.0,
+			adjacent_to_space: src
+				.call_id(byond_string!("should_conduct_to_space"), &[])?
+				.as_number()? > 0.0,
 			heat_capacity: therm_cap,
 			thermal_conductivity: therm_cond,
 			temperature: RwLock::new(src.read_number("initial_temperature").unwrap_or(TCMB)),

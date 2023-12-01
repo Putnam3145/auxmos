@@ -1,4 +1,4 @@
-use byondapi::prelude::*;
+use byondapi::{byond_string, prelude::*};
 
 use super::*;
 
@@ -27,8 +27,11 @@ fn finish_process_turfs(time_remaining: ByondValue) {
 #[byondapi_binds::bind("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
 fn process_turf_hook(src: ByondValue, remaining: ByondValue) {
 	let remaining_time = Duration::from_millis(remaining.get_number().unwrap_or(50.0) as u64);
-	let fdm_max_steps = src.read_number("share_max_steps").unwrap_or(1.0) as i32;
-	let equalize_enabled = cfg!(feature = "fastmos") && src.read_number("equalize_enabled")? != 0.0;
+	let fdm_max_steps = src
+		.read_number_id(byond_string!("share_max_steps"))
+		.unwrap_or(1.0) as i32;
+	let equalize_enabled =
+		cfg!(feature = "fastmos") && src.read_number_id(byond_string!("equalize_enabled"))? != 0.0;
 
 	process_turf(remaining_time, fdm_max_steps, equalize_enabled, src)?;
 	Ok(ByondValue::null())
@@ -47,13 +50,15 @@ fn process_turf(
 			fdm((&start_time, remaining), fdm_max_steps, equalize_enabled);
 		let bench = start_time.elapsed().as_millis();
 		let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
-		let prev_cost = ssair.read_number("cost_turfs")?;
+		let prev_cost = ssair.read_number_id(byond_string!("cost_turfs"))?;
 		ssair
-			.read_var("cost_turfs")?
+			.read_var_id(byond_string!("cost_turfs"))?
 			.set_number(0.8 * prev_cost + 0.2 * (bench as f32));
-		ssair.read_var("low_pressure_turfs")?.set_number(lpt as f32);
 		ssair
-			.read_var("high_pressure_turfs")?
+			.read_var_id(byond_string!("low_pressure_turfs"))?
+			.set_number(lpt as f32);
+		ssair
+			.read_var_id(byond_string!("high_pressure_turfs"))?
 			.set_number(hpt as f32);
 		(low_pressure_turfs, high_pressure_turfs)
 	};
@@ -61,9 +66,9 @@ fn process_turf(
 		let start_time = Instant::now();
 		post_process();
 		let bench = start_time.elapsed().as_millis();
-		let prev_cost = ssair.read_number("cost_post_process")?;
+		let prev_cost = ssair.read_number_id(byond_string!("cost_post_process"))?;
 		ssair
-			.read_var("cost_post_process")?
+			.read_var_id(byond_string!("cost_post_process"))?
 			.set_number(0.8 * prev_cost + 0.2 * (bench as f32));
 	}
 	{
@@ -315,13 +320,13 @@ fn fdm(
 									if id != 0 {
 										let enemy_tile = ByondValue::new_ref(0x01, id);
 										if diff > 5.0 {
-											turf.call(
-												"consider_pressure_difference",
+											turf.call_id(
+												byond_string!("consider_pressure_difference"),
 												&[enemy_tile, diff.into()],
 											)?;
 										} else if diff < -5.0 {
-											enemy_tile.call(
-												"consider_pressure_difference",
+											enemy_tile.call_id(
+												byond_string!("consider_pressure_difference"),
 												&[turf.clone(), (-diff).into()],
 											)?;
 										}
@@ -393,11 +398,8 @@ fn post_process() {
 				if should_react {
 					drop(sender.try_send(Box::new(move || {
 						let turf = ByondValue::new_ref(0x01, id);
-						if cfg!(target_os = "linux") {
-							turf.read_var("air")?.call("vv_react", &[turf])?;
-						} else {
-							turf.read_var("air")?.call("react", &[turf])?;
-						}
+						turf.read_var_id(byond_string!("air"))?
+							.call_id(byond_string!("react"), &[turf])?;
 						Ok(())
 					})));
 				}

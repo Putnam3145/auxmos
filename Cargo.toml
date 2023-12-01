@@ -14,7 +14,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["turf_processing"]
+default = ["turf_processing", "katmos"]
 zas_hooks = []
 turf_processing = []
 superconductivity = ["turf_processing"]
@@ -50,7 +50,7 @@ ahash = "0.8.6"
 lazy_static = "1.4.0"
 indexmap = { version = "2.1.0", features = ["rayon"] }
 dashmap = { version = "5.5.3", features = ["rayon"] }
-hashbrown = "0.14.2"
+hashbrown = "0.14.3"
 atomic_float = "0.1.0"
 petgraph = "0.6.4"
 bitflags = "2.4.1"

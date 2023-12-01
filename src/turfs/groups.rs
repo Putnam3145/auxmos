@@ -23,7 +23,7 @@ pub fn send_to_groups(sent: BTreeSet<TurfID>) {
 #[byondapi_binds::bind("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
 fn groups_hook(mut src: ByondValue, remaining: ByondValue) {
 	let group_pressure_goal = src
-		.read_number("excited_group_pressure_goal")
+		.read_number_id(byond_string!("excited_group_pressure_goal"))
 		.unwrap_or(0.5);
 	let remaining_time = Duration::from_millis(remaining.get_number().unwrap_or(50.0) as u64);
 	let start_time = Instant::now();
@@ -40,14 +40,16 @@ fn groups_hook(mut src: ByondValue, remaining: ByondValue) {
 	});
 
 	let bench = start_time.elapsed().as_millis();
-	let prev_cost = src.read_number("cost_groups").map_err(|_| {
-		eyre::eyre!(
-			"Attempt to interpret non-number value as number {} {}:{}",
-			std::file!(),
-			std::line!(),
-			std::column!()
-		)
-	})?;
+	let prev_cost = src
+		.read_number_id(byond_string!("cost_groups"))
+		.map_err(|_| {
+			eyre::eyre!(
+				"Attempt to interpret non-number value as number {} {}:{}",
+				std::file!(),
+				std::line!(),
+				std::column!()
+			)
+		})?;
 	src.write_var(
 		"cost_groups",
 		&(0.8 * prev_cost + 0.2 * (bench as f32)).into(),

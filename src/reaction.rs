@@ -58,7 +58,7 @@ pub fn react_by_id(
 			|| Err(eyre::eyre!("Reaction with invalid id")),
 			|reaction| match reaction {
 				ReactionSide::ByondSide(val) => val
-					.call("react", &[src, holder])
+					.call_id(byond_string!("react"), &[src, holder])
 					.wrap_err("calling byond side react in react_by_id"),
 				ReactionSide::RustSide(func) => func(src, holder),
 			},
@@ -71,11 +71,11 @@ impl Reaction {
 	pub fn from_byond_reaction(reaction: ByondValue) -> Result<Self> {
 		let priority = FloatOrd(
 			reaction
-				.read_number("priority")
+				.read_number_id(byond_string!("priority"))
 				.map_err(|_| eyre::eyre!("Reaction priority must be a number!"))?,
 		);
 		let string_id = reaction
-			.read_string("id")
+			.read_string_id(byond_string!("id"))
 			.map_err(|_| eyre::eyre!("Reaction id must be a string!"))?;
 		let func = {
 			#[cfg(feature = "reaction_hooks")]
@@ -90,7 +90,7 @@ impl Reaction {
 		let id = fxhash::hash64(string_id.as_bytes());
 		let our_reaction = {
 			if let Some(min_reqs) = reaction
-				.read_var("min_requirements")
+				.read_var_id(byond_string!("min_requirements"))
 				.map_or(None, |value| value.is_list().then_some(value))
 			{
 				let mut min_gas_reqs: Vec<(GasIDX, f32)> = Vec::new();

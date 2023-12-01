@@ -568,7 +568,7 @@ fn equalize_all_hook(gas_list: ByondValue) {
 		.iter()?
 		.filter_map(|(value, _)| {
 			value
-				.read_number("_extools_pointer_gasmixture")
+				.read_number_id(byond_string!("_extools_pointer_gasmixture"))
 				.ok()
 				.map(|f| f as usize)
 		})

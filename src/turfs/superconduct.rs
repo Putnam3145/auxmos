@@ -150,8 +150,6 @@ impl TurfHeat {
 		}
 	}
 
-	//This isn't a useless collect(), we can't hold a mutable ref and an immutable ref at once on the graph
-	#[allow(clippy::needless_collect)]
 	pub fn remove_adjacencies(&mut self, index: NodeIndex<usize>) {
 		let edges = self
 			.graph

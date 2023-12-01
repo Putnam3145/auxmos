@@ -40,8 +40,8 @@ thread_local! {
 
 pub fn clean_up_reaction_values() {
 	crate::turfs::wait_for_tasks();
-	REACTION_VALUES.with(|reaction_values| {
-		reaction_values.borrow_mut().clear();
+	REACTION_VALUES.with_borrow_mut(|reaction_values| {
+		reaction_values.clear();
 	});
 }
 
@@ -53,8 +53,8 @@ pub fn react_by_id(
 	src: ByondValue,
 	holder: ByondValue,
 ) -> Result<ByondValue> {
-	REACTION_VALUES.with(|r| {
-		r.borrow().get(&id).map_or_else(
+	REACTION_VALUES.with_borrow(|r| {
+		r.get(&id).map_or_else(
 			|| Err(eyre::eyre!("Reaction with invalid id")),
 			|reaction| match reaction {
 				ReactionSide::ByondSide(val) => val
@@ -134,15 +134,12 @@ impl Reaction {
 			}
 		}?;
 
-		REACTION_VALUES.with(|r| -> Result<()> {
-			let mut reaction_map = r.borrow_mut();
+		REACTION_VALUES.with_borrow_mut(|reaction_map| -> Result<()> {
 			match func {
 				Some(function) => {
 					reaction_map.insert(our_reaction.id, ReactionSide::RustSide(function))
 				}
-				None => {
-					reaction_map.insert(our_reaction.id, ReactionSide::ByondSide(reaction.clone()))
-				}
+				None => reaction_map.insert(our_reaction.id, ReactionSide::ByondSide(reaction)),
 			};
 			Ok(())
 		})?;

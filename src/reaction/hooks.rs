@@ -90,14 +90,14 @@ fn plasma_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> 
 		let mut cached_results = byond_air.read_var_id(byond_string!("reaction_results"))?;
 		cached_results.write_list_index("fire", fire_amount)?;
 		if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
-			byondapi::global_call::call_global(
-				"fire_expose",
+			byondapi::global_call::call_global_id(
+				byond_string!("fire_expose"),
 				&[holder, byond_air, temperature.into()],
 			)?;
 		}
-		Ok(1.0.into())
+		Ok(true.into())
 	} else {
-		Ok(0.0.into())
+		Ok(false.into())
 	}
 }
 
@@ -141,18 +141,18 @@ fn tritium_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue>
 		Ok((burned_fuel, energy_released, new_temp))
 	})?;
 	if burned_fuel > TRITIUM_MINIMUM_RADIATION_FACTOR {
-		byondapi::global_call::call_global(
-			"radiation_burn",
-			&[holder.clone(), energy_released.into()],
+		byondapi::global_call::call_global_id(
+			byond_string!("radiation_burn"),
+			&[holder, energy_released.into()],
 		)?;
 	}
 	if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
-		byondapi::global_call::call_global(
-			"fire_expose",
+		byondapi::global_call::call_global_id(
+			byond_string!("fire_expose"),
 			&[holder, byond_air, temperature.into()],
 		)?;
 	}
-	Ok(1.0.into())
+	Ok(true.into())
 }
 
 #[cfg(feature = "fusion_hook")]
@@ -288,15 +288,15 @@ fn fusion(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 		Ok(standard_energy)
 	})?;
 	if reaction_energy != 0.0 {
-		byondapi::global_call::call_global(
-			"fusion_ball",
+		byondapi::global_call::call_global_id(
+			byond_string!("fusion_ball"),
 			&[holder, reaction_energy.into(), standard_energy.into()],
 		)?;
-		Ok(1.0.into())
+		Ok(true.into())
 	} else if reaction_energy == 0.0 && instability <= FUSION_INSTABILITY_ENDOTHERMALITY {
-		Ok(1.0.into())
+		Ok(true.into())
 	} else {
-		Ok(0.0.into())
+		Ok(false.into())
 	}
 }
 
@@ -396,27 +396,20 @@ fn generic_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue>
 			let mut cached_results = byond_air.read_var_id(byond_string!("reaction_results"))?;
 			cached_results.write_list_index("fire", fire_amount)?;
 			if temperature > FIRE_MINIMUM_TEMPERATURE_TO_EXIST {
-				byondapi::global_call::call_global(
-					"fire_expose",
-					&[holder.clone(), byond_air, temperature.into()],
+				byondapi::global_call::call_global_id(
+					byond_string!("fire_expose"),
+					&[holder, byond_air, temperature.into()],
 				)?;
 			}
 			if radiation_released > 0.0 {
-				byondapi::global_call::call_global(
-					"radiation_burn",
-					&[holder.clone(), radiation_released.into()],
+				byondapi::global_call::call_global_id(
+					byond_string!("radiation_burn"),
+					&[holder, radiation_released.into()],
 				)?;
 			}
-			Ok({
-				if fire_amount > 0.0 {
-					1.0
-				} else {
-					0.0
-				}
-			}
-			.into())
+			Ok((fire_amount > 0.0).into())
 		} else {
-			Ok(0.0.into())
+			Ok(false.into())
 		}
 	})
 }

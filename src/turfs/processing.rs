@@ -327,7 +327,7 @@ fn fdm(
 										} else if diff < -5.0 {
 											enemy_tile.call_id(
 												byond_string!("consider_pressure_difference"),
-												&[turf.clone(), (-diff).into()],
+												&[turf, (-diff).into()],
 											)?;
 										}
 									}

@@ -435,7 +435,7 @@ fn react_hook(src: ByondValue, holder: ByondValue) {
 	let reactions = with_mix(&src, |mix| Ok(mix.all_reactable()))?;
 	for reaction in reactions {
 		ret |= ReactionReturn::from_bits_truncate(
-			react_by_id(reaction, src.clone(), holder.clone())?
+			react_by_id(reaction, src, holder)?
 				.get_number()
 				.unwrap_or_default() as u32,
 		);
@@ -570,28 +570,30 @@ fn equalize_all_hook(gas_list: ByondValue) {
 			value
 				.read_number_id(byond_string!("_extools_pointer_gasmixture"))
 				.ok()
-				.map(|f| f as usize)
+				.map(|f| f.to_bits() as usize)
 		})
 		.collect::<BTreeSet<_>>();
 	GasArena::with_all_mixtures(move |all_mixtures| {
 		let mut tot = gas::Mixture::new();
 		let mut tot_vol: f64 = 0.0;
-		for &id in &gas_list {
-			if let Some(src_gas_lock) = all_mixtures.get(id) {
+		gas_list
+			.iter()
+			.filter_map(|&id| all_mixtures.get(id))
+			.for_each(|src_gas_lock| {
 				let src_gas = src_gas_lock.read();
 				tot.merge(&src_gas);
 				tot_vol += f64::from(src_gas.volume);
-			}
-		}
+			});
 		if tot_vol > 0.0 {
-			for &id in &gas_list {
-				if let Some(dest_gas_lock) = all_mixtures.get(id) {
+			gas_list
+				.iter()
+				.filter_map(|&id| all_mixtures.get(id))
+				.for_each(|dest_gas_lock| {
 					let dest_gas = &mut dest_gas_lock.write();
 					let vol = dest_gas.volume; // don't wanna borrow it in the below
 					dest_gas.copy_from_mutable(&tot);
 					dest_gas.multiply((f64::from(vol) / tot_vol) as f32);
-				}
-			}
+				});
 		}
 	});
 	Ok(ByondValue::null())

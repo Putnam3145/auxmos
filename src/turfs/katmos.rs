@@ -229,12 +229,8 @@ fn give_to_takers(
 		}
 
 		for cur_index in queue.drain(..).rev() {
-			let mut turf_info = {
-				let opt = info.get(&cur_index);
-				if opt.is_none() {
-					continue;
-				}
-				*opt.unwrap()
+			let Some(&(mut turf_info)) = info.get(&cur_index) else {
+				continue;
 			};
 			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir.is_some() {
 				if let Some(adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap()) {
@@ -302,12 +298,8 @@ fn take_from_givers(
 			queue_idx += 1;
 		}
 		for cur_index in queue.drain(..).rev() {
-			let mut turf_info = {
-				let opt = info.get(&cur_index);
-				if opt.is_none() {
-					continue;
-				}
-				*opt.unwrap()
+			let Some(&(mut turf_info)) = info.get(&cur_index) else {
+				continue;
 			};
 			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir.is_some() {
 				if let Some(adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap()) {
@@ -328,11 +320,9 @@ fn take_from_givers(
 }
 
 fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usize) -> Result<()> {
-	let initial_index = with_turf_gases_read(|arena| arena.get_id(initial_index));
-	if initial_index.is_none() {
+	let Some(initial_index) = with_turf_gases_read(|arena| arena.get_id(initial_index)) else {
 		return Ok(());
-	}
-	let initial_index = initial_index.unwrap();
+	};
 
 	//1st floodfill
 	let (space_turfs, warned_about_planet_atmos) = {
@@ -346,12 +336,8 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 			cur_queue_idx += 1;
 			let mut firelock_considerations = vec![];
 			with_turf_gases_read(|arena| -> Result<()> {
-				let cur_mixture = {
-					let maybe = arena.get(cur_index);
-					if maybe.is_none() {
-						return Ok(());
-					}
-					maybe.unwrap()
+				let Some(cur_mixture) = arena.get(cur_index) else {
+					return Ok(());
 				};
 				if cur_mixture.planetary_atmos.is_some() {
 					warned_about_planet_atmos = true;
@@ -359,8 +345,8 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 				}
 				if cur_mixture.is_immutable() {
 					if space_turfs.insert(cur_index) {
-						ByondValue::new_ref(TURF_TYPE, cur_mixture.id).write_var(
-							"pressure_specific_target",
+						ByondValue::new_ref(TURF_TYPE, cur_mixture.id).write_var_id(
+							byond_string!("pressure_specific_target"),
 							&ByondValue::new_ref(TURF_TYPE, cur_mixture.id),
 						)?;
 					}
@@ -435,8 +421,10 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 
 							let cur_target_turf = ByondValue::new_ref(TURF_TYPE, cur_mixture.id)
 								.read_var_id(byond_string!("pressure_specific_target"))?;
-							ByondValue::new_ref(TURF_TYPE, adj_mixture.id)
-								.write_var("pressure_specific_target", &cur_target_turf)?;
+							ByondValue::new_ref(TURF_TYPE, adj_mixture.id).write_var_id(
+								byond_string!("pressure_specific_target"),
+								&cur_target_turf,
+							)?;
 							adj_orig.set(adj_info);
 						}
 					}
@@ -483,24 +471,28 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 
 				let mut byond_turf_adj = ByondValue::new_ref(TURF_TYPE, cur_mixture.id);
 
-				byond_turf
-					.write_var("pressure_difference", &cur_info.curr_transfer_amount.into())?;
-				byond_turf.write_var(
-					"pressure_direction",
-					&byondapi::global_call::call_global(
-						"get_dir_multiz",
-						&[byond_turf.clone(), byond_turf_adj.clone()],
+				byond_turf.write_var_id(
+					byond_string!("pressure_difference"),
+					&cur_info.curr_transfer_amount.into(),
+				)?;
+				byond_turf.write_var_id(
+					byond_string!("pressure_direction"),
+					&byondapi::global_call::call_global_id(
+						byond_string!("get_dir"),
+						&[byond_turf, byond_turf_adj],
 					)?,
 				)?;
 
 				if adj_info.curr_transfer_dir.is_none() {
-					byond_turf_adj
-						.write_var("pressure_difference", &adj_info.curr_transfer_amount.into())?;
-					byond_turf_adj.write_var(
-						"pressure_direction",
-						&byondapi::global_call::call_global(
-							"get_dir_multiz",
-							&[byond_turf.clone(), byond_turf_adj.clone()],
+					byond_turf_adj.write_var_id(
+						byond_string!("pressure_difference"),
+						&adj_info.curr_transfer_amount.into(),
+					)?;
+					byond_turf_adj.write_var_id(
+						byond_string!("pressure_direction"),
+						&byondapi::global_call::call_global_id(
+							byond_string!("get_dir"),
+							&[byond_turf, byond_turf_adj],
 						)?,
 					)?;
 				}
@@ -516,11 +508,8 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 	Ok(())
 }
 
-// Clippy go away, this type is only used once
-#[allow(clippy::type_complexity)]
 fn flood_fill_zones(
-	index_node: NodeIndex,
-	index_turf: TurfID,
+	(index_node, index_turf): (NodeIndex, TurfID),
 	equalize_hard_turf_limit: usize,
 	found_turfs: &mut HashSet<TurfID, FxBuildHasher>,
 	arena: &TurfGases,
@@ -580,11 +569,9 @@ fn flood_fill_zones(
 }
 
 fn planet_equalize(initial_index: TurfID, equalize_hard_turf_limit: usize) -> Result<()> {
-	let initial_index = with_turf_gases_read(|arena| arena.get_id(initial_index));
-	if initial_index.is_none() {
+	let Some(initial_index) = with_turf_gases_read(|arena| arena.get_id(initial_index)) else {
 		return Ok(());
-	}
-	let initial_index = initial_index.unwrap();
+	};
 
 	let mut cur_queue_idx = 0;
 	let mut warned_about_space = false;
@@ -596,12 +583,8 @@ fn planet_equalize(initial_index: TurfID, equalize_hard_turf_limit: usize) -> Re
 		cur_queue_idx += 1;
 		let mut firelock_considerations = vec![];
 		with_turf_gases_read(|arena| -> Result<()> {
-			let cur_mixture = {
-				let maybe = arena.get(cur_index);
-				if maybe.is_none() {
-					return Ok(());
-				}
-				maybe.unwrap()
+			let Some(cur_mixture) = arena.get(cur_index) else {
+				return Ok(());
 			};
 			if cur_mixture.planetary_atmos.is_some() {
 				planet_turfs.insert(cur_index);
@@ -717,12 +700,11 @@ fn send_pressure_differences(
 ) {
 	for (amt, cur_turf, adj_turf) in pressures {
 		drop(sender.try_send(Box::new(move || {
-			let real_amount = ByondValue::from(amt);
 			let turf = ByondValue::new_ref(TURF_TYPE, cur_turf);
 			let other_turf = ByondValue::new_ref(TURF_TYPE, adj_turf);
 			if let Err(e) = turf.call_id(
 				byond_string!("consider_pressure_difference"),
-				&[other_turf, real_amount],
+				&[other_turf, amt.into()],
 			) {
 				byondapi::global_call::call_global_id(
 					byond_string!("stack_trace"),
@@ -755,11 +737,14 @@ fn equalize_hook(mut src: ByondValue, remaining: ByondValue) {
 
 	let bench = start_time.elapsed().as_millis();
 	let prev_cost = src.read_number_id(byond_string!("cost_equalize"))?;
-	src.write_var(
-		"cost_equalize",
+	src.write_var_id(
+		byond_string!("cost_equalize"),
 		&(0.8 * prev_cost + 0.2 * (bench as f32)).into(),
 	)?;
-	src.write_var("num_equalize_processed", &(num_eq as f32).into())?;
+	src.write_var_id(
+		byond_string!("num_equalize_processed"),
+		&(num_eq as f32).into(),
+	)?;
 	Ok(is_cancelled.into())
 }
 
@@ -805,8 +790,7 @@ fn equalize(
 				}
 
 				flood_fill_zones(
-					cur_index_node,
-					cur_index_turf,
+					(cur_index_node, cur_index_turf),
 					equalize_hard_turf_limit,
 					&mut found_turfs,
 					arena,

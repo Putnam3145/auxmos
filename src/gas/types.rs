@@ -235,11 +235,11 @@ pub fn destroy_gas_info_structs() {
 	GAS_INFO_BY_IDX.write().as_mut().unwrap().clear();
 	GAS_SPECIFIC_HEATS.write().as_mut().unwrap().clear();
 	TOTAL_NUM_GASES.store(0, Ordering::Release);
-	CACHED_GAS_IDS.with(|gas_ids| {
-		gas_ids.borrow_mut().clear();
+	CACHED_GAS_IDS.with_borrow_mut(|gas_ids| {
+		gas_ids.clear();
 	});
-	CACHED_IDX_TO_STRINGS.with(|gas_ids| {
-		gas_ids.borrow_mut().clear();
+	CACHED_IDX_TO_STRINGS.with_borrow_mut(|gas_ids| {
+		gas_ids.clear();
 	});
 }
 
@@ -274,10 +274,8 @@ fn hook_register_gas(gas: ByondValue) {
 				.unwrap()
 				.push(gas_cache.specific_heat);
 			GAS_INFO_BY_IDX.write().as_mut().unwrap().push(gas_cache);
-			CACHED_IDX_TO_STRINGS.with(|gas_ids| {
-				let mut map = gas_ids.borrow_mut();
-				map.insert(cached_idx, cached_id.into_boxed_str())
-			});
+			CACHED_IDX_TO_STRINGS
+				.with_borrow_mut(|map| map.insert(cached_idx, cached_id.into_boxed_str()));
 			TOTAL_NUM_GASES.fetch_add(1, Ordering::Release); // this is the only thing that stores it other than shutdown
 		}
 	}
@@ -456,8 +454,7 @@ pub fn gas_idx_from_string(id: &str) -> Result<GasIDX> {
 /// # Errors
 /// If the given string is not a string or is not a valid gas ID.
 pub fn gas_idx_from_value(string_val: &ByondValue) -> Result<GasIDX> {
-	CACHED_GAS_IDS.with(|c| {
-		let mut cache = c.borrow_mut();
+	CACHED_GAS_IDS.with_borrow_mut(|cache| {
 		if let Some(idx) = cache.get(&string_val.get_strid().unwrap()) {
 			Ok(*idx)
 		} else {
@@ -473,8 +470,7 @@ pub fn gas_idx_from_value(string_val: &ByondValue) -> Result<GasIDX> {
 /// # Panics
 /// If an invalid gas index is given to this. This should never happen, so we panic instead of runtiming.
 pub fn gas_idx_to_id(idx: GasIDX) -> ByondValue {
-	CACHED_IDX_TO_STRINGS.with(|thin| {
-		let stuff = thin.borrow();
+	CACHED_IDX_TO_STRINGS.with_borrow(|stuff| {
 		ByondValue::new_str(
 			stuff
 				.get(&idx)
@@ -513,10 +509,7 @@ pub fn register_gas_manually(gas_id: &'static str, specific_heat: f32) {
 		.unwrap()
 		.push(gas_cache.specific_heat);
 	GAS_INFO_BY_IDX.write().as_mut().unwrap().push(gas_cache);
-	CACHED_IDX_TO_STRINGS.with(|gas_ids| {
-		let mut map = gas_ids.borrow_mut();
-		map.insert(cached_idx, gas_id.into())
-	});
+	CACHED_IDX_TO_STRINGS.with_borrow_mut(|map| map.insert(cached_idx, gas_id.into()));
 	TOTAL_NUM_GASES.fetch_add(1, Ordering::Release); // this is the only thing that stores it other than shutdown
 }
 

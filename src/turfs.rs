@@ -258,8 +258,6 @@ impl TurfGases {
 		Ok(())
 	}
 
-	//This isn't a useless collect(), we can't hold a mutable ref and an immutable ref at once on the graph
-	#[allow(clippy::needless_collect)]
 	pub fn remove_adjacencies(&mut self, index: NodeIndex) {
 		let edges = self
 			.graph
@@ -443,7 +441,9 @@ fn hook_register_turf(src: ByondValue, flag: ByondValue) {
 	if flag >= 0 {
 		let mut to_insert: TurfMixture = TurfMixture::default();
 		let air = src.read_var_id(byond_string!("air"))?;
-		to_insert.mix = air.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize;
+		to_insert.mix = air
+			.read_number_id(byond_string!("_extools_pointer_gasmixture"))?
+			.to_bits() as usize;
 		to_insert.flags = SimulationFlags::from_bits_truncate(flag as u8);
 		to_insert.id = id;
 
@@ -542,7 +542,9 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 			let mut overlay_types = Vec::new();
 			let gas_overlays =
 				byondapi::global_call::call_global_id(byond_string!("get_overlays"), &[])?;
-			let ptr = air.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize;
+			let ptr = air
+				.read_number_id(byond_string!("_extools_pointer_gasmixture"))?
+				.to_bits() as usize;
 			GasArena::with_gas_mixture(ptr, |mix| {
 				mix.for_each_gas(|idx, moles| {
 					if let Some(amt) = gas::types::gas_visibility(idx) {

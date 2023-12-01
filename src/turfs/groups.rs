@@ -50,11 +50,14 @@ fn groups_hook(mut src: ByondValue, remaining: ByondValue) {
 				std::column!()
 			)
 		})?;
-	src.write_var(
-		"cost_groups",
+	src.write_var_id(
+		byond_string!("cost_groups"),
 		&(0.8 * prev_cost + 0.2 * (bench as f32)).into(),
 	)?;
-	src.write_var("num_group_turfs_processed", &(num_eq as f32).into())?;
+	src.write_var_id(
+		byond_string!("num_group_turfs_processed"),
+		&(num_eq as f32).into(),
+	)?;
 	Ok(is_cancelled.into())
 }
 

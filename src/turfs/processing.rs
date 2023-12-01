@@ -41,7 +41,7 @@ fn process_turf(
 	remaining: Duration,
 	fdm_max_steps: i32,
 	equalize_enabled: bool,
-	ssair: ByondValue,
+	mut ssair: ByondValue,
 ) -> Result<()> {
 	//this will block until process_turfs is called
 	let (low_pressure_turfs, _high_pressure_turfs) = {
@@ -51,15 +51,12 @@ fn process_turf(
 		let bench = start_time.elapsed().as_millis();
 		let (lpt, hpt) = (low_pressure_turfs.len(), high_pressure_turfs.len());
 		let prev_cost = ssair.read_number_id(byond_string!("cost_turfs"))?;
-		ssair
-			.read_var_id(byond_string!("cost_turfs"))?
-			.set_number(0.8 * prev_cost + 0.2 * (bench as f32));
-		ssair
-			.read_var_id(byond_string!("low_pressure_turfs"))?
-			.set_number(lpt as f32);
-		ssair
-			.read_var_id(byond_string!("high_pressure_turfs"))?
-			.set_number(hpt as f32);
+		ssair.write_var_id(
+			byond_string!("cost_turfs"),
+			&(0.8 * prev_cost + 0.2 * (bench as f32)).into(),
+		)?;
+		ssair.write_var_id(byond_string!("low_pressure_turfs"), &(lpt as f32).into())?;
+		ssair.write_var_id(byond_string!("high_pressure_turfs"), &(hpt as f32).into())?;
 		(low_pressure_turfs, high_pressure_turfs)
 	};
 	{
@@ -67,9 +64,10 @@ fn process_turf(
 		post_process();
 		let bench = start_time.elapsed().as_millis();
 		let prev_cost = ssair.read_number_id(byond_string!("cost_post_process"))?;
-		ssair
-			.read_var_id(byond_string!("cost_post_process"))?
-			.set_number(0.8 * prev_cost + 0.2 * (bench as f32));
+		ssair.write_var_id(
+			byond_string!("cost_post_process"),
+			&(0.8 * prev_cost + 0.2 * (bench as f32)).into(),
+		)?;
 	}
 	{
 		planet_process();

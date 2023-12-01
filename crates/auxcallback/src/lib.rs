@@ -39,16 +39,17 @@ pub fn byond_callback_sender() -> flume::Sender<DeferredFunc> {
 fn process_callbacks() {
 	//let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
 	with_callback_receiver(|receiver| {
-		for callback in receiver.try_iter() {
-			if let Err(e) = callback() {
+		receiver
+			.try_iter()
+			.filter_map(|cb| cb().err())
+			.for_each(|e| {
 				let error_string = format!("{e:?}").try_into().unwrap();
 				byondapi::global_call::call_global_id(
 					byond_string!("stack_trace"),
 					&[error_string],
 				)
 				.unwrap();
-			}
-		}
+			})
 	})
 }
 

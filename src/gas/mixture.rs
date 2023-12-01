@@ -140,9 +140,7 @@ impl Mixture {
 	/// # Errors
 	/// If the closure errors.
 	pub fn for_each_gas(&self, mut f: impl FnMut(GasIDX, f32) -> Result<()>) -> Result<()> {
-		for (i, g) in self.enumerate() {
-			f(i, g)?;
-		}
+		self.enumerate().try_for_each(|(i, g)| f(i, g))?;
 		Ok(())
 	}
 	/// As `for_each_gas`, but with mut refs to the mole counts instead of copies.
@@ -152,9 +150,10 @@ impl Mixture {
 		&mut self,
 		mut f: impl FnMut(GasIDX, &mut f32) -> Result<()>,
 	) -> Result<()> {
-		for (i, g) in self.moles.iter_mut().enumerate() {
-			f(i, g)?;
-		}
+		self.moles
+			.iter_mut()
+			.enumerate()
+			.try_for_each(|(i, g)| f(i, g))?;
 		Ok(())
 	}
 	/// Returns (by value) the amount of moles of a given index the mix has. M
@@ -271,9 +270,10 @@ impl Mixture {
 		let our_heat_capacity = self.heat_capacity();
 		let other_heat_capacity = giver.heat_capacity();
 		self.maybe_expand(giver.moles.len());
-		for (a, b) in self.moles.iter_mut().zip(giver.moles.iter()) {
-			*a += b;
-		}
+		self.moles
+			.iter_mut()
+			.zip(giver.moles.iter())
+			.for_each(|(a, b)| *a += b);
 		let combined_heat_capacity = our_heat_capacity + other_heat_capacity;
 		if combined_heat_capacity > MINIMUM_HEAT_CAPACITY {
 			self.set_temperature(
@@ -293,9 +293,10 @@ impl Mixture {
 		let our_heat_capacity = self.heat_capacity();
 		let other_heat_capacity = giver.heat_capacity() * ratio;
 		self.maybe_expand(giver.moles.len());
-		for (a, b) in self.moles.iter_mut().zip(giver.moles.iter()) {
-			*a += b * ratio;
-		}
+		self.moles
+			.iter_mut()
+			.zip(giver.moles.iter())
+			.for_each(|(a, b)| *a += b * ratio);
 		let combined_heat_capacity = our_heat_capacity + other_heat_capacity;
 		if combined_heat_capacity > MINIMUM_HEAT_CAPACITY {
 			self.set_temperature(
@@ -465,18 +466,14 @@ impl Mixture {
 	/// Multiplies every gas molage with this value.
 	pub fn multiply(&mut self, multiplier: f32) {
 		if !self.immutable {
-			for amt in self.moles.iter_mut() {
-				*amt *= multiplier;
-			}
+			self.moles.iter_mut().for_each(|amt| *amt *= multiplier);
 			self.cached_heat_capacity.invalidate();
 			self.garbage_collect();
 		}
 	}
 	pub fn add(&mut self, num: f32) {
 		if !self.immutable {
-			for amt in self.moles.iter_mut() {
-				*amt += num;
-			}
+			self.moles.iter_mut().for_each(|amt| *amt += num);
 			self.cached_heat_capacity.invalidate();
 			self.garbage_collect();
 		}

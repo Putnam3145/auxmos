@@ -478,7 +478,7 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 				byond_turf.write_var_id(
 					byond_string!("pressure_direction"),
 					&byondapi::global_call::call_global_id(
-						byond_string!("get_dir"),
+						byond_string!("get_dir_multiz"),
 						&[byond_turf, byond_turf_adj],
 					)?,
 				)?;
@@ -491,7 +491,7 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 					byond_turf_adj.write_var_id(
 						byond_string!("pressure_direction"),
 						&byondapi::global_call::call_global_id(
-							byond_string!("get_dir"),
+							byond_string!("get_dir_multiz"),
 							&[byond_turf, byond_turf_adj],
 						)?,
 					)?;

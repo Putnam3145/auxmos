@@ -23,7 +23,7 @@ pub fn clean_callbacks() {
 }
 
 fn with_callback_receiver<T>(f: impl Fn(&flume::Receiver<DeferredFunc>) -> T) -> T {
-	f(&CALLBACK_CHANNEL.get_or_init(|| flume::bounded(1_000_000)).1)
+	f(&CALLBACK_CHANNEL.get_or_init(|| flume::unbounded()).1)
 }
 
 /// This gives you a copy of the callback sender. Send to it with try_send or send, then later it'll be processed

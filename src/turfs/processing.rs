@@ -396,18 +396,12 @@ fn post_process() {
 					})));
 				}
 
-				let send_failed = sender
-					.try_send(Box::new(move || {
+				if should_update_vis {
+					drop(sender.send(Box::new(move || {
 						let turf = ByondValue::new_ref(0x01, id);
 						update_visuals(turf)?;
 						Ok(())
-					}))
-					.is_err();
-
-				if should_update_vis && send_failed {
-					//this update failed, consider vis_cache to be bogus so it can send the
-					//update again later
-					tmix.invalidate_vis_cache();
+					})));
 				}
 			});
 	});

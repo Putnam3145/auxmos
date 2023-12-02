@@ -370,26 +370,20 @@ fn post_process() {
 	with_turf_gases_read(|arena| {
 		let processables = crate::gas::types::with_reactions(|reactions| {
 			GasArena::with_all_mixtures(|all_mixtures| {
-				Some(
-					arena
-						.map
-						.par_values()
-						.filter_map(|&node_index| {
-							let mix = arena.get(node_index).unwrap();
-							mix.enabled().then_some(mix)
-						})
-						.filter_map(|mixture| {
-							post_process_cell(mixture, &vis, all_mixtures, reactions)
-						})
-						.collect::<Vec<_>>(),
-				)
+				arena
+					.map
+					.par_values()
+					.filter_map(|&node_index| {
+						let mix = arena.get(node_index).unwrap();
+						mix.enabled().then_some(mix)
+					})
+					.filter_map(|mixture| post_process_cell(mixture, &vis, all_mixtures, reactions))
+					.collect::<Vec<_>>()
 			})
 		});
-		if processables.is_none() {
-			return;
-		}
-		processables.unwrap().into_par_iter().for_each(
-			|(tmix, should_update_vis, should_react)| {
+		processables
+			.into_par_iter()
+			.for_each(|(tmix, should_update_vis, should_react)| {
 				let sender = byond_callback_sender();
 				let id = tmix.id;
 
@@ -415,7 +409,6 @@ fn post_process() {
 					//update again later
 					tmix.invalidate_vis_cache();
 				}
-			},
-		);
+			});
 	});
 }

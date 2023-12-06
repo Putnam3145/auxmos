@@ -5,9 +5,11 @@
 
 /proc/__detect_auxmos()
 	if (world.system_type == UNIX)
-		return __auxmos = "libauxmos"
+		__auxmos = "libauxmos"
+		return __auxmos
 	else
-		return __auxmos = "auxmos"
+		__auxmos = "auxmos"
+		return __auxmos
 
 #define AUXMOS (__auxmos || __detect_auxmos())
 

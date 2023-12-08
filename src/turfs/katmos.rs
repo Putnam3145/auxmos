@@ -433,7 +433,11 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 
 			let _average_moles = total_moles / (progression_order.len() - space_turf_len) as f32;
 
-			let mut hpd = byondapi::global_call::call_global_id(byond_string!("get_hpds"), &[])?;
+			let mut hpd = ByondValue::new_global_ref()
+				.read_var_id(byond_string!("SSair"))
+				.unwrap()
+				.read_var_id(byond_string!("high_pressure_delta"))
+				.unwrap();
 
 			for &cur_index in progression_order.iter().rev() {
 				let cur_orig = info.entry(cur_index).or_default();

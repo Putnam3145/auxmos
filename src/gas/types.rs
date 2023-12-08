@@ -294,8 +294,11 @@ fn hook_init(gas_data: ByondValue) {
 }
 
 fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
-	let gas_reactions =
-		byondapi::global_call::call_global_id(byond_string!("get_reactions"), &[]).unwrap();
+	let gas_reactions = ByondValue::new_global_ref()
+		.read_var_id(byond_string!("SSair"))
+		.unwrap()
+		.read_var_id(byond_string!("gas_reactions"))
+		.unwrap();
 	let mut reaction_cache: BTreeMap<ReactionPriority, Reaction> = Default::default();
 	let sender = byond_callback_sender();
 	for (reaction, _) in gas_reactions.iter().unwrap() {

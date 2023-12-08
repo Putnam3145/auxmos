@@ -527,7 +527,6 @@ fn hook_infos(src: ByondValue) {
 	Ok(ByondValue::null())
 }
 
-// gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't
 /// Updates the visual overlays for the given turf.
 /// Will use a cached overlay list if one exists.
 /// # Errors
@@ -537,25 +536,31 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 	match src.read_var_id(byond_string!("air")) {
 		Err(_) => Ok(ByondValue::null()),
 		Ok(air) => {
-			let mut overlay_types = Vec::new();
-			let gas_overlays =
-				byondapi::global_call::call_global_id(byond_string!("get_overlays"), &[])?;
+			// gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't
+			let gas_overlays = ByondValue::new_global_ref()
+				.read_var_id(byond_string!("GLOB"))?
+				.read_var_id(byond_string!("gas_data"))?
+				.read_var_id(byond_string!("overlays"))?;
 			let ptr = air.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize;
-			GasArena::with_gas_mixture(ptr, |mix| {
-				mix.for_each_gas(|idx, moles| {
-					if let Some(amt) = gas::types::gas_visibility(idx) {
-						if moles > amt {
-							let this_overlay_list =
-								gas_overlays.read_list_index(gas::gas_idx_to_id(idx))?;
-							if let Ok(this_gas_overlay) = this_overlay_list
-								.read_list_index(gas::mixture::visibility_step(moles) as f32)
-							{
-								overlay_types.push(this_gas_overlay);
-							}
-						}
-					}
-					Ok(())
-				})
+			let overlay_types = GasArena::with_gas_mixture(ptr, |mix| {
+				Ok(mix
+					.enumerate()
+					.filter_map(|(idx, moles)| Some((idx, moles, gas::types::gas_visibility(idx)?)))
+					.filter(|(_, moles, amt)| moles > amt)
+					// getting the list(VIS_FACTORS = OVERLAYS) with GAS_ID
+					.filter_map(|(idx, moles, _)| {
+						Some((
+							gas_overlays.read_list_index(gas::gas_idx_to_id(idx)).ok()?,
+							moles,
+						))
+					})
+					// getting the OVERLAYS with VIS_FACTOR
+					.filter_map(|(this_overlay_list, moles)| {
+						this_overlay_list
+							.read_list_index(gas::mixture::visibility_step(moles) as f32)
+							.ok()
+					})
+					.collect::<Vec<_>>())
 			})?;
 
 			Ok(src.call_id(

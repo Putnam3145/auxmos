@@ -38,8 +38,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 auxcallback = { path = "./crates/auxcallback" }
-byondapi = { git = "https://github.com/jupyterkat/byondapi-rs", package = "byondapi" }
 byondapi-binds = { path = "./crates/byondapi-binds" }
+byondapi = "0.3.0"
 itertools = "0.12.0"
 rayon = "1.8.0"
 float-ord = "0.3.2"
@@ -57,7 +57,7 @@ bitflags = "2.4.1"
 nom = "7.1.3"
 coarsetime = "0.1.33"
 mimalloc = { version = "0.1.39", default-features = false }
-eyre = "0.6.9"
+eyre = "0.6.11"
 
 [dependencies.tinyvec]
 version = "1.6.0"

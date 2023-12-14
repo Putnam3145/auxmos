@@ -16,7 +16,6 @@ mod superconduct;
 
 use byondapi::prelude::*;
 
-use byondapi::typecheck_trait::ByondTypeCheck;
 use rayon::prelude::*;
 
 use crate::{constants::*, gas::Mixture, GasArena};

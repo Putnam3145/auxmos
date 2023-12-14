@@ -1,7 +1,7 @@
 #[cfg(feature = "reaction_hooks")]
 mod hooks;
 
-use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
+use byondapi::prelude::*;
 
 use crate::gas::{gas_idx_to_id, total_num_gases, GasIDX, Mixture};
 

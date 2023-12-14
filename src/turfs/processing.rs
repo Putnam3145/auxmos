@@ -313,10 +313,10 @@ fn fdm(
 						.for_each(|(id, diffs)| {
 							let sender = byond_callback_sender();
 							drop(sender.try_send(Box::new(move || {
-								let turf = ByondValue::new_ref(0x01, id);
+								let turf = ByondValue::new_ref(ValueType::Turf, id);
 								for (id, diff) in diffs.iter().copied() {
 									if id != 0 {
-										let enemy_tile = ByondValue::new_ref(0x01, id);
+										let enemy_tile = ByondValue::new_ref(ValueType::Turf, id);
 										if diff > 5.0 {
 											turf.call_id(
 												byond_string!("consider_pressure_difference"),
@@ -389,7 +389,7 @@ fn post_process() {
 
 				if should_react {
 					drop(sender.try_send(Box::new(move || {
-						let turf = ByondValue::new_ref(0x01, id);
+						let turf = ByondValue::new_ref(ValueType::Turf, id);
 						turf.read_var_id(byond_string!("air"))?
 							.call_id(byond_string!("react"), &[turf])?;
 						Ok(())
@@ -398,7 +398,7 @@ fn post_process() {
 
 				if should_update_vis {
 					drop(sender.send(Box::new(move || {
-						let turf = ByondValue::new_ref(0x01, id);
+						let turf = ByondValue::new_ref(ValueType::Turf, id);
 						update_visuals(turf)?;
 						Ok(())
 					})));

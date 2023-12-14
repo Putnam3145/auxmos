@@ -2,7 +2,7 @@
 members = ["crates/*"]
 
 [workspace.dependencies]
-byondapi = { git = "https://github.com/jupyterkat/byondapi-rs", package = "byondapi" }
+byondapi = "0.3.1"
 byondapi-binds = { path = "./crates/byondapi-binds" }
 
 [package]
@@ -39,7 +39,7 @@ crate-type = ["cdylib"]
 [dependencies]
 auxcallback = { path = "./crates/auxcallback" }
 byondapi-binds = { path = "./crates/byondapi-binds" }
-byondapi = "0.3.0"
+byondapi = "0.3.1"
 itertools = "0.12.0"
 rayon = "1.8.0"
 float-ord = "0.3.2"

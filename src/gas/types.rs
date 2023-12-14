@@ -1,5 +1,5 @@
 use auxcallback::byond_callback_sender;
-use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
+use byondapi::prelude::*;
 
 use fxhash::FxBuildHasher;
 

@@ -1,6 +1,6 @@
 use std::convert::TryInto;
 
-use byondapi::{prelude::*, typecheck_trait::ByondTypeCheck};
+use byondapi::prelude::*;
 
 use coarsetime::{Duration, Instant};
 

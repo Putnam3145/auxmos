@@ -9,7 +9,7 @@ pub mod init_shutdown;
 
 mod parser;
 
-use byondapi::{map::byond_length, prelude::*, typecheck_trait::ByondTypeCheck};
+use byondapi::{map::byond_length, prelude::*};
 
 use gas::{
 	amt_gases, constants, gas_idx_from_string, gas_idx_from_value, gas_idx_to_id, tot_gases, types,

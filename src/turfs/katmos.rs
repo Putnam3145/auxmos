@@ -26,8 +26,6 @@ use parking_lot::{const_mutex, Mutex};
 
 use eyre::Result;
 
-const TURF_TYPE: u1c = 0x01;
-
 static EQUALIZE_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = const_mutex(None);
 
 pub fn flush_equalize_channel() {
@@ -345,9 +343,9 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 				}
 				if cur_mixture.is_immutable() {
 					if space_turfs.insert(cur_index) {
-						ByondValue::new_ref(TURF_TYPE, cur_mixture.id).write_var_id(
+						ByondValue::new_ref(ValueType::Turf, cur_mixture.id).write_var_id(
 							byond_string!("pressure_specific_target"),
-							&ByondValue::new_ref(TURF_TYPE, cur_mixture.id),
+							&ByondValue::new_ref(ValueType::Turf, cur_mixture.id),
 						)?;
 					}
 				} else if cur_mixture.enabled() {
@@ -368,9 +366,9 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 				Ok(())
 			})?;
 			for (cur, adj) in firelock_considerations {
-				ByondValue::new_ref(TURF_TYPE, cur).call_id(
+				ByondValue::new_ref(ValueType::Turf, cur).call_id(
 					byond_string!("consider_firelocks"),
-					&[ByondValue::new_ref(TURF_TYPE, adj)],
+					&[ByondValue::new_ref(ValueType::Turf, adj)],
 				)?;
 			}
 
@@ -419,9 +417,10 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 
 							adj_info.curr_transfer_dir = Some(cur_index);
 
-							let cur_target_turf = ByondValue::new_ref(TURF_TYPE, cur_mixture.id)
-								.read_var_id(byond_string!("pressure_specific_target"))?;
-							ByondValue::new_ref(TURF_TYPE, adj_mixture.id).write_var_id(
+							let cur_target_turf =
+								ByondValue::new_ref(ValueType::Turf, cur_mixture.id)
+									.read_var_id(byond_string!("pressure_specific_target"))?;
+							ByondValue::new_ref(ValueType::Turf, adj_mixture.id).write_var_id(
 								byond_string!("pressure_specific_target"),
 								&cur_target_turf,
 							)?;
@@ -455,7 +454,7 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 					const DECOMP_REMOVE_RATIO: f32 = 4_f32;
 					cur_mixture.clear_vol((_average_moles / DECOMP_REMOVE_RATIO).abs());
 				}
-				let mut byond_turf = ByondValue::new_ref(TURF_TYPE, cur_mixture.id);
+				let mut byond_turf = ByondValue::new_ref(ValueType::Turf, cur_mixture.id);
 				if byondapi::map::byond_locatein(&byond_turf, &hpd)?.is_null() {
 					hpd.push_list(byond_turf)?;
 				}
@@ -473,7 +472,7 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 				adj_info.curr_transfer_amount += cur_info.curr_transfer_amount;
 				adj_orig.set(adj_info);
 
-				let mut byond_turf_adj = ByondValue::new_ref(TURF_TYPE, cur_mixture.id);
+				let mut byond_turf_adj = ByondValue::new_ref(ValueType::Turf, cur_mixture.id);
 
 				byond_turf.write_var_id(
 					byond_string!("pressure_difference"),
@@ -616,9 +615,9 @@ fn planet_equalize(initial_index: TurfID, equalize_hard_turf_limit: usize) -> Re
 			Ok(())
 		})?;
 		for (cur, adj) in firelock_considerations {
-			ByondValue::new_ref(TURF_TYPE, cur).call_id(
+			ByondValue::new_ref(ValueType::Turf, cur).call_id(
 				byond_string!("consider_firelocks"),
-				&[ByondValue::new_ref(TURF_TYPE, adj)],
+				&[ByondValue::new_ref(ValueType::Turf, adj)],
 			)?;
 		}
 		if warned_about_space || planet_turfs.is_empty() {
@@ -704,8 +703,8 @@ fn send_pressure_differences(
 ) {
 	for (amt, cur_turf, adj_turf) in pressures {
 		drop(sender.try_send(Box::new(move || {
-			let turf = ByondValue::new_ref(TURF_TYPE, cur_turf);
-			let other_turf = ByondValue::new_ref(TURF_TYPE, adj_turf);
+			let turf = ByondValue::new_ref(ValueType::Turf, cur_turf);
+			let other_turf = ByondValue::new_ref(ValueType::Turf, adj_turf);
 			if let Err(e) = turf.call_id(
 				byond_string!("consider_pressure_difference"),
 				&[other_turf, amt.into()],

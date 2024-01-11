@@ -45,3 +45,9 @@ Monstermos is now deprecated. Use katmos instead. It inherently has explosive de
 `/datum/controller/subsystem/air/proc/post_process_turfs_auxtools()`
 `/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools()`
 `/datum/controller/subsystem/air/proc/process_excited_groups_auxtools()`
+
+# 2.4.0 - 2.5.0
+1. Generating a `bindings.dm` file is now needed, please generate it with `cargo t generate_binds` and include it in your repo, I personally include it in `__DEFINES`
+2. Arguments that each binded function takes is now shown
+3. `update_air_ref()` now requires a flag again, `-1` for closed turfs, `1` for planets, `2` for regular turfs
+4. You need to call each process functions on the air subsystem for them to actually run

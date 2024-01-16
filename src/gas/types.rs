@@ -449,7 +449,7 @@ pub fn gas_idx_from_string(id: &str) -> Result<GasIDX> {
 		.as_ref()
 		.ok_or_else(|| eyre::eyre!("Gases not loaded yet! Uh oh!"))?
 		.get(id)
-		.ok_or_else(|| eyre::eyre!("Invalid gas ID: {}", id))?
+		.ok_or_else(|| eyre::eyre!("Invalid gas ID: {id}"))?
 		.idx)
 }
 

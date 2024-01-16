@@ -38,13 +38,6 @@ thread_local! {
 	static REACTION_VALUES: RefCell<HashMap<ReactionIdentifier, ReactionSide, FxBuildHasher>> = Default::default();
 }
 
-pub fn clean_up_reaction_values() {
-	crate::turfs::wait_for_tasks();
-	REACTION_VALUES.with_borrow_mut(|reaction_values| {
-		reaction_values.clear();
-	});
-}
-
 /// Runs a reaction given a `ReactionIdentifier`. Returns the result of the reaction, error or success.
 /// # Errors
 /// If the reaction itself has a runtime.

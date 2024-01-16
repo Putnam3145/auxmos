@@ -42,14 +42,7 @@ fn groups_hook(mut src: ByondValue, remaining: ByondValue) {
 	let bench = start_time.elapsed().as_millis();
 	let prev_cost = src
 		.read_number_id(byond_string!("cost_groups"))
-		.map_err(|_| {
-			eyre::eyre!(
-				"Attempt to interpret non-number value as number {} {}:{}",
-				std::file!(),
-				std::line!(),
-				std::column!()
-			)
-		})?;
+		.map_err(|_| eyre::eyre!("Attempt to interpret non-number value as number"))?;
 	src.write_var_id(
 		byond_string!("cost_groups"),
 		&(0.8 * prev_cost + 0.2 * (bench as f32)).into(),

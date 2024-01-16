@@ -77,7 +77,7 @@ impl GasArena {
 		let gas_mixtures = lock.as_ref().unwrap();
 		let mix = gas_mixtures
 			.get(id)
-			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", id))?
+			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {id} exists!"))?
 			.read();
 		f(&mix)
 	}
@@ -94,7 +94,7 @@ impl GasArena {
 		let gas_mixtures = lock.as_ref().unwrap();
 		let mut mix = gas_mixtures
 			.get(id)
-			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", id))?
+			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {id} exists!"))?
 			.write();
 		f(&mut mix)
 	}
@@ -111,11 +111,11 @@ impl GasArena {
 		let gas_mixtures = lock.as_ref().unwrap();
 		let src_gas = gas_mixtures
 			.get(src)
-			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", src))?
+			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {src} exists!"))?
 			.read();
 		let arg_gas = gas_mixtures
 			.get(arg)
-			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", arg))?
+			.ok_or_else(|| eyre::eyre!("No gas mixture with ID {arg} exists!"))?
 			.read();
 		f(&src_gas, &arg_gas)
 	}
@@ -133,7 +133,7 @@ impl GasArena {
 		if src == arg {
 			let mut entry = gas_mixtures
 				.get(src)
-				.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", src))?
+				.ok_or_else(|| eyre::eyre!("No gas mixture with ID {src} exists!"))?
 				.write();
 			let mix = &mut entry;
 			let mut copied = mix.clone();
@@ -142,11 +142,11 @@ impl GasArena {
 			f(
 				&mut gas_mixtures
 					.get(src)
-					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", src))?
+					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {src} exists!"))?
 					.write(),
 				&mut gas_mixtures
 					.get(arg)
-					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", arg))?
+					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {arg} exists!"))?
 					.write(),
 			)
 		}
@@ -165,17 +165,17 @@ impl GasArena {
 		if src == arg {
 			let entry = gas_mixtures
 				.get(src)
-				.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", src))?;
+				.ok_or_else(|| eyre::eyre!("No gas mixture with ID {src} exists!"))?;
 			let gas_copy = entry.read().clone();
 			f(entry, &RwLock::new(gas_copy))
 		} else {
 			f(
 				gas_mixtures
 					.get(src)
-					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", src))?,
+					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {src} exists!"))?,
 				gas_mixtures
 					.get(arg)
-					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {} exists!", arg))?,
+					.ok_or_else(|| eyre::eyre!("No gas mixture with ID {arg} exists!"))?,
 			)
 		}
 	}

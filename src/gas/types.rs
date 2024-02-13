@@ -246,13 +246,12 @@ pub fn destroy_gas_info_structs() {
 #[byondapi_binds::bind("/proc/_auxtools_register_gas")]
 fn hook_register_gas(gas: ByondValue) {
 	let gas_id = gas.read_string_id(byond_string!("id"))?;
-	match {
-		GAS_INFO_BY_STRING
-			.read()
-			.as_ref()
-			.unwrap()
-			.get_mut(&gas_id as &str)
-	} {
+	match GAS_INFO_BY_STRING
+		.read()
+		.as_ref()
+		.unwrap()
+		.get_mut(&gas_id as &str)
+	{
 		Some(mut old_gas) => {
 			let gas_cache = GasType::new(&gas, old_gas.idx)?;
 			*old_gas = gas_cache.clone();

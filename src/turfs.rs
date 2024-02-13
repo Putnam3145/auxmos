@@ -238,7 +238,7 @@ impl TurfGases {
 		}
 	}
 	pub fn remove_turf(&mut self, id: TurfID) {
-		if let Some(index) = self.map.remove(&id) {
+		if let Some(index) = self.map.shift_remove(&id) {
 			self.graph.remove_node(index);
 		}
 	}

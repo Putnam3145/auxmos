@@ -10,7 +10,7 @@ edition = "2018"
 crate-type = ["lib"]
 
 [dependencies]
-flume = "0.11.0"
-coarsetime = "0.1.34"
-byondapi = "0.3.1"
-eyre = "0.6.12"
+byondapi = { workspace = true }
+flume = { workspace = true }
+coarsetime = { workspace = true }
+eyre = { workspace = true }

@@ -719,7 +719,7 @@ fn send_pressure_differences(
 	}
 }
 
-#[byondapi_binds::bind("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
+#[byondapi::bind("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
 fn equalize_hook(mut src: ByondValue, remaining: ByondValue) {
 	let equalize_hard_turf_limit = src
 		.read_number_id(byond_string!("equalize_hard_turf_limit"))

@@ -31,6 +31,7 @@ static GAS_MIXTURES: RwLock<Option<Vec<RwLock<Mixture>>>> = const_rwlock(None);
 
 static NEXT_GAS_IDS: RwLock<Option<Vec<usize>>> = const_rwlock(None);
 
+#[byondapi::init]
 pub fn initialize_gases() {
 	*GAS_MIXTURES.write() = Some(Vec::with_capacity(240_000));
 	*NEXT_GAS_IDS.write() = Some(Vec::with_capacity(2000));

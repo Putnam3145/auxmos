@@ -380,7 +380,7 @@ pub fn wait_for_tasks() {
 		),
 	}
 }
-
+#[byondapi::init]
 pub fn initialize_turfs() {
 	// 10x 255x255 zlevels
 	// double that for edges since each turf can have up to 6 edges but eehhhh
@@ -420,12 +420,12 @@ where
 
 fn with_planetary_atmos_upgradeable_read<T, F>(f: F) -> T
 where
-	F: FnOnce(RwLockUpgradableReadGuard<Option<IndexMap<u32, Mixture, FxBuildHasher>>>) -> T,
+	F: FnOnce(RwLockUpgradableReadGuard<'_, Option<IndexMap<u32, Mixture, FxBuildHasher>>>) -> T,
 {
 	f(PLANETARY_ATMOS.upgradable_read())
 }
 
-#[byondapi_binds::bind("/turf/proc/update_air_ref")]
+#[byondapi::bind("/turf/proc/update_air_ref")]
 fn hook_register_turf(src: ByondValue, flag: ByondValue) {
 	let id = src.get_ref()?;
 	let flag = flag.get_number()? as i32;
@@ -505,7 +505,7 @@ fn determine_turf_flag(src: &ByondValue) -> i32 {
 }
 */
 
-#[byondapi_binds::bind("/turf/proc/__update_auxtools_turf_adjacency_info")]
+#[byondapi::bind("/turf/proc/__update_auxtools_turf_adjacency_info")]
 fn hook_infos(src: ByondValue) {
 	let id = src.get_ref()?;
 	with_turf_gases_write(|arena| -> Result<()> {

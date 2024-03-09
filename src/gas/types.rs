@@ -223,6 +223,7 @@ static GAS_INFO_BY_IDX: RwLock<Option<Vec<GasType>>> = const_rwlock(None);
 
 static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = const_rwlock(None);
 
+#[byondapi::init]
 pub fn initialize_gas_info_structs() {
 	*GAS_INFO_BY_STRING.write() = Some(DashMap::with_hasher(FxBuildHasher::default()));
 	*GAS_INFO_BY_IDX.write() = Some(Vec::new());
@@ -243,7 +244,7 @@ pub fn destroy_gas_info_structs() {
 	});
 }
 
-#[byondapi_binds::bind("/proc/_auxtools_register_gas")]
+#[byondapi::bind("/proc/_auxtools_register_gas")]
 fn hook_register_gas(gas: ByondValue) {
 	let gas_id = gas.read_string_id(byond_string!("id"))?;
 	match GAS_INFO_BY_STRING
@@ -281,7 +282,7 @@ fn hook_register_gas(gas: ByondValue) {
 	Ok(ByondValue::null())
 }
 
-#[byondapi_binds::bind("/proc/auxtools_atmos_init")]
+#[byondapi::bind("/proc/auxtools_atmos_init")]
 fn hook_init(gas_data: ByondValue) {
 	let data = gas_data.read_var_id(byond_string!("datums"))?;
 	data.iter()?
@@ -325,7 +326,7 @@ fn get_reaction_info() -> BTreeMap<ReactionPriority, Reaction> {
 	reaction_cache
 }
 
-#[byondapi_binds::bind("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
+#[byondapi::bind("/datum/controller/subsystem/air/proc/auxtools_update_reactions")]
 fn update_reactions() {
 	*REACTION_INFO.write() = Some(get_reaction_info());
 	Ok(true.into())
@@ -428,7 +429,7 @@ pub fn update_gas_refs() {
 		});
 }
 
-#[byondapi_binds::bind("/proc/finalize_gas_refs")]
+#[byondapi::bind("/proc/finalize_gas_refs")]
 fn finalize_gas_refs() {
 	update_gas_refs();
 	Ok(ByondValue::null())

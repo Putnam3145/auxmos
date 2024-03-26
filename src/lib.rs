@@ -66,7 +66,7 @@ fn min_heat_cap_hook(src: ByondValue, arg_min: ByondValue) {
 /// Returns: Amount of substance, in moles.
 #[byondapi::bind("/datum/gas_mixture/proc/total_moles")]
 fn total_moles_hook(src: ByondValue) {
-	Ok(with_mix(&src, |mix| Ok(mix.total_moles().into()))?)
+	with_mix(&src, |mix| Ok(mix.total_moles().into()))
 }
 
 /// Returns: the mix's pressure, in kilopascals.

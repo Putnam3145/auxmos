@@ -22,18 +22,29 @@ use gas::constants::{ReactionReturn, GAS_MIN_MOLES, MINIMUM_MOLES_DELTA_TO_MOVE}
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-/*//backtraces seems to be causing perf issues, have a better look later
-#[byondapi::init]
-pub fn init_eyre() {
-	color_eyre::config::HookBuilder::default()
-		.capture_span_trace_by_default(true)
-		.install()
-		.unwrap();
-}
-*/
+//#[byondapi::init]
+//pub fn init_eyre() {
+//	use tracing_error::ErrorLayer;
+//	use tracing_subscriber::fmt;
+//	use tracing_subscriber::prelude::*;
+//
+//	let fmt_layer = fmt::layer().with_target(false).compact();
+//
+//	tracing_subscriber::registry()
+//		.with(fmt_layer)
+//		.with(ErrorLayer::default())
+//		.init();
+//
+//	color_eyre::config::HookBuilder::default()
+//		.capture_span_trace_by_default(true)
+//		.display_location_section(true)
+//		.install()
+//		.unwrap();
+//}
 
 /// Args: (ms). Runs callbacks until time limit is reached. If time limit is omitted, runs all callbacks.
 #[byondapi::bind("/proc/process_atmos_callbacks")]
+#[tracing::instrument]
 fn atmos_callback_handle(remaining: ByondValue) {
 	auxcallback::callback_processing_hook(remaining)
 }

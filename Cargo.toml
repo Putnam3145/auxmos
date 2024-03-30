@@ -2,7 +2,7 @@
 members = ["crates/*"]
 
 [workspace.dependencies]
-byondapi = "0.4.2"
+byondapi = "0.4.3"
 coarsetime = "0.1.34"
 flume = "0.11.0"
 eyre = "0.6.12"
@@ -59,7 +59,7 @@ petgraph = "0.6.4"
 bitflags = "2.5.0"
 nom = "7.1.3"
 mimalloc = { version = "0.1.39", default-features = false }
-stable-eyre = "0.2.2"
+color-eyre = "0.6.3"
 
 [dependencies.tinyvec]
 version = "1.6.0"

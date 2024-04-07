@@ -396,13 +396,11 @@ fn post_process() {
 				if should_react {
 					drop(sender.try_send(Box::new(move || {
 						let turf = ByondValue::new_ref(ValueType::Turf, id);
-						react_hook(
-							turf.read_var_id(byond_string!("air")).wrap_err_with(|| {
-								format!("Tried to call react on turf {turf:?} with invalid air!")
-							})?,
-							turf,
-						)
-						.wrap_err("Reacting")?;
+						//turf is no longer valid for reactions
+						let Ok(air) = turf.read_var_id(byond_string!("air")) else {
+							return Ok(());
+						};
+						react_hook(air, turf).wrap_err("Reacting")?;
 						Ok(())
 					})));
 				}

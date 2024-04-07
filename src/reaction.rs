@@ -53,7 +53,9 @@ pub fn react_by_id(
 				ReactionSide::ByondSide(val) => val
 					.call_id(byond_string!("react"), &[src, holder])
 					.wrap_err("calling byond side react in react_by_id"),
-				ReactionSide::RustSide(func) => func(src, holder),
+				ReactionSide::RustSide(func) => {
+					func(src, holder).wrap_err("calling rust side react in react_by_id")
+				}
 			},
 		)
 	})

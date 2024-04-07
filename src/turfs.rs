@@ -33,7 +33,7 @@ use indexmap::IndexMap;
 use std::time::Duration;
 use std::{mem::drop, sync::atomic::AtomicU64};
 
-use eyre::Result;
+use eyre::{Context, Result};
 
 bitflags! {
 	#[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -537,10 +537,15 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 		Ok(air) => {
 			// gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't
 			let gas_overlays = ByondValue::new_global_ref()
-				.read_var_id(byond_string!("GLOB"))?
-				.read_var_id(byond_string!("gas_data"))?
-				.read_var_id(byond_string!("overlays"))?;
-			let ptr = air.read_number_id(byond_string!("_extools_pointer_gasmixture"))? as usize;
+				.read_var_id(byond_string!("GLOB"))
+				.wrap_err("GLOB is null")?
+				.read_var_id(byond_string!("gas_data"))
+				.wrap_err("gas_data is null")?
+				.read_var_id(byond_string!("overlays"))
+				.wrap_err("overlays is null")?;
+			let ptr = air
+				.read_number_id(byond_string!("_extools_pointer_gasmixture"))
+				.wrap_err("Gas mixture doesn't have a valid pointer")? as usize;
 			let overlay_types = GasArena::with_gas_mixture(ptr, |mix| {
 				Ok(mix
 					.enumerate()
@@ -562,10 +567,12 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 					.collect::<Vec<_>>())
 			})?;
 
-			Ok(src.call_id(
-				byond_string!("set_visuals"),
-				&[overlay_types.as_slice().try_into()?],
-			)?)
+			Ok(src
+				.call_id(
+					byond_string!("set_visuals"),
+					&[overlay_types.as_slice().try_into()?],
+				)
+				.wrap_err("Calling set_visuals")?)
 		}
 	}
 }

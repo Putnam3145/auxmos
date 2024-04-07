@@ -24,7 +24,7 @@ use hashbrown::{HashMap, HashSet};
 
 use parking_lot::{const_mutex, Mutex};
 
-use eyre::Result;
+use eyre::{Context, Result};
 
 static EQUALIZE_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = const_mutex(None);
 
@@ -554,6 +554,7 @@ fn flood_fill_zones(
 					// (I just made explosions less laggy, you're welcome)
 					drop(sender.try_send(Box::new(move || {
 						explosively_depressurize(cur_turf_id, equalize_hard_turf_limit)
+							.wrap_err("Decompressing")
 					})));
 					ignore_zone = true;
 				}
@@ -563,6 +564,7 @@ fn flood_fill_zones(
 				{
 					drop(sender.try_send(Box::new(move || {
 						planet_equalize(cur_turf_id, equalize_hard_turf_limit)
+							.wrap_err("Equalising planet air")
 					})));
 				}
 			}
@@ -705,16 +707,13 @@ fn send_pressure_differences(
 		drop(sender.try_send(Box::new(move || {
 			let turf = ByondValue::new_ref(ValueType::Turf, cur_turf);
 			let other_turf = ByondValue::new_ref(ValueType::Turf, adj_turf);
-			if let Err(e) = turf.call_id(
-				byond_string!("consider_pressure_difference"),
-				&[other_turf, amt.into()],
-			) {
-				byondapi::global_call::call_global_id(
-					byond_string!("stack_trace"),
-					&[format!("{e:?}").try_into()?],
-				)?;
-			}
-			Ok(())
+			Ok(turf
+				.call_id(
+					byond_string!("consider_pressure_difference"),
+					&[other_turf, amt.into()],
+				)
+				.map(|_| ())
+				.wrap_err("Katmos considering pressure differences")?)
 		})));
 	}
 }

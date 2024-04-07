@@ -1,8 +1,9 @@
 use byondapi::{byond_string, prelude::*};
+use eyre::Context;
 
 use super::*;
 
-use crate::GasArena;
+use crate::{react_hook, GasArena};
 
 use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
 
@@ -321,12 +322,17 @@ fn fdm(
 											turf.call_id(
 												byond_string!("consider_pressure_difference"),
 												&[enemy_tile, diff.into()],
-											)?;
+											)
+											.wrap_err("Processing consider pressure differences")?;
 										} else if diff < -5.0 {
-											enemy_tile.call_id(
-												byond_string!("consider_pressure_difference"),
-												&[turf, (-diff).into()],
-											)?;
+											enemy_tile
+												.call_id(
+													byond_string!("consider_pressure_difference"),
+													&[turf, (-diff).into()],
+												)
+												.wrap_err(
+													"Processing consider pressure differences",
+												)?;
 										}
 									}
 								}
@@ -390,16 +396,21 @@ fn post_process() {
 				if should_react {
 					drop(sender.try_send(Box::new(move || {
 						let turf = ByondValue::new_ref(ValueType::Turf, id);
-						turf.read_var_id(byond_string!("air"))?
-							.call_id(byond_string!("react"), &[turf])?;
+						react_hook(
+							turf.read_var_id(byond_string!("air")).wrap_err_with(|| {
+								format!("Tried to call react on turf {turf:?} with invalid air!")
+							})?,
+							turf,
+						)
+						.wrap_err("Reacting")?;
 						Ok(())
 					})));
 				}
 
 				if should_update_vis {
-					drop(sender.send(Box::new(move || {
+					drop(sender.try_send(Box::new(move || {
 						let turf = ByondValue::new_ref(ValueType::Turf, id);
-						update_visuals(turf)?;
+						update_visuals(turf).wrap_err("Updating Visuals")?;
 						Ok(())
 					})));
 				}

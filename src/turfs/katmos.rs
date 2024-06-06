@@ -40,7 +40,7 @@ pub fn send_to_equalize(sent: BTreeSet<TurfID>) {
 	EQUALIZE_CHANNEL.try_lock().map(|mut opt| opt.replace(sent));
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct MonstermosInfo {
 	mole_delta: f32,
 	curr_transfer_amount: f32,
@@ -59,7 +59,7 @@ impl Default for MonstermosInfo {
 	}
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct ReducedInfo {
 	curr_transfer_amount: f32,
 	curr_transfer_dir: Option<NodeIndex>,
@@ -316,7 +316,7 @@ fn take_from_givers(
 		}
 	}
 }
-
+#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usize) -> Result<()> {
 	let Some(initial_index) = with_turf_gases_read(|arena| arena.get_id(initial_index)) else {
 		return Ok(());
@@ -510,7 +510,7 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 
 	Ok(())
 }
-
+#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn flood_fill_zones(
 	(index_node, index_turf): (NodeIndex, TurfID),
 	equalize_hard_turf_limit: usize,
@@ -573,6 +573,7 @@ fn flood_fill_zones(
 	(!ignore_zone).then_some((turf_graph, total_moles))
 }
 
+#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn planet_equalize(initial_index: TurfID, equalize_hard_turf_limit: usize) -> Result<()> {
 	let Some(initial_index) = with_turf_gases_read(|arena| arena.get_id(initial_index)) else {
 		return Ok(());
@@ -629,6 +630,7 @@ fn planet_equalize(initial_index: TurfID, equalize_hard_turf_limit: usize) -> Re
 	Ok(())
 }
 
+#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn process_zone(
 	graph: DiGraphMap<NodeIndex, Cell<f32>>,
 	average_moles: f32,
@@ -688,6 +690,7 @@ fn process_zone(
 	graph
 }
 
+#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn finalize_eq_zone(
 	arena: &TurfGases,
 	graph: DiGraphMap<NodeIndex, Cell<f32>>,
@@ -719,6 +722,7 @@ fn send_pressure_differences(
 }
 
 #[byondapi::bind("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
+#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn equalize_hook(mut src: ByondValue, remaining: ByondValue) {
 	let equalize_hard_turf_limit = src
 		.read_number_id(byond_string!("equalize_hard_turf_limit"))
@@ -750,6 +754,7 @@ fn equalize_hook(mut src: ByondValue, remaining: ByondValue) {
 	Ok(is_cancelled.into())
 }
 
+#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn equalize(
 	equalize_hard_turf_limit: usize,
 	high_pressure_turfs: &BTreeSet<TurfID>,

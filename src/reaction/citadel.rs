@@ -9,23 +9,16 @@ use crate::gas::{
 const SUPER_SATURATION_THRESHOLD: f32 = 96.0;
 
 #[must_use]
-pub fn func_from_id(id: &str) -> Option<ReactFunc> {
+pub fn func_from_id(id: &str) -> Option<super::ReactFunc> {
 	match id {
-		#[cfg(feature = "plasma_fire_hook")]
 		"plasmafire" => Some(plasma_fire),
-		#[cfg(feature = "trit_fire_hook")]
 		"tritfire" => Some(tritium_fire),
-		#[cfg(feature = "fusion_hook")]
 		"fusion" => Some(fusion),
-		#[cfg(feature = "generic_fire_hook")]
 		"genericfire" => Some(generic_fire),
 		_ => None,
 	}
 }
 
-type ReactFunc = fn(ByondValue, ByondValue) -> Result<ByondValue>;
-
-#[cfg(feature = "plasma_fire_hook")]
 fn plasma_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 	const PLASMA_UPPER_TEMPERATURE: f32 = 1390.0 + T0C;
 	const OXYGEN_BURN_RATE_BASE: f32 = 1.4;
@@ -101,7 +94,6 @@ fn plasma_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> 
 	}
 }
 
-#[cfg(feature = "trit_fire_hook")]
 fn tritium_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 	const TRITIUM_BURN_OXY_FACTOR: f32 = 100.0;
 	const TRITIUM_BURN_TRIT_FACTOR: f32 = 10.0;
@@ -155,7 +147,6 @@ fn tritium_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue>
 	Ok(true.into())
 }
 
-#[cfg(feature = "fusion_hook")]
 fn fusion(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 	const TOROID_CALCULATED_THRESHOLD: f32 = 5.96; // changing it by 0.1 generally doubles or halves fusion temps
 	const INSTABILITY_GAS_POWER_FACTOR: f32 = 3.0;
@@ -300,7 +291,6 @@ fn fusion(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 	}
 }
 
-#[cfg(feature = "generic_fire_hook")]
 fn generic_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 	use fxhash::FxBuildHasher;
 	use hashbrown::HashMap;

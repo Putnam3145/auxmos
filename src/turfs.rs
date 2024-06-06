@@ -36,7 +36,7 @@ use std::{mem::drop, sync::atomic::AtomicU64};
 use eyre::{Context, Result};
 
 bitflags! {
-	#[derive(Default, Clone, Copy, PartialEq, Eq)]
+	#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 	pub struct Directions: u8 {
 		const NORTH = 0b1;
 		const SOUTH = 0b10;
@@ -48,19 +48,19 @@ bitflags! {
 		const ALL_CARDINALS_MULTIZ = Self::NORTH.bits() | Self::SOUTH.bits() | Self::EAST.bits() | Self::WEST.bits() | Self::UP.bits() | Self::DOWN.bits();
 	}
 
-	#[derive(Default)]
+	#[derive(Default, Debug)]
 	pub struct SimulationFlags: u8 {
 		const SIMULATION_DIFFUSE = 0b1;
 		const SIMULATION_ALL = 0b10;
 		const SIMULATION_ANY = Self::SIMULATION_DIFFUSE.bits() | Self::SIMULATION_ALL.bits();
 	}
 
-	#[derive(Default)]
+	#[derive(Default, Debug)]
 	pub struct AdjacentFlags: u8 {
 		const ATMOS_ADJACENT_FIRELOCK = 0b10;
 	}
 
-	#[derive(Default, Clone, Copy)]
+	#[derive(Default, Debug, Clone, Copy)]
 	pub struct DirtyFlags: u8 {
 		const DIRTY_MIX_REF = 0b1;
 		const DIRTY_ADJACENT = 0b10;
@@ -97,7 +97,7 @@ const fn idx_to_adj_flag(idx: u8) -> Directions {
 type TurfID = u32;
 
 // TurfMixture can be treated as "immutable" for all intents and purposes--put other data somewhere else
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct TurfMixture {
 	pub mix: usize,
 	pub id: TurfID,
@@ -223,6 +223,7 @@ impl TurfMixture {
 type TurfGraphMap = IndexMap<TurfID, NodeIndex, FxBuildHasher>;
 
 //adjacency/turf infos goes here
+#[derive(Debug)]
 struct TurfGases {
 	graph: StableDiGraph<TurfMixture, AdjacentFlags>,
 	map: TurfGraphMap,

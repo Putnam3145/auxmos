@@ -1,5 +1,8 @@
-#[cfg(feature = "reaction_hooks")]
-mod hooks;
+#[cfg(feature = "citadel_reactions")]
+mod citadel;
+
+#[cfg(feature = "yogs_reactions")]
+mod yogs;
 
 use byondapi::prelude::*;
 
@@ -15,6 +18,9 @@ pub type ReactionIdentifier = u64;
 
 use eyre::{Context, Result};
 
+use fxhash::FxBuildHasher;
+use hashbrown::HashMap;
+
 #[derive(Clone, Debug)]
 pub struct Reaction {
 	id: ReactionIdentifier,
@@ -26,12 +32,11 @@ pub struct Reaction {
 	min_gas_reqs: Vec<(GasIDX, f32)>,
 }
 
-use fxhash::FxBuildHasher;
-use hashbrown::HashMap;
+type ReactFunc = fn(ByondValue, ByondValue) -> Result<ByondValue>;
 
 enum ReactionSide {
 	ByondSide(ByondValue),
-	RustSide(fn(ByondValue, ByondValue) -> Result<ByondValue>),
+	RustSide(ReactFunc),
 }
 
 thread_local! {
@@ -73,9 +78,13 @@ impl Reaction {
 			.read_string_id(byond_string!("id"))
 			.map_err(|_| eyre::eyre!("Reaction id must be a string!"))?;
 		let func = {
-			#[cfg(feature = "reaction_hooks")]
+			#[cfg(feature = "citadel_reactions")]
 			{
-				hooks::func_from_id(string_id.as_str())
+				citadel::func_from_id(string_id.as_str())
+			}
+			#[cfg(feature = "yogs_reactions")]
+			{
+				yogs::func_from_id(string_id.as_str())
 			}
 			#[cfg(not(feature = "reaction_hooks"))]
 			{

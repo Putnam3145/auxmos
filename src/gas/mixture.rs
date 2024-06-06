@@ -22,6 +22,7 @@ use eyre::Result;
 
 type SpecificFireInfo = (usize, f32, f32);
 
+#[derive(Debug)]
 struct GasCache(AtomicF32);
 
 impl Clone for GasCache {
@@ -71,7 +72,7 @@ pub fn visibility_step(gas_amt: f32) -> u32 {
 /// processing no longer requires sleeping turfs. Instead, we're using
 /// a proper, fully-simulated FDM system, much like LINDA but without
 /// sleeping turfs.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Mixture {
 	temperature: f32,
 	pub volume: f32,

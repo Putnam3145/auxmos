@@ -7,7 +7,7 @@ mod reaction;
 
 mod parser;
 
-use byondapi::{map::byond_length, prelude::*};
+use byondapi::prelude::*;
 
 use gas::{
 	amt_gases, constants, gas_idx_from_string, gas_idx_from_value, gas_idx_to_id, tot_gases, types,
@@ -25,11 +25,19 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[byondapi::init]
 pub fn init_eyre() {
 	simple_eyre::install().unwrap();
+	#[cfg(feature = "tracy")]
+	{
+		use tracing_subscriber::layer::SubscriberExt;
+
+		tracing::subscriber::set_global_default(
+			tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
+		)
+		.expect("setup tracy layer");
+	}
 }
 
 /// Args: (ms). Runs callbacks until time limit is reached. If time limit is omitted, runs all callbacks.
 #[byondapi::bind("/proc/process_atmos_callbacks")]
-#[tracing::instrument]
 fn atmos_callback_handle(remaining: ByondValue) {
 	auxcallback::callback_processing_hook(remaining)
 }
@@ -391,7 +399,7 @@ fn scrub_into_hook(src: ByondValue, into: ByondValue, ratio_v: ByondValue, gas_l
 	if !gas_list.is_list() {
 		return Err(eyre::eyre!("Non-list gas_list passed to scrub_into!"));
 	}
-	if byond_length(&gas_list)?.get_number()? as u32 == 0 {
+	if gas_list.builtin_length()?.get_number()? as u32 == 0 {
 		return Ok(false.into());
 	}
 	let gas_scrub_vec = gas_list

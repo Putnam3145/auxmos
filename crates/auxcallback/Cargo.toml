@@ -14,3 +14,4 @@ byondapi = { workspace = true }
 flume = { workspace = true }
 coarsetime = { workspace = true }
 eyre = { workspace = true }
+tracing = { workspace = true }

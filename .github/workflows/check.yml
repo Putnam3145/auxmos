@@ -1,21 +1,21 @@
 name: Check compile
 on: pull_request
 jobs:
-  linux-build:
-    runs-on: ubuntu-20.04
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: i686-unknown-linux-gnu
-          override: true
+    linux-build:
+        runs-on: ubuntu-20.04
+        steps:
+            - uses: actions/checkout@v2
+            - uses: actions-rs/toolchain@v1
+              with:
+                  toolchain: stable
+                  target: i686-unknown-linux-gnu
+                  override: true
 
-      - name: Install g++-multilib
-        run: |
-          sudo apt update
-          sudo apt install g++-multilib -y
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Check auxmos build
-        run: cargo check --target=i686-unknown-linux-gnu --release --features "all_reaction_hooks katmos"
+            - name: Install g++-multilib
+              run: |
+                  sudo apt update
+                  sudo apt install g++-multilib -y
+            - name: Check formatting
+              run: cargo fmt --all -- --check
+            - name: Check auxmos build
+              run: cargo check --target=i686-unknown-linux-gnu --release --features "citadel_reactions katmos"

@@ -21,13 +21,11 @@ fn thread_running_hook() {
 }
 
 #[byondapi::bind("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
-#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn finish_process_turfs(time_remaining: ByondValue) {
 	Ok(process_callbacks_for_millis(time_remaining.get_number()? as u64).into())
 }
 
 #[byondapi::bind("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
-#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn process_turf_hook(src: ByondValue, remaining: ByondValue) {
 	let remaining_time = Duration::from_millis(remaining.get_number().unwrap_or(50.0) as u64);
 	let fdm_max_steps = src
@@ -99,7 +97,6 @@ fn process_turf(
 	Ok(())
 }
 
-#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn planet_process(planet_share_ratio: f32) {
 	with_turf_gases_read(|arena| {
 		GasArena::with_all_mixtures(|all_mixtures| {
@@ -228,7 +225,6 @@ fn process_cell(
 }
 
 // Solving the heat equation using a Finite Difference Method, an iterative stencil loop.
-#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn fdm(
 	(start_time, remaining_time): (&Instant, Duration),
 	fdm_max_steps: i32,
@@ -387,7 +383,6 @@ fn post_process_cell<'a>(
 
 // Goes through every turf, checks if it should reset to planet atmos, if it should
 // update visuals, if it should react, sends a callback if it should.
-#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn post_process() {
 	let vis = crate::gas::visibility_copies();
 	with_turf_gases_read(|arena| {

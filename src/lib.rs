@@ -22,18 +22,15 @@ use gas::constants::{ReactionReturn, GAS_MIN_MOLES, MINIMUM_MOLES_DELTA_TO_MOVE}
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+#[cfg(feature = "tracy")]
 #[byondapi::init]
 pub fn init_eyre() {
-	simple_eyre::install().unwrap();
-	#[cfg(feature = "tracy")]
-	{
-		use tracing_subscriber::layer::SubscriberExt;
+	use tracing_subscriber::layer::SubscriberExt;
 
-		tracing::subscriber::set_global_default(
-			tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
-		)
-		.expect("setup tracy layer");
-	}
+	tracing::subscriber::set_global_default(
+		tracing_subscriber::registry().with(tracing_tracy::TracyLayer::default()),
+	)
+	.expect("setup tracy layer");
 }
 
 /// Args: (ms). Runs callbacks until time limit is reached. If time limit is omitted, runs all callbacks.

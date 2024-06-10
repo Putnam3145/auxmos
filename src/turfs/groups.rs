@@ -21,7 +21,6 @@ pub fn send_to_groups(sent: BTreeSet<TurfID>) {
 }
 
 #[byondapi::bind("/datum/controller/subsystem/air/proc/process_excited_groups_auxtools")]
-#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn groups_hook(mut src: ByondValue, remaining: ByondValue) {
 	let group_pressure_goal = src
 		.read_number_id(byond_string!("excited_group_pressure_goal"))

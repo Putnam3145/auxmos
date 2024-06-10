@@ -510,6 +510,7 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 
 	Ok(())
 }
+
 #[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn flood_fill_zones(
 	(index_node, index_turf): (NodeIndex, TurfID),
@@ -722,7 +723,6 @@ fn send_pressure_differences(
 }
 
 #[byondapi::bind("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
-#[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn equalize_hook(mut src: ByondValue, remaining: ByondValue) {
 	let equalize_hard_turf_limit = src
 		.read_number_id(byond_string!("equalize_hard_turf_limit"))

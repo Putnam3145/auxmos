@@ -60,10 +60,14 @@ jobs:
               if: matrix.os == 'ubuntu-20.04'
 
             - name: Generate checksum for release files
-              uses: jmgilman/actions-generate-checksum@v1
+              id: checksum
+              uses: Huy-Ngo/gha-sha@v1.1.0
               with:
-                  patterns: "target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}"
-                  output: ${{ matrix.artifact_name }}.sha256
+                  glob: "target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}"
+
+            - name: Write checksum to a file
+              run: |
+                  echo ${{ steps.checksum.outputs.sha256-checksum.value }} >> ${{ matrix.artifact_name }}.sha256
 
             - name: Upload checksum files to release
               uses: svenstaro/upload-release-action@v1-release

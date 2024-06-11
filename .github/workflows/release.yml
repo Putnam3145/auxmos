@@ -14,9 +14,11 @@ jobs:
                     - os: ubuntu-20.04
                       target_name: i686-unknown-linux-gnu
                       artifact_name: libauxmos.so
+                      checksum_name: libauxmos.so.sha256
                     - os: windows-latest
                       target_name: i686-pc-windows-msvc
                       artifact_name: auxmos.dll
+                      checksum_name: auxmos.dll.sha256
                       debug_pdb_name: auxmos.pdb
         steps:
             - name: Checkout
@@ -48,7 +50,7 @@ jobs:
               with:
                   toolchain: stable
                   command: build
-                  args: --target i686-pc-windows-msvc --release --features "citadel_reactions katmos"
+                  args: --target i686-pc-windows-msvc --release --features katmos
               if: matrix.os == 'windows-latest'
 
             - name: Build auxmos (Ubuntu)
@@ -56,7 +58,7 @@ jobs:
               with:
                   toolchain: stable
                   command: build
-                  args: --target i686-unknown-linux-gnu --release --features "citadel_reactions katmos"
+                  args: --target i686-unknown-linux-gnu --release --features katmos
               if: matrix.os == 'ubuntu-20.04'
 
             - name: Generate checksum for release files
@@ -70,7 +72,7 @@ jobs:
               with:
                   repo_token: ${{ secrets.GITHUB_TOKEN }}
                   file: target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}.sha256
-                  asset_name: ${{ matrix.artifact_name }}.sha256
+                  asset_name: ${{ matrix.checksum_name }}.sha256
                   tag: ${{ github.ref }}
 
             - name: Upload binary to release

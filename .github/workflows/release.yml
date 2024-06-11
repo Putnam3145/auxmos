@@ -70,7 +70,7 @@ jobs:
               with:
                   repo_token: ${{ secrets.GITHUB_TOKEN }}
                   file: target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}.sha256
-                  asset_name: ${{ matrix.artifact_name }}
+                  asset_name: ${{ matrix.artifact_name }}.sha256
                   tag: ${{ github.ref }}
 
             - name: Upload binary to release

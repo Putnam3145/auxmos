@@ -66,6 +66,7 @@ jobs:
                   glob: "target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}"
 
             - name: Write checksum to a file
+              shell: bash
               run: |
                   echo "${{ steps.checksum.outputs.sha256-checksum.value }}" | tee ${{ matrix.artifact_name }}.sha256
 

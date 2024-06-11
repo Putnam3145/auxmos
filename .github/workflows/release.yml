@@ -59,6 +59,20 @@ jobs:
                   args: --target i686-unknown-linux-gnu --release --features "citadel_reactions katmos"
               if: matrix.os == 'ubuntu-20.04'
 
+            - name: Generate checksum for release files
+              uses: Solratic/checksum-action@v1
+              with:
+                  pattern: "target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}"
+                  suffix: "sha256"
+
+            - name: Upload checksum files to release
+              uses: svenstaro/upload-release-action@v1-release
+              with:
+                  repo_token: ${{ secrets.GITHUB_TOKEN }}
+                  file: target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}.sha256
+                  asset_name: ${{ matrix.artifact_name }}
+                  tag: ${{ github.ref }}
+
             - name: Upload binary to release
               uses: svenstaro/upload-release-action@v1-release
               with:

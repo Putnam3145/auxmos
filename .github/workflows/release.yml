@@ -31,6 +31,12 @@ jobs:
                       debug_pdb_name: auxmos.pdb
         runs-on: ${{ matrix.os }}
         steps:
+            - name: Install g++ multilib
+              run: |
+                  sudo dpkg --add-architecture i386
+                  sudo apt-get update
+                  sudo apt-get install build-essential g++-multilib libc6-i386 libstdc++6:i386
+              if: matrix.os == 'ubuntu-20.04'
             - uses: actions/checkout@v4
             - uses: taiki-e/upload-rust-binary-action@v1
               with:

@@ -67,7 +67,7 @@ jobs:
 
             - name: Write checksum to a file
               run: |
-                  echo ${{ steps.checksum.outputs.sha256-checksum.value }} >> ${{ matrix.artifact_name }}.sha256
+                  echo "${{ steps.checksum.outputs.sha256-checksum.value }}" | tee ${{ matrix.artifact_name }}.sha256
 
             - name: Upload checksum files to release
               uses: svenstaro/upload-release-action@v1-release

@@ -1,96 +1,44 @@
-name: Build Release
+name: Release
+
+permissions:
+    contents: write
 
 on:
-    release:
-        types: [published]
+    push:
+        tags:
+            - v[0-9]+.*
 
 jobs:
-    release:
-        name: Build and Release
-        runs-on: ${{ matrix.os }}
+    create-release:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: taiki-e/create-gh-release-action@v1
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+
+    upload-assets:
+        needs: create-release
         strategy:
             matrix:
                 include:
-                    - os: ubuntu-20.04
-                      target_name: i686-unknown-linux-gnu
-                      artifact_name: libauxmos.so
-                    - os: windows-latest
-                      target_name: i686-pc-windows-msvc
-                      artifact_name: auxmos.dll
+                    - target: i686-unknown-linux-gnu
+                      os: ubuntu-20.04
+                      artifact_name: libauxmos
+                    - target: i686-pc-windows-msvc
+                      os: windows-latest
+                      artifact_name: auxmos
                       debug_pdb_name: auxmos.pdb
+        runs-on: ${{ matrix.os }}
         steps:
-            - name: Checkout
-              uses: actions/checkout@v1
-
-            - name: Setup Toolchains (Windows)
-              uses: actions-rs/toolchain@v1
+            - uses: actions/checkout@v4
+            - uses: taiki-e/upload-rust-binary-action@v1
               with:
-                  toolchain: stable
-                  target: i686-pc-windows-msvc
-              if: matrix.os == 'windows-latest'
-
-            - name: Install g++ multilib
-              run: |
-                  sudo dpkg --add-architecture i386
-                  sudo apt-get update
-                  sudo apt-get install build-essential g++-multilib libc6-i386 libstdc++6:i386
-              if: matrix.os == 'ubuntu-20.04'
-
-            - name: Setup Toolchains (Ubuntu)
-              uses: actions-rs/toolchain@v1
-              with:
-                  toolchain: stable
-                  target: i686-unknown-linux-gnu
-              if: matrix.os == 'ubuntu-20.04'
-
-            - name: Build auxmos (Windows)
-              uses: actions-rs/cargo@v1
-              with:
-                  toolchain: stable
-                  command: build
-                  args: --target i686-pc-windows-msvc --release --features katmos
-              if: matrix.os == 'windows-latest'
-
-            - name: Build auxmos (Ubuntu)
-              uses: actions-rs/cargo@v1
-              with:
-                  toolchain: stable
-                  command: build
-                  args: --target i686-unknown-linux-gnu --release --features katmos
-              if: matrix.os == 'ubuntu-20.04'
-
-            - name: Generate checksum for release files
-              id: checksum
-              uses: Huy-Ngo/gha-sha@v1.1.0
-              with:
-                  glob: "target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}"
-
-            - name: Write checksum to a file
-              shell: bash
-              run: |
-                  echo "${{ steps.checksum.outputs.sha256-checksum }}" | tee ${{ matrix.artifact_name }}.sha256
-
-            - name: Upload checksum files to release
-              uses: svenstaro/upload-release-action@v1-release
-              with:
-                  repo_token: ${{ secrets.GITHUB_TOKEN }}
-                  file: ${{ matrix.artifact_name }}.sha256
-                  asset_name: ${{ matrix.artifact_name }}.sha256
-                  tag: ${{ github.ref }}
-
-            - name: Upload binary to release
-              uses: svenstaro/upload-release-action@v1-release
-              with:
-                  repo_token: ${{ secrets.GITHUB_TOKEN }}
-                  file: target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}
-                  asset_name: ${{ matrix.artifact_name }}
-                  tag: ${{ github.ref }}
-
-            - name: Upload debug informations to release
-              uses: svenstaro/upload-release-action@v1-release
-              with:
-                  repo_token: ${{ secrets.GITHUB_TOKEN }}
-                  file: target/${{ matrix.target_name }}/release/${{ matrix.debug_pdb_name }}
-                  asset_name: ${{ matrix.debug_pdb_name }}
-                  tag: ${{ github.ref }}
-              if: matrix.os == 'windows-latest'
+                  bin: ${{ matrix.artifact_name }}
+                  target: ${{ matrix.target }}
+                  token: ${{ secrets.GITHUB_TOKEN }}
+                  checksum: sha256
+                  features: katmos
+                  tar: none
+                  zip: none
+                  asset: ${{ matrix.debug_pdb_name }}

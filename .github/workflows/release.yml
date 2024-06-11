@@ -59,6 +59,11 @@ jobs:
                   args: --target i686-unknown-linux-gnu --release --features katmos
               if: matrix.os == 'ubuntu-20.04'
 
+            - name: Write checksum to a file
+              shell: bash
+              run: |
+                  sha256sum "target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}" | tee ${{ matrix.artifact_name }}.sha256
+
             - name: Upload checksum files to release
               uses: svenstaro/upload-release-action@v1-release
               with:

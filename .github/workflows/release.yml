@@ -60,10 +60,10 @@ jobs:
               if: matrix.os == 'ubuntu-20.04'
 
             - name: Generate checksum for release files
-              uses: Solratic/checksum-action@v1
+              uses: jmgilman/actions-generate-checksum@v1
               with:
                   pattern: "target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}"
-                  suffix: "sha256"
+                  output: ${{ matrix.artifact_name }}.sha256
 
             - name: Upload checksum files to release
               uses: svenstaro/upload-release-action@v1-release

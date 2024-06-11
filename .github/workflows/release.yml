@@ -62,7 +62,7 @@ jobs:
             - name: Generate checksum for release files
               uses: jmgilman/actions-generate-checksum@v1
               with:
-                  pattern: "target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}"
+                  patterns: "target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}"
                   output: ${{ matrix.artifact_name }}.sha256
 
             - name: Upload checksum files to release

@@ -1,5 +1,4 @@
 use byondapi::{byond_string, prelude::*};
-use eyre::Context;
 
 use super::*;
 

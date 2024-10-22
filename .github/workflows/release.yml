@@ -20,7 +20,7 @@ jobs:
                       debug_pdb_name: auxmos.pdb
         steps:
             - name: Checkout
-              uses: actions/checkout@v1
+              uses: actions/checkout@v4
 
             - name: Setup Toolchains (Windows)
               uses: actions-rs/toolchain@v1

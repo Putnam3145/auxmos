@@ -428,7 +428,7 @@ where
 }
 
 #[byondapi::bind("/turf/proc/update_air_ref")]
-fn hook_register_turf(src: ByondValue, flag: ByondValue) {
+fn hook_register_turf(src: ByondValue, flag: ByondValue) -> Result<ByondValue> {
 	let id = src.get_ref()?;
 	let flag = flag.get_number()? as i32;
 	if let Ok(blocks) = src.read_number_id(byond_string!("blocks_air")) {
@@ -508,7 +508,7 @@ fn determine_turf_flag(src: &ByondValue) -> i32 {
 */
 
 #[byondapi::bind("/turf/proc/__update_auxtools_turf_adjacency_info")]
-fn hook_infos(src: ByondValue) {
+fn hook_infos(src: ByondValue) -> Result<ByondValue> {
 	let id = src.get_ref()?;
 	with_turf_gases_write(|arena| -> Result<()> {
 		if let Some(adjacent_list) = src

@@ -42,11 +42,10 @@ impl GasCache {
 		self.0.store(f32::NAN, Relaxed);
 	}
 	//cannot fix this, because f is FnMut and then() takes FnOnce
-	#[allow(clippy::redundant_closure)]
 	pub fn get_or_else(&self, mut f: impl FnMut() -> f32) -> f32 {
 		match self
 			.0
-			.fetch_update(Relaxed, Relaxed, |x| x.is_nan().then(|| f()))
+			.fetch_update(Relaxed, Relaxed, |x| x.is_nan().then(&mut f))
 		{
 			Ok(_) => self.0.load(Relaxed),
 			Err(x) => x,
@@ -60,8 +59,7 @@ impl GasCache {
 pub fn visibility_step(gas_amt: f32) -> u32 {
 	(gas_amt / MOLES_GAS_VISIBLE_STEP)
 		.ceil()
-		.min(FACTOR_GAS_VISIBLE_MAX)
-		.max(1.0) as u32
+		.clamp(FACTOR_GAS_VISIBLE_MAX, 1.0) as u32
 }
 
 /// The data structure representing a Space Station 13 gas mixture.

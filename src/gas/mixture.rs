@@ -59,7 +59,7 @@ impl GasCache {
 pub fn visibility_step(gas_amt: f32) -> u32 {
 	(gas_amt / MOLES_GAS_VISIBLE_STEP)
 		.ceil()
-		.clamp(FACTOR_GAS_VISIBLE_MAX, 1.0) as u32
+		.clamp(1.0, FACTOR_GAS_VISIBLE_MAX) as u32
 }
 
 /// The data structure representing a Space Station 13 gas mixture.
@@ -381,8 +381,9 @@ impl Mixture {
 				&& self_heat_capacity > MINIMUM_HEAT_CAPACITY
 			{
 				let heat = conduction_coefficient
-					* temperature_delta * (self_heat_capacity * sharer_heat_capacity
-					/ (self_heat_capacity + sharer_heat_capacity));
+					* temperature_delta
+					* (self_heat_capacity * sharer_heat_capacity
+						/ (self_heat_capacity + sharer_heat_capacity));
 				if !self.immutable {
 					self.set_temperature((self.temperature - heat / self_heat_capacity).max(TCMB));
 				}
@@ -411,8 +412,9 @@ impl Mixture {
 				&& self_heat_capacity > MINIMUM_HEAT_CAPACITY
 			{
 				let heat = conduction_coefficient
-					* temperature_delta * (self_heat_capacity * sharer_heat_capacity
-					/ (self_heat_capacity + sharer_heat_capacity));
+					* temperature_delta
+					* (self_heat_capacity * sharer_heat_capacity
+						/ (self_heat_capacity + sharer_heat_capacity));
 				if !self.immutable {
 					self.set_temperature((self.temperature - heat / self_heat_capacity).max(TCMB));
 				}
@@ -724,16 +726,16 @@ mod tests {
 		// make sure that the merge successfuly moved the moles
 		assert_eq!(into.get_moles(2), 100.0);
 		assert_eq!(source.get_moles(2), 100.0); // source is not modified by merge
-										/*
-										make sure that the merge successfuly changed the temperature of the mix merged into:
-										test gases have heat capacities of (82 * 20 + 22 * 20) and (100 * 20) respectively, so total thermal energies of
-										(82 * 20 + 22 * 20) * 293.15 and (100 * 20) * 313.15 respectively once multiplied by temperatures. add those together,
-										then divide by new total heat capacity:
-										(609,752 + 626,300)/(2,080 + 2,000) =
-										~
-										302.953
-										so we compare to see if it's relatively close to 302.953, cause of floating point precision
-										*/
+										  /*
+										  make sure that the merge successfuly changed the temperature of the mix merged into:
+										  test gases have heat capacities of (82 * 20 + 22 * 20) and (100 * 20) respectively, so total thermal energies of
+										  (82 * 20 + 22 * 20) * 293.15 and (100 * 20) * 313.15 respectively once multiplied by temperatures. add those together,
+										  then divide by new total heat capacity:
+										  (609,752 + 626,300)/(2,080 + 2,000) =
+										  ~
+										  302.953
+										  so we compare to see if it's relatively close to 302.953, cause of floating point precision
+										  */
 		assert!(
 			(into.get_temperature() - 302.953).abs() < 0.01,
 			"{} should be near 302.953, is {}",

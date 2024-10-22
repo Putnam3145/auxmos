@@ -171,7 +171,8 @@ pub fn supercond_update_ref(src: ByondValue) -> Result<()> {
 			id,
 			adjacent_to_space: src
 				.call_id(byond_string!("should_conduct_to_space"), &[])?
-				.as_number()? > 0.0,
+				.as_number()?
+				> 0.0,
 			heat_capacity: therm_cap,
 			thermal_conductivity: therm_cond,
 			temperature: RwLock::new(src.read_number("initial_temperature").unwrap_or(TCMB)),
@@ -218,7 +219,7 @@ pub fn supercond_update_adjacencies(id: u32) -> Result<()> {
 }
 
 #[byondapi_hooks::bind("/turf/proc/return_temperature")]
-fn hook_turf_temperature() {
+fn hook_turf_temperature() -> Result<ByondValue> {
 	with_turf_heat_read(|arena| -> Result<ByondValue> {
 		if let Some(&node_index) = arena.get_id(&unsafe { src.raw.data.id }) {
 			let info = arena.get(node_index).unwrap();
@@ -237,7 +238,7 @@ fn hook_turf_temperature() {
 // Expected function call: process_turf_heat()
 // Returns: TRUE if thread not done, FALSE otherwise
 #[byondapi_hooks::bind("/datum/controller/subsystem/air/proc/process_turf_heat")]
-fn process_heat_notify() {
+fn process_heat_notify() -> Result<ByondValue> {
 	rebuild_turf_graph()?;
 	/*
 		Replacing LINDA's superconductivity system is this much more brute-force

@@ -716,7 +716,6 @@ fn send_pressure_differences(
 	}
 }
 
-#[cfg_attr(not(target_feature = "avx2"), auxmacros::generate_simd_functions)]
 #[byondapi::bind("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
 fn equalize_hook(mut src: ByondValue, remaining: ByondValue) -> Result<ByondValue> {
 	let equalize_hard_turf_limit = src
@@ -749,6 +748,7 @@ fn equalize_hook(mut src: ByondValue, remaining: ByondValue) -> Result<ByondValu
 	Ok(is_cancelled.into())
 }
 
+#[cfg_attr(not(target_feature = "avx2"), auxmacros::generate_simd_functions)]
 #[cfg_attr(feature = "tracy", tracing::instrument(skip_all))]
 fn equalize(
 	equalize_hard_turf_limit: usize,

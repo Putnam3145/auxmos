@@ -2,6 +2,28 @@ use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
 
+fn strip_mut_and_filter(arg: &syn::FnArg) -> Option<syn::FnArg> {
+	let syn::FnArg::Typed(pattype) = arg else {
+		return None;
+	};
+	let mut ident_clone = pattype.clone();
+
+	match &mut *ident_clone.pat {
+		syn::Pat::Ident(p) => {
+			p.mutability = None;
+			Some(syn::FnArg::Typed(ident_clone))
+		}
+		syn::Pat::Tuple(tuple) => {
+			tuple.elems.iter_mut().for_each(|item| {
+				let syn::Pat::Ident(item) = item else { return };
+				item.mutability = None;
+			});
+			Some(syn::FnArg::Typed(ident_clone))
+		}
+		_ => Some(syn::FnArg::Typed(ident_clone)),
+	}
+}
+
 /// This macros generates simd versions of functions as well as regular ones,
 /// allowing these functions to run in cpus without the required instructions.
 /// The specific simd feature used here is avx2.
@@ -48,36 +70,19 @@ pub fn generate_simd_functions(
 
 	let args_nonmut = args
 		.iter()
-		.filter_map(|arg| {
-			let syn::FnArg::Typed(pattype) = arg else {
-				return None;
-			};
-			let mut ident_clone = pattype.clone();
-			let syn::Pat::Ident(p) = &mut *ident_clone.pat else {
-				return None;
-			};
-			p.mutability = None;
-			Some(syn::FnArg::Typed(ident_clone))
-		})
+		.filter_map(strip_mut_and_filter)
 		.map(|item| quote! {#item})
 		.collect::<syn::punctuated::Punctuated<TokenStream, syn::Token![,]>>();
 
 	let args_typeless = args
 		.iter()
+		.filter_map(strip_mut_and_filter)
 		.filter_map(|arg| {
-			if let syn::FnArg::Typed(arg) = arg {
-				return Some(arg);
-			} else {
+			let syn::FnArg::Typed(pattype) = arg else {
 				return None;
-			}
-		})
-		.filter_map(|arg| match &*arg.pat {
-			syn::Pat::Ident(p) => {
-				let mut ident_clone = p.clone();
-				ident_clone.mutability = None;
-				Some(quote! {#ident_clone})
-			}
-			_ => None,
+			};
+			let pattype = &*pattype.pat;
+			Some(quote! {#pattype})
 		})
 		.collect::<syn::punctuated::Punctuated<TokenStream, syn::Token![,]>>();
 

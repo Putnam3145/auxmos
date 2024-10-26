@@ -69,7 +69,7 @@ jobs:
               with:
                   toolchain: stable
                   command: test
-                  args: --target i686-unknown-linux-gnu --release --features katmos
+                  args: --target i686-unknown-linux-gnu --release --features katmos --package auxmos --lib -- generate_binds --exact --show-output
               if: matrix.os == 'ubuntu-20.04'
 
             - name: Upload checksum files to release

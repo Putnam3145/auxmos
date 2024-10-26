@@ -7,16 +7,18 @@ use parking_lot::RwLock;
 use std::collections::{BTreeMap, BTreeSet};
 use tinyvec::TinyVec;
 
+/// Returns: If a processing thread is running or not.
 #[byondapi::bind("/datum/controller/subsystem/air/proc/thread_running")]
 fn thread_running_hook() -> Result<ByondValue> {
 	Ok(TASKS.try_write().is_none().into())
 }
 
+/// Returns: If this cycle is interrupted by overtiming or not. Calls all outstanding callbacks created by other processes, usually ones that can't run on other threads and only the main thread.
 #[byondapi::bind("/datum/controller/subsystem/air/proc/finish_turf_processing_auxtools")]
 fn finish_process_turfs(time_remaining: ByondValue) -> Result<ByondValue> {
 	Ok(process_callbacks_for_millis(time_remaining.get_number()? as u64).into())
 }
-
+/// Returns: If this cycle is interrupted by overtiming or not. Starts a processing turfs cycle.
 #[byondapi::bind("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
 fn process_turf_hook(src: ByondValue, remaining: ByondValue) -> Result<ByondValue> {
 	let remaining_time = Duration::from_millis(remaining.get_number().unwrap_or(50.0) as u64);

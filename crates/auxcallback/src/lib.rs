@@ -36,7 +36,7 @@ fn process_callbacks() {
 			.for_each(|e| {
 				let error_string = format!("{e:?}").try_into().unwrap();
 				byondapi::global_call::call_global_id(
-					byond_string!("stack_trace"),
+					byond_string!("byondapi_stack_trace"),
 					&[error_string],
 				)
 				.unwrap();
@@ -46,14 +46,13 @@ fn process_callbacks() {
 
 /// Goes through every single outstanding callback and calls them, until a given time limit is reached.
 fn process_callbacks_for(duration: Duration) -> bool {
-	//let stack_trace = Proc::find("/proc/auxtools_stack_trace").unwrap();
 	let timer = Instant::now();
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
 				let error_string = format!("{e:?}").try_into().unwrap();
 				byondapi::global_call::call_global_id(
-					byond_string!("stack_trace"),
+					byond_string!("byondapi_stack_trace"),
 					&[error_string],
 				)
 				.unwrap();

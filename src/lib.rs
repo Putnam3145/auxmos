@@ -306,7 +306,7 @@ fn adjust_multi_hook() -> Result<ByondValue> {
 	}
 }
 
-///Args: (amount). Adds the given amount to each gas.
+/// Args: (amount). Adds the given amount to each gas.
 #[byondapi::bind("/datum/gas_mixture/proc/add")]
 fn add_hook(src: ByondValue, num_val: ByondValue) -> Result<ByondValue> {
 	let vf = num_val.get_number().unwrap_or_default();
@@ -316,7 +316,7 @@ fn add_hook(src: ByondValue, num_val: ByondValue) -> Result<ByondValue> {
 	})
 }
 
-///Args: (amount). Subtracts the given amount from each gas.
+/// Args: (amount). Subtracts the given amount from each gas.
 #[byondapi::bind("/datum/gas_mixture/proc/subtract")]
 fn subtract_hook(src: ByondValue, num_val: ByondValue) -> Result<ByondValue> {
 	let vf = num_val.get_number().unwrap_or_default();
@@ -326,7 +326,7 @@ fn subtract_hook(src: ByondValue, num_val: ByondValue) -> Result<ByondValue> {
 	})
 }
 
-///Args: (coefficient). Multiplies all gases by this amount.
+/// Args: (coefficient). Multiplies all gases by this amount.
 #[byondapi::bind("/datum/gas_mixture/proc/multiply")]
 fn multiply_hook(src: ByondValue, num_val: ByondValue) -> Result<ByondValue> {
 	let vf = num_val.get_number().unwrap_or(1.0);
@@ -336,7 +336,7 @@ fn multiply_hook(src: ByondValue, num_val: ByondValue) -> Result<ByondValue> {
 	})
 }
 
-///Args: (coefficient). Divides all gases by this amount.
+/// Args: (coefficient). Divides all gases by this amount.
 #[byondapi::bind("/datum/gas_mixture/proc/divide")]
 fn divide_hook(src: ByondValue, num_val: ByondValue) -> Result<ByondValue> {
 	let vf = num_val.get_number().unwrap_or(1.0).recip();
@@ -346,7 +346,7 @@ fn divide_hook(src: ByondValue, num_val: ByondValue) -> Result<ByondValue> {
 	})
 }
 
-///Args: (mixture, flag, amount). Takes `amount` from src that have the given `flag` and puts them into the given `mixture`. Returns: 0 if gas didn't have any with that flag, 1 if it did.
+/// Args: (mixture, flag, amount). Takes `amount` from src that have the given `flag` and puts them into the given `mixture`. Returns: 0 if gas didn't have any with that flag, 1 if it did.
 #[byondapi::bind("/datum/gas_mixture/proc/__remove_by_flag")]
 fn remove_by_flag_hook(
 	src: ByondValue,
@@ -372,7 +372,7 @@ fn remove_by_flag_hook(
 		Ok(true.into())
 	})
 }
-///Args: (flag). As get_gases(), but only returns gases with the given flag.
+/// Args: (flag). As get_gases(), but only returns gases with the given flag.
 #[byondapi::bind("/datum/gas_mixture/proc/get_by_flag")]
 fn get_by_flag_hook(src: ByondValue, flag_val: ByondValue) -> Result<ByondValue> {
 	let flag = flag_val.get_number().map_or(0, |n: f32| n as u32);
@@ -637,7 +637,7 @@ fn hook_amt_gas_mixes() -> Result<ByondValue> {
 fn hook_max_gas_mixes() -> Result<ByondValue> {
 	Ok((tot_gases() as f32).into())
 }
-
+/// Returns: true. Parses gas strings like "o2=2500;plasma=5000;TEMP=370" and turns src mixes into the parsed gas mixture, invalid patterns will be ignored
 #[byondapi::bind("/datum/gas_mixture/proc/__auxtools_parse_gas_string")]
 fn parse_gas_string(src: ByondValue, string: ByondValue) -> Result<ByondValue> {
 	let actual_string = string.get_string()?;

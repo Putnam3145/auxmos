@@ -1,24 +1,17 @@
+use super::{
+	constants::*, gas_visibility, total_num_gases, with_reactions, with_specific_heats, GasIDX,
+};
+use crate::reaction::{Reaction, ReactionPriority};
+use atomic_float::AtomicF32;
+use eyre::Result;
 use itertools::{
 	Either,
 	EitherOrBoth::{Both, Left, Right},
 	Itertools,
 };
-
-use atomic_float::AtomicF32;
-
-use tinyvec::TinyVec;
-
-use crate::reaction::{Reaction, ReactionPriority};
-
-use super::{
-	constants::*, gas_visibility, total_num_gases, with_reactions, with_specific_heats, GasIDX,
-};
-
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
-
 use std::collections::BTreeMap;
-
-use eyre::Result;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use tinyvec::TinyVec;
 
 type SpecificFireInfo = (usize, f32, f32);
 

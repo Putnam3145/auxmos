@@ -64,6 +64,14 @@ jobs:
               run: |
                   sha256sum "target/${{ matrix.target_name }}/release/${{ matrix.artifact_name }}" | tee ${{ matrix.artifact_name }}.sha256
 
+            - name: Create bindings (Ubuntu)
+              uses: actions-rs/cargo@v1
+              with:
+                  toolchain: stable
+                  command: test
+                  args: --target i686-unknown-linux-gnu --release --features katmos
+              if: matrix.os == 'ubuntu-20.04'
+
             - name: Upload checksum files to release
               uses: svenstaro/upload-release-action@v1-release
               with:
@@ -88,3 +96,11 @@ jobs:
                   asset_name: ${{ matrix.debug_pdb_name }}
                   tag: ${{ github.ref }}
               if: matrix.os == 'windows-latest'
+
+            - name: Upload binding to release
+              uses: svenstaro/upload-release-action@v1-release
+              with:
+                  repo_token: ${{ secrets.GITHUB_TOKEN }}
+                  file: bindings.dm
+                  asset_name: bindings.dm
+                  tag: ${{ github.ref }}

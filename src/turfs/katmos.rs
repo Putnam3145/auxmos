@@ -1,17 +1,11 @@
 //Monstermos, but zoned, and multithreaded!
 
 use super::*;
-
-use indexmap::IndexSet;
-
-use fxhash::FxBuildHasher;
-
 use auxcallback::byond_callback_sender;
-
-use petgraph::{graph::NodeIndex, graphmap::DiGraphMap};
-
 use coarsetime::{Duration, Instant};
-
+use indexmap::IndexSet;
+use petgraph::{graph::NodeIndex, graphmap::DiGraphMap};
+use rustc_hash::FxBuildHasher;
 use std::{
 	cell::Cell,
 	{
@@ -722,6 +716,7 @@ fn send_pressure_differences(
 	}
 }
 
+#[cfg_attr(not(target_feature = "avx2"), auxmacros::generate_simd_functions)]
 #[byondapi::bind("/datum/controller/subsystem/air/proc/process_turf_equalize_auxtools")]
 fn equalize_hook(mut src: ByondValue, remaining: ByondValue) -> Result<ByondValue> {
 	let equalize_hard_turf_limit = src

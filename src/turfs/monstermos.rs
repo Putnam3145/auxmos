@@ -754,14 +754,15 @@ pub fn equalize(
 		if found_turfs.contains(&i)
 			|| turf_gases().get(&i).map_or(true, |m| {
 				!m.enabled()
-					|| m.adjacency <= 0 || GasArena::with_all_mixtures(|all_mixtures| {
-					let our_moles = all_mixtures[m.mix].read().total_moles();
-					our_moles < 10.0
-						|| m.adjacent_mixes(all_mixtures).all(|lock| {
-							(lock.read().total_moles() - our_moles).abs()
-								< MINIMUM_MOLES_DELTA_TO_MOVE
-						})
-				})
+					|| m.adjacency <= 0
+					|| GasArena::with_all_mixtures(|all_mixtures| {
+						let our_moles = all_mixtures[m.mix].read().total_moles();
+						our_moles < 10.0
+							|| m.adjacent_mixes(all_mixtures).all(|lock| {
+								(lock.read().total_moles() - our_moles).abs()
+									< MINIMUM_MOLES_DELTA_TO_MOVE
+							})
+					})
 			}) {
 			continue;
 		}

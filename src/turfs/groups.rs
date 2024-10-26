@@ -1,10 +1,7 @@
 use super::*;
-
 use coarsetime::{Duration, Instant};
-
-use std::collections::{BTreeSet, HashSet, VecDeque};
-
 use parking_lot::{const_mutex, Mutex};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 
 static GROUPS_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = const_mutex(None);
 

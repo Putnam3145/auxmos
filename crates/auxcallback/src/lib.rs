@@ -1,17 +1,11 @@
+use byondapi::prelude::*;
+use coarsetime::{Duration, Instant};
+use eyre::Result;
 use std::convert::TryInto;
 
-use byondapi::prelude::*;
-
-use coarsetime::{Duration, Instant};
-
-use eyre::Result;
-
 type DeferredFunc = Box<dyn FnOnce() -> Result<()> + Send + Sync>;
-
 type CallbackChannel = (flume::Sender<DeferredFunc>, flume::Receiver<DeferredFunc>);
-
 pub type CallbackSender = flume::Sender<DeferredFunc>;
-
 pub type CallbackReceiver = flume::Receiver<DeferredFunc>;
 
 static CALLBACK_CHANNEL: std::sync::OnceLock<CallbackChannel> = std::sync::OnceLock::new();

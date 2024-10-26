@@ -17,6 +17,8 @@ use reaction::react_by_id;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+static SIMD_DETECTED: ::std::sync::OnceLock<bool> = ::std::sync::OnceLock::new();
+
 #[cfg(feature = "tracy")]
 #[byondapi::init]
 pub fn init_eyre() {

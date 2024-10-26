@@ -1,40 +1,28 @@
-pub mod processing;
-
 pub mod groups;
+pub mod processing;
 /*
 #[cfg(feature = "monstermos")]
 mod monstermos;
-
 #[cfg(feature = "putnamos")]
 mod putnamos;
 */
-
 #[cfg(feature = "katmos")]
 pub mod katmos;
-
 #[cfg(feature = "superconductivity")]
 mod superconduct;
 
-use byondapi::prelude::*;
-
-use rayon::prelude::*;
-
 use crate::{constants::*, gas::Mixture, GasArena};
-
-use fxhash::FxBuildHasher;
-
 use bitflags::bitflags;
-
-use parking_lot::{const_rwlock, RwLock, RwLockUpgradableReadGuard};
-
-use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef, Direction};
-
+use byondapi::prelude::*;
+use eyre::{Context, Result};
 use indexmap::IndexMap;
-
+use parking_lot::{const_rwlock, RwLock, RwLockUpgradableReadGuard};
+use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef, Direction};
+use rayon::prelude::*;
+use rustc_hash::FxBuildHasher;
+use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use std::{mem::drop, sync::atomic::AtomicU64};
-
-use eyre::{Context, Result};
 
 bitflags! {
 	#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -450,7 +438,11 @@ fn hook_register_turf(src: ByondValue, flag: ByondValue) -> Result<ByondValue> {
 			if is_planet != 0.0 {
 				if let Ok(at_str) = src.read_string_id(byond_string!("initial_gas_mix")) {
 					with_planetary_atmos_upgradeable_read(|lock| {
-						to_insert.planetary_atmos = Some(fxhash::hash32(&at_str));
+						to_insert.planetary_atmos = Some({
+							let mut state = rustc_hash::FxHasher::default();
+							at_str.hash(&mut state);
+							state.finish() as u32
+						});
 						if lock
 							.as_ref()
 							.unwrap()

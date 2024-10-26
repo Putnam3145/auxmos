@@ -1,18 +1,11 @@
-use byondapi::prelude::*;
-
 use super::*;
-
+use byondapi::prelude::*;
 //use indexmap::IndexSet;
-
 use crate::GasArena;
-
 use auxcallback::byond_callback_sender;
-
-use parking_lot::Once;
-
 use coarsetime::Instant;
-
 use eyre::Result;
+use parking_lot::Once;
 
 static INIT_HEAT: Once = Once::new();
 

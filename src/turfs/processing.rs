@@ -1,18 +1,11 @@
-use byondapi::{byond_string, prelude::*};
-
 use super::*;
-
 use crate::{react_hook, GasArena};
-
 use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
-
-use parking_lot::RwLock;
-
-use tinyvec::TinyVec;
-
-use std::collections::{BTreeMap, BTreeSet};
-
+use byondapi::{byond_string, prelude::*};
 use coarsetime::{Duration, Instant};
+use parking_lot::RwLock;
+use std::collections::{BTreeMap, BTreeSet};
+use tinyvec::TinyVec;
 
 #[byondapi::bind("/datum/controller/subsystem/air/proc/thread_running")]
 fn thread_running_hook() -> Result<ByondValue> {
@@ -24,6 +17,7 @@ fn finish_process_turfs(time_remaining: ByondValue) -> Result<ByondValue> {
 	Ok(process_callbacks_for_millis(time_remaining.get_number()? as u64).into())
 }
 
+#[cfg_attr(not(target_feature = "avx2"), auxmacros::generate_simd_functions)]
 #[byondapi::bind("/datum/controller/subsystem/air/proc/process_turfs_auxtools")]
 fn process_turf_hook(src: ByondValue, remaining: ByondValue) -> Result<ByondValue> {
 	let remaining_time = Duration::from_millis(remaining.get_number().unwrap_or(50.0) as u64);

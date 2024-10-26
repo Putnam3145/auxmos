@@ -1,10 +1,9 @@
-use byondapi::prelude::*;
-use eyre::Result;
-
 use crate::gas::{
 	constants::*, gas_fusion_power, gas_idx_from_string, with_gas_info, with_mix, with_mix_mut,
 	FireProductInfo, GasIDX,
 };
+use byondapi::prelude::*;
+use eyre::Result;
 
 const SUPER_SATURATION_THRESHOLD: f32 = 96.0;
 
@@ -292,8 +291,8 @@ fn fusion(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
 }
 
 fn generic_fire(byond_air: ByondValue, holder: ByondValue) -> Result<ByondValue> {
-	use fxhash::FxBuildHasher;
 	use hashbrown::HashMap;
+	use rustc_hash::FxBuildHasher;
 	let mut burn_results: HashMap<GasIDX, f32, FxBuildHasher> = HashMap::with_capacity_and_hasher(
 		super::total_num_gases() as usize,
 		FxBuildHasher::default(),

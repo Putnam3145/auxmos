@@ -1,21 +1,15 @@
 #[allow(dead_code)]
 pub mod constants;
-
 pub mod mixture;
-
 pub mod types;
 
 use byondapi::prelude::*;
-
+use eyre::Result;
+pub use mixture::Mixture;
+use parking_lot::{const_rwlock, RwLock};
 pub use types::*;
 
-use parking_lot::{const_rwlock, RwLock};
-
-pub use mixture::Mixture;
-
 pub type GasIDX = usize;
-
-use eyre::Result;
 
 /// A static container, with a bunch of helper functions for accessing global data. It's horrible, I know, but video games.
 pub struct GasArena {}

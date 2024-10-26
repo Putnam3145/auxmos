@@ -4,22 +4,19 @@ mod citadel;
 #[cfg(feature = "yogs_reactions")]
 mod yogs;
 
-use byondapi::prelude::*;
-
 use crate::gas::{gas_idx_to_id, total_num_gases, GasIDX, Mixture};
-
-use std::cell::RefCell;
-
+use byondapi::prelude::*;
+use eyre::{Context, Result};
 use float_ord::FloatOrd;
+use hashbrown::HashMap;
+use rustc_hash::FxBuildHasher;
+use std::{
+	cell::RefCell,
+	hash::{Hash, Hasher},
+};
 
 pub type ReactionPriority = FloatOrd<f32>;
-
 pub type ReactionIdentifier = u64;
-
-use eyre::{Context, Result};
-
-use fxhash::FxBuildHasher;
-use hashbrown::HashMap;
 
 #[derive(Clone, Debug)]
 pub struct Reaction {
@@ -91,7 +88,13 @@ impl Reaction {
 				None
 			}
 		};
-		let id = fxhash::hash64(string_id.as_bytes());
+
+		let id = {
+			let mut state = rustc_hash::FxHasher::default();
+			string_id.as_bytes().hash(&mut state);
+			state.finish() as u64
+		};
+
 		let our_reaction = {
 			if let Some(min_reqs) = reaction
 				.read_var_id(byond_string!("min_requirements"))

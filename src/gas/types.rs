@@ -1,28 +1,19 @@
+use super::GasIDX;
+use crate::reaction::{Reaction, ReactionPriority};
 use auxcallback::byond_callback_sender;
 use byondapi::prelude::*;
-
-use fxhash::FxBuildHasher;
-
-use parking_lot::{const_rwlock, RwLock};
-
-use crate::reaction::{Reaction, ReactionPriority};
-
-use super::GasIDX;
-
 use dashmap::DashMap;
-
+use eyre::{Context, Result};
+use hashbrown::HashMap;
+use parking_lot::{const_rwlock, RwLock};
+use rustc_hash::FxBuildHasher;
 use std::{
 	cell::RefCell,
 	collections::BTreeMap,
 	sync::atomic::{AtomicUsize, Ordering},
 };
 
-use hashbrown::HashMap;
-
-use eyre::{Context, Result};
-
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
-
 static REACTION_INFO: RwLock<Option<BTreeMap<ReactionPriority, Reaction>>> = const_rwlock(None);
 
 /// The temperature at which this gas can oxidize and how much fuel it can oxidize when it can.

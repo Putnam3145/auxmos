@@ -51,7 +51,6 @@ impl GasArena {
 	/// Locks the gas arena and and runs the given closure with it locked, fails if it can't acquire a lock in 30ms.
 	/// # Panics
 	/// if `GAS_MIXTURES` hasn't been initialized, somehow.
-	#[allow(unused)]
 	pub fn with_all_mixtures_fallible<T, F>(f: F) -> T
 	where
 		F: FnOnce(Option<&[RwLock<Mixture>]>) -> T,

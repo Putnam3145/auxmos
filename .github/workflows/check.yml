@@ -18,4 +18,4 @@ jobs:
             - name: Check formatting
               run: cargo fmt --all -- --check
             - name: Check auxmos build
-              run: cargo check --target=i686-unknown-linux-gnu --release --features "citadel_reactions katmos"
+              run: cargo check --target=i686-unknown-linux-gnu --release --features citadel_reactions

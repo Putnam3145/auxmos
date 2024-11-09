@@ -52,7 +52,7 @@ jobs:
               with:
                   toolchain: stable
                   command: build
-                  args: --target i686-pc-windows-msvc --release --features katmos
+                  args: --target i686-pc-windows-msvc --release
               if: matrix.os == 'windows-latest'
 
             - name: Build auxmos (Ubuntu)
@@ -60,7 +60,7 @@ jobs:
               with:
                   toolchain: stable
                   command: build
-                  args: --target i686-unknown-linux-gnu --release --features katmos
+                  args: --target i686-unknown-linux-gnu --release
               if: matrix.os == 'ubuntu-20.04'
 
             - name: Create bindings (Ubuntu)
@@ -68,7 +68,7 @@ jobs:
               with:
                   toolchain: stable
                   command: test
-                  args: --target i686-unknown-linux-gnu --release --features katmos --package auxmos --lib -- generate_binds --exact --show-output
+                  args: --target i686-unknown-linux-gnu --release --package auxmos --lib -- generate_binds --exact --show-output
               if: matrix.os == 'ubuntu-20.04'
 
             - name: Generate build provenance (Binaries)

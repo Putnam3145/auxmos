@@ -91,7 +91,7 @@ pub fn generate_simd_functions(
 		fn #func_name(#args_nonmut) #func_return {
 			// This `unsafe` block is safe because we're testing
 			// that the `avx2` feature is indeed available on our CPU.
-			if *crate::SIMD_DETECTED.get_or_init(|| is_x86_feature_detected!("avx2")) {
+			if *crate::_SIMD_DETECTED.get_or_init(|| is_x86_feature_detected!("avx2")) {
 				unsafe { #func_ident_simd(#args_typeless) }
 			} else {
 				#func_ident_fallback(#args_typeless)
@@ -103,6 +103,7 @@ pub fn generate_simd_functions(
 			#func_ident_fallback(#args_typeless)
 		}
 
+		#[inline(always)]
 		fn #func_ident_fallback(#args) #func_return
 		#body
 	}

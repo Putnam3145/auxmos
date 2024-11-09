@@ -516,6 +516,7 @@ fn flood_fill_zones(
 	let mut border_turfs: std::collections::VecDeque<NodeIndex> = Default::default();
 	let sender = byond_callback_sender();
 	let mut total_moles = 0.0_f32;
+	let mut is_planet = false;
 	turf_graph.add_node(index_node);
 	border_turfs.push_back(index_node);
 	found_turfs.insert(index_turf);
@@ -523,7 +524,13 @@ fn flood_fill_zones(
 	while let Some(cur_index) = border_turfs.pop_front() {
 		let cur_turf = arena.get(cur_index).unwrap();
 		let cur_turf_id = cur_turf.id;
-
+		//hard cap for planet atmos because very large open space
+		if cur_turf.planetary_atmos.is_some() {
+			is_planet = true;
+		}
+		if is_planet && turf_graph.node_count() > equalize_hard_turf_limit {
+			break;
+		}
 		total_moles += cur_turf.total_moles();
 
 		for (weight, adj_index, adj_mixture) in arena

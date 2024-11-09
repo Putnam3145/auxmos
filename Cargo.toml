@@ -17,7 +17,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["turf_processing"]
+default = ["turf_processing", "katmos"]
 zas_hooks = []
 turf_processing = []
 superconductivity = ["turf_processing"]

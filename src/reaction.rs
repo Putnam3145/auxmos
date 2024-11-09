@@ -92,7 +92,7 @@ impl Reaction {
 		let id = {
 			let mut state = rustc_hash::FxHasher::default();
 			string_id.as_bytes().hash(&mut state);
-			state.finish() as u64
+			state.finish()
 		};
 
 		let our_reaction = {

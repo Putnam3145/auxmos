@@ -216,7 +216,7 @@ static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = const_rwlock(None);
 
 #[byondapi::init]
 pub fn initialize_gas_info_structs() {
-	*GAS_INFO_BY_STRING.write() = Some(DashMap::with_hasher(FxBuildHasher::default()));
+	*GAS_INFO_BY_STRING.write() = Some(DashMap::with_hasher(FxBuildHasher));
 	*GAS_INFO_BY_IDX.write() = Some(Vec::new());
 	*GAS_SPECIFIC_HEATS.write() = Some(Vec::new());
 }
@@ -429,8 +429,8 @@ fn finalize_gas_refs() -> Result<ByondValue> {
 }
 
 thread_local! {
-	static CACHED_GAS_IDS: RefCell<HashMap<u32, GasIDX, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
-	static CACHED_IDX_TO_STRINGS: RefCell<HashMap<usize,Box<str>, FxBuildHasher>> = RefCell::new(HashMap::with_hasher(FxBuildHasher::default()));
+	static CACHED_GAS_IDS: RefCell<HashMap<u32, GasIDX, FxBuildHasher>> = const { RefCell::new(HashMap::with_hasher(FxBuildHasher)) };
+	static CACHED_IDX_TO_STRINGS: RefCell<HashMap<usize,Box<str>, FxBuildHasher>> = const { RefCell::new(HashMap::with_hasher(FxBuildHasher)) };
 }
 
 /// Returns the appropriate index to be used by auxmos for a given ID string.

@@ -376,7 +376,7 @@ pub fn initialize_turfs() {
 	// double that for edges since each turf can have up to 6 edges but eehhhh
 	*TURF_GASES.write() = Some(TurfGases {
 		graph: StableDiGraph::with_capacity(650_250, 1_300_500),
-		map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher::default()),
+		map: IndexMap::with_capacity_and_hasher(650_250, FxBuildHasher),
 	});
 	*PLANETARY_ATMOS.write() = Some(Default::default());
 }

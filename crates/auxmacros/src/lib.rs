@@ -32,7 +32,7 @@ fn strip_mut_and_filter(arg: &syn::FnArg) -> Option<syn::FnArg> {
 ///#[auxmacros::generate_simd_functions]
 ///#[byondapi::bind("/proc/process_atmos_callbacks")]
 ///fn atmos_callback_handle(remaining: ByondValue) -> Result<ByondValue> {
-///	auxcallback::callback_processing_hook(remaining)
+///    auxcallback::callback_processing_hook(remaining)
 ///}
 /// ```
 #[proc_macro_attribute]

@@ -712,13 +712,12 @@ fn send_pressure_differences(
 		drop(sender.try_send(Box::new(move || {
 			let turf = ByondValue::new_ref(ValueType::Turf, cur_turf);
 			let other_turf = ByondValue::new_ref(ValueType::Turf, adj_turf);
-			Ok(turf
-				.call_id(
-					byond_string!("consider_pressure_difference"),
-					&[other_turf, amt.into()],
-				)
-				.map(|_| ())
-				.wrap_err("Katmos considering pressure differences")?)
+			turf.call_id(
+				byond_string!("consider_pressure_difference"),
+				&[other_turf, amt.into()],
+			)
+			.map(|_| ())
+			.wrap_err("Katmos considering pressure differences")
 		})));
 	}
 }

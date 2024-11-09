@@ -35,9 +35,8 @@ jobs:
 
             - name: Install g++ multilib
               run: |
-                  sudo dpkg --add-architecture i386
                   sudo apt-get update
-                  sudo apt-get install build-essential g++-multilib libc6-i386 libstdc++6:i386
+                  sudo apt install g++-multilib -y
               if: matrix.os == 'ubuntu-20.04'
 
             - name: Setup Toolchains (Ubuntu)

@@ -3,6 +3,7 @@ name: Build Release
 permissions:
     id-token: write
     attestations: write
+    contents: write
 
 on:
     release:

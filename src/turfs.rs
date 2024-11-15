@@ -533,14 +533,16 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 			// gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't
 			let gas_overlays = ByondValue::new_global_ref()
 				.read_var_id(byond_string!("GLOB"))
-				.wrap_err("GLOB is null")?
+				.wrap_err("Unable to get GLOB from BYOND globals")?
 				.read_var_id(byond_string!("gas_data"))
-				.wrap_err("gas_data is null")?
+				.wrap_err("gas_data is undefined on GLOB")?
 				.read_var_id(byond_string!("overlays"))
-				.wrap_err("overlays is null")?;
+				.wrap_err("overlays is undefined in GLOB.gas_data")?;
 			let ptr = air
-				.read_number_id(byond_string!("_extools_pointer_gasmixture"))
-				.wrap_err("Gas mixture doesn't have a valid pointer")? as usize;
+				.read_var_id(byond_string!("_extools_pointer_gasmixture"))
+				.wrap_err("air is undefined on turf")?
+				.get_number()
+				.wrap_err("Gas mixture has invalid pointer")? as usize;
 			let overlay_types = GasArena::with_gas_mixture(ptr, |mix| {
 				Ok(mix
 					.enumerate()

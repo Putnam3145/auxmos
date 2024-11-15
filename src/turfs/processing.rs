@@ -420,6 +420,15 @@ fn post_process() {
 				if should_update_vis {
 					drop(sender.try_send(Box::new(move || {
 						let turf = ByondValue::new_ref(ValueType::Turf, id);
+
+						// Not valid for visuals updating if it doesn't have air defined now
+						if !turf
+							.read_var_id(byond_string!("air"))
+							.is_ok_and(|air| !air.is_null())
+						{
+							return Ok(());
+						}
+
 						update_visuals(turf).wrap_err("Updating Visuals")?;
 						Ok(())
 					})));

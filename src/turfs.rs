@@ -568,13 +568,13 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 					byond_string!("set_visuals"),
 					&[overlay_types.as_slice().try_into()?],
 				)
-				.wrap_err("Calling set_visuals")?)
+				.wrap_err("Calling set_visuals"))
 		}
 		// If air is not defined or is null, just call set_visuals with no args
 		_ => {
 			return Ok(src
 				.call_id(byond_string!("set_visuals"), &[])
-				.wrap_err("Calling set_visuals with no args")?);
+				.wrap_err("Calling set_visuals with no args"));
 		}
 	}
 }

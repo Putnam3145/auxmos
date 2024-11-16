@@ -423,8 +423,7 @@ fn post_process() {
 					drop(sender.try_send(Box::new(move || {
 						let turf = ByondValue::new_ref(ValueType::Turf, id);
 
-						//Turf is checked for validity in update_visuals
-
+						//turf is checked for validity in update_visuals
 						update_visuals(turf).wrap_err("Updating Visuals")?;
 						Ok(())
 					})));

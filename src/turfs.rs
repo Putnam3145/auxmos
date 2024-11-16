@@ -525,53 +525,48 @@ fn hook_infos(src: ByondValue) -> Result<ByondValue> {
 /// Will use a cached overlay list if one exists.
 /// # Errors
 /// If auxgm wasn't implemented properly or there's an invalid gas mixture.
-fn update_visuals(src: ByondValue) -> Result<ByondValue> {
+fn update_visuals(src: ByondValue, air: ByondValue) -> Result<ByondValue> {
 	use super::gas;
-	match src.read_var_id(byond_string!("air")) {
-		Err(_) => Ok(ByondValue::null()),
-		Ok(air) => {
-			// gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't
-			let gas_overlays = ByondValue::new_global_ref()
-				.read_var_id(byond_string!("GLOB"))
-				.wrap_err("Unable to get GLOB from BYOND globals")?
-				.read_var_id(byond_string!("gas_data"))
-				.wrap_err("gas_data is undefined on GLOB")?
-				.read_var_id(byond_string!("overlays"))
-				.wrap_err("overlays is undefined in GLOB.gas_data")?;
-			let ptr = air
-				.read_var_id(byond_string!("_extools_pointer_gasmixture"))
-				.wrap_err("air is undefined on turf")?
-				.get_number()
-				.wrap_err("Gas mixture has invalid pointer")? as usize;
-			let overlay_types = GasArena::with_gas_mixture(ptr, |mix| {
-				Ok(mix
-					.enumerate()
-					.filter_map(|(idx, moles)| Some((idx, moles, gas::types::gas_visibility(idx)?)))
-					.filter(|(_, moles, amt)| moles > amt)
-					// getting the list(VIS_FACTORS = OVERLAYS) with GAS_ID
-					.filter_map(|(idx, moles, _)| {
-						Some((
-							gas_overlays.read_list_index(gas::gas_idx_to_id(idx)).ok()?,
-							moles,
-						))
-					})
-					// getting the OVERLAYS with VIS_FACTOR
-					.filter_map(|(this_overlay_list, moles)| {
-						this_overlay_list
-							.read_list_index(gas::mixture::visibility_step(moles) as f32)
-							.ok()
-					})
-					.collect::<Vec<_>>())
-			})?;
+	// gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't
+	let gas_overlays = ByondValue::new_global_ref()
+		.read_var_id(byond_string!("GLOB"))
+		.wrap_err("Unable to get GLOB from BYOND globals")?
+		.read_var_id(byond_string!("gas_data"))
+		.wrap_err("gas_data is undefined on GLOB")?
+		.read_var_id(byond_string!("overlays"))
+		.wrap_err("overlays is undefined in GLOB.gas_data")?;
+	let ptr = air
+		.read_var_id(byond_string!("_extools_pointer_gasmixture"))
+		.wrap_err("air is undefined on turf")?
+		.get_number()
+		.wrap_err("Gas mixture has invalid pointer")? as usize;
+	let overlay_types = GasArena::with_gas_mixture(ptr, |mix| {
+		Ok(mix
+			.enumerate()
+			.filter_map(|(idx, moles)| Some((idx, moles, gas::types::gas_visibility(idx)?)))
+			.filter(|(_, moles, amt)| moles > amt)
+			// getting the list(VIS_FACTORS = OVERLAYS) with GAS_ID
+			.filter_map(|(idx, moles, _)| {
+				Some((
+					gas_overlays.read_list_index(gas::gas_idx_to_id(idx)).ok()?,
+					moles,
+				))
+			})
+			// getting the OVERLAYS with VIS_FACTOR
+			.filter_map(|(this_overlay_list, moles)| {
+				this_overlay_list
+					.read_list_index(gas::mixture::visibility_step(moles) as f32)
+					.ok()
+			})
+			.collect::<Vec<_>>())
+	})?;
 
-			Ok(src
-				.call_id(
-					byond_string!("set_visuals"),
-					&[overlay_types.as_slice().try_into()?],
-				)
-				.wrap_err("Calling set_visuals")?)
-		}
-	}
+	Ok(src
+		.call_id(
+			byond_string!("set_visuals"),
+			&[overlay_types.as_slice().try_into()?],
+		)
+		.wrap_err("Calling set_visuals")?)
 }
 
 const fn adjacent_tile_id(id: u8, i: TurfID, max_x: i32, max_y: i32) -> TurfID {

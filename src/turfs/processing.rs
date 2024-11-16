@@ -412,6 +412,9 @@ fn post_process() {
 						let Ok(air) = turf.read_var_id(byond_string!("air")) else {
 							return Ok(());
 						};
+						if air.is_null() {
+							return Ok(());
+						}
 						react_hook(air, turf).wrap_err("Reacting")?;
 						Ok(())
 					})));
@@ -420,7 +423,15 @@ fn post_process() {
 				if should_update_vis {
 					drop(sender.try_send(Box::new(move || {
 						let turf = ByondValue::new_ref(ValueType::Turf, id);
-						update_visuals(turf).wrap_err("Updating Visuals")?;
+
+						// Not valid for visuals updating if it doesn't have air defined now
+						let Ok(air) = turf.read_var_id(byond_string!("air")) else {
+							return Ok(());
+						};
+						if air.is_null() {
+							return Ok(());
+						}
+						update_visuals(turf, air).wrap_err("Updating Visuals")?;
 						Ok(())
 					})));
 				}

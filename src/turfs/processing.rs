@@ -408,18 +408,22 @@ fn post_process() {
 				if should_react {
 					drop(sender.try_send(Box::new(move || {
 						let turf = ByondValue::new_ref(ValueType::Turf, id);
-						//turf is no longer valid for reactions
-						let Ok(air) = turf.read_var_id(byond_string!("air")) else {
-							return Ok(());
-						};
-						react_hook(air, turf).wrap_err("Reacting")?;
-						Ok(())
+						match turf.read_var_id(byond_string!("air")) {
+							Ok(air) if !air.is_null() => {
+								react_hook(air, turf).wrap_err("Reacting")?;
+								Ok(())
+							}
+							//turf is no longer valid for reactions
+							_ => Ok(()),
+						}
 					})));
 				}
 
 				if should_update_vis {
 					drop(sender.try_send(Box::new(move || {
 						let turf = ByondValue::new_ref(ValueType::Turf, id);
+
+						//turf is checked for validity in update_visuals
 						update_visuals(turf).wrap_err("Updating Visuals")?;
 						Ok(())
 					})));

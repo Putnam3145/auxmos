@@ -528,19 +528,20 @@ fn hook_infos(src: ByondValue) -> Result<ByondValue> {
 fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 	use super::gas;
 	match src.read_var_id(byond_string!("air")) {
-		Err(_) => Ok(ByondValue::null()),
-		Ok(air) => {
+		Ok(air) if !air.is_null() => {
 			// gas_overlays: list( GAS_ID = list( VIS_FACTORS = OVERLAYS )) got it? I don't
 			let gas_overlays = ByondValue::new_global_ref()
 				.read_var_id(byond_string!("GLOB"))
-				.wrap_err("GLOB is null")?
+				.wrap_err("Unable to get GLOB from BYOND globals")?
 				.read_var_id(byond_string!("gas_data"))
-				.wrap_err("gas_data is null")?
+				.wrap_err("gas_data is undefined on GLOB")?
 				.read_var_id(byond_string!("overlays"))
-				.wrap_err("overlays is null")?;
+				.wrap_err("overlays is undefined in GLOB.gas_data")?;
 			let ptr = air
-				.read_number_id(byond_string!("_extools_pointer_gasmixture"))
-				.wrap_err("Gas mixture doesn't have a valid pointer")? as usize;
+				.read_var_id(byond_string!("_extools_pointer_gasmixture"))
+				.wrap_err("air is undefined on turf")?
+				.get_number()
+				.wrap_err("Gas mixture has invalid pointer")? as usize;
 			let overlay_types = GasArena::with_gas_mixture(ptr, |mix| {
 				Ok(mix
 					.enumerate()
@@ -569,6 +570,12 @@ fn update_visuals(src: ByondValue) -> Result<ByondValue> {
 				)
 				.wrap_err("Calling set_visuals")?)
 		}
+		// If air is null, clear the visuals
+		Ok(_) => Ok(src
+			.call_id(byond_string!("set_visuals"), &[])
+			.wrap_err("Calling set_visuals with no args")?),
+		// If air is not defined, it must be a closed turf. Do .othing
+		Err(_) => Ok(ByondValue::null()),
 	}
 }
 

@@ -2,17 +2,17 @@
 members = ["crates/*"]
 
 [workspace.dependencies]
-byondapi = "0.5.11"
-coarsetime = "0.1.35"
-flume = "0.11.1"
-eyre = "0.6.12"
-tracing = "0.1.41"
+byondapi = "0.5.14"
+coarsetime = "0.1.37"
+flume = "0.12.0"
+eyre = "0.6.14"
+tracing = "0.1.44"
 
 [package]
 name = "auxmos"
 version = "2.3.0"
 authors = ["Putnam <putnam3145@gmail.com>"]
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -41,27 +41,27 @@ coarsetime = { workspace = true }
 eyre = { workspace = true }
 auxcallback = { path = "./crates/auxcallback" }
 auxmacros = { path = "./crates/auxmacros" }
-itertools = "0.14.0"
-rayon = "1.10.0"
+itertools = "0.15.0"
+rayon = "1.12.0"
 float-ord = "0.3.2"
-parking_lot = "0.12.3"
-rustc-hash = "2.1.0"
-ahash = "0.8.11"
-indexmap = { version = "2.5.0", features = ["rayon"] }
-dashmap = { version = "6.1.0", features = ["rayon"] }
-hashbrown = "0.15.2"
+parking_lot = "0.12.5"
+rustc-hash = "2.1.3"
+ahash = "0.8.12"
+indexmap = { version = "2.14.1", features = ["rayon"] }
+dashmap = { version = "6.2.1", features = ["rayon"] }
+hashbrown = "0.17.1"
 atomic_float = "1.1.0"
-petgraph = "0.7.0"
-bitflags = "2.6.0"
-nom = "7.1.3"
-mimalloc = { version = "0.1.43", default-features = false }
+petgraph = "0.8.3"
+bitflags = "2.13.1"
+nom = "8.0.0"
+mimalloc = { version = "0.1.52", default-features = false }
 
-tracing = { version = "0.1.41", optional = true }
-tracing-tracy = { version = "0.11.4", optional = true }
-tracing-subscriber = { version = "0.3.19", optional = true }
+tracing = { version = "0.1.44", optional = true }
+tracing-tracy = { version = "0.12.0", optional = true }
+tracing-subscriber = { version = "0.3.23", optional = true }
 
 [dependencies.tinyvec]
-version = "1.8.1"
+version = "1.12.0"
 features = ["rustc_1_61", "alloc"]
 
 [profile.release]

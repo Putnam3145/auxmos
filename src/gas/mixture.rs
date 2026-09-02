@@ -590,7 +590,7 @@ impl Mixture {
 	/// Returns true if there's a visible gas in this mix.
 	pub fn is_visible(&self) -> bool {
 		self.enumerate()
-			.any(|(i, gas)| gas_visibility(i).map_or(false, |amt| gas >= amt))
+			.any(|(i, gas)| gas_visibility(i).is_some_and(|amt| gas >= amt))
 	}
 	pub fn vis_hash(&self, gas_visibility: &[Option<f32>]) -> u64 {
 		use std::hash::Hasher;
@@ -646,7 +646,7 @@ impl Add<&Mixture> for Mixture {
 }
 
 /// Takes a copy of the mix, merges the right hand side, then returns the copy.
-impl<'a, 'b> Add<&'a Mixture> for &'b Mixture {
+impl Add<&Mixture> for &Mixture {
 	type Output = Mixture;
 
 	fn add(self, rhs: &Mixture) -> Mixture {
@@ -668,7 +668,7 @@ impl Mul<f32> for Mixture {
 }
 
 /// Makes a copy of the given mix, multiplied by a scalar.
-impl<'a> Mul<f32> for &'a Mixture {
+impl Mul<f32> for &Mixture {
 	type Output = Mixture;
 
 	fn mul(self, rhs: f32) -> Mixture {

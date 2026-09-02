@@ -1,3 +1,5 @@
+use nom::IResult;
+use nom::Parser;
 use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::character::complete::alphanumeric1;
@@ -5,11 +7,10 @@ use nom::combinator::recognize;
 use nom::multi::{many1_count, separated_list0};
 use nom::number::complete::float;
 use nom::sequence::separated_pair;
-use nom::IResult;
 
 //parses gas id, must be an alphanumeric
 fn parse_gas_id(input: &str) -> IResult<&str, &str> {
-	recognize(many1_count(alt((alphanumeric1, tag("_")))))(input)
+	recognize(many1_count(alt((alphanumeric1, tag("_"))))).parse(input)
 }
 
 //parses moles in floating point form
@@ -23,7 +24,8 @@ pub(crate) fn parse_gas_string(input: &str) -> IResult<&str, Vec<(&str, f32)>> {
 	separated_list0(
 		tag(";"),
 		separated_pair(parse_gas_id, tag("="), parse_moles),
-	)(input)
+	)
+	.parse(input)
 }
 
 #[test]

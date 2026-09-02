@@ -160,18 +160,18 @@ impl Reaction {
 	/// Checks if the given gas mixture can react with this reaction.
 	pub fn check_conditions(&self, mix: &Mixture) -> bool {
 		self.min_temp_req
-			.map_or(true, |temp_req| mix.get_temperature() >= temp_req)
+			.is_none_or(|temp_req| mix.get_temperature() >= temp_req)
 			&& self
 				.max_temp_req
-				.map_or(true, |temp_req| mix.get_temperature() <= temp_req)
+				.is_none_or(|temp_req| mix.get_temperature() <= temp_req)
 			&& self
 				.min_gas_reqs
 				.iter()
 				.all(|&(k, v)| mix.get_moles(k) >= v)
 			&& self
 				.min_ener_req
-				.map_or(true, |ener_req| mix.thermal_energy() >= ener_req)
-			&& self.min_fire_req.map_or(true, |fire_req| {
+				.is_none_or(|ener_req| mix.thermal_energy() >= ener_req)
+			&& self.min_fire_req.is_none_or(|fire_req| {
 				let (oxi, fuel) = mix.get_burnability();
 				oxi.min(fuel) >= fire_req
 			})

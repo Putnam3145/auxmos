@@ -6,11 +6,11 @@ pub mod turfs;
 
 use byondapi::prelude::*;
 use eyre::Result;
-use gas::constants::{ReactionReturn, GAS_MIN_MOLES, MINIMUM_MOLES_DELTA_TO_MOVE};
+use gas::constants::{GAS_MIN_MOLES, MINIMUM_MOLES_DELTA_TO_MOVE, ReactionReturn};
 use gas::{
-	amt_gases, constants, gas_idx_from_string, gas_idx_from_value, gas_idx_to_id, tot_gases, types,
-	with_gas_info, with_mix, with_mix_mut, with_mixes, with_mixes_custom, with_mixes_mut, GasArena,
-	Mixture,
+	GasArena, Mixture, amt_gases, constants, gas_idx_from_string, gas_idx_from_value,
+	gas_idx_to_id, tot_gases, types, with_gas_info, with_mix, with_mix_mut, with_mixes,
+	with_mixes_custom, with_mixes_mut,
 };
 use reaction::react_by_id;
 
@@ -280,7 +280,7 @@ fn adjust_moles_temp_hook(
 /// Args: (gas_id_1, amount_1, gas_id_2, amount_2, ...). As adjust_moles, but with variadic arguments.
 #[byondapi::bind_raw_args("/datum/gas_mixture/proc/adjust_multi")]
 fn adjust_multi_hook() -> Result<ByondValue> {
-	if args.len() % 2 == 0 {
+	if args.len().is_multiple_of(2) {
 		Err(eyre::eyre!(
 			"Incorrect arg len for adjust_multi (is even, must be odd to account for src)."
 		))

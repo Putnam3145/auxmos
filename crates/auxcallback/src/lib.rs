@@ -70,7 +70,6 @@ pub fn process_callbacks_for_millis(millis: u64) -> bool {
 ///     auxcallback::callback_processing_hook(remaining)
 /// }
 /// ```
-
 pub fn callback_processing_hook(time_remaining: ByondValue) -> Result<ByondValue> {
 	if time_remaining.is_num() {
 		let limit = time_remaining.get_number().unwrap() as u64;

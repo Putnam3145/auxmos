@@ -1,5 +1,5 @@
 use super::*;
-use crate::{react_hook, GasArena};
+use crate::{GasArena, react_hook};
 use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
 use byondapi::{byond_string, prelude::*};
 use coarsetime::{Duration, Instant};
@@ -146,7 +146,7 @@ fn should_process(
 		&& all_mixtures
 			.get(mixture.mix)
 			.and_then(RwLock::try_read)
-			.map_or(false, |gas| {
+			.is_some_and(|gas| {
 				for entry in arena.adjacent_mixes(index, all_mixtures) {
 					if let Some(mix) = entry.try_read() {
 						if gas.temperature_compare(&mix)
@@ -191,14 +191,10 @@ fn process_cell(
 	for (&loc, entry) in
 		arena.adjacent_mixes_with_adj_ids(index, all_mixtures, petgraph::Direction::Incoming)
 	{
-		match entry.try_read() {
-			Some(mix) => {
-				end_gas.merge(&mix);
-				adj_amount += 1;
-				pressure_diffs.push((loc, -mix.return_pressure() * GAS_DIFFUSION_CONSTANT));
-			}
-			None => return None, // this would lead to inconsistencies--no bueno
-		}
+		let mix = entry.try_read()?;
+		end_gas.merge(&mix);
+		adj_amount += 1;
+		pressure_diffs.push((loc, -mix.return_pressure() * GAS_DIFFUSION_CONSTANT));
 	}
 	/*
 		This method of simulating diffusion

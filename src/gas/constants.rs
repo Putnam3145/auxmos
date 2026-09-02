@@ -37,7 +37,6 @@ pub const BREATH_VOLUME: f32 = 0.5;
 pub const BREATH_PERCENTAGE: f32 = BREATH_VOLUME / CELL_VOLUME;
 
 /// EXCITED GROUPS
-
 /// number of FULL air controller ticks before an excited group breaks down (averages gas contents across turfs)
 pub const EXCITED_GROUP_BREAKDOWN_CYCLES: i32 = 4;
 /// number of FULL air controller ticks before an excited group dismantles and removes its turfs from active
@@ -67,11 +66,8 @@ pub const GAS_DIFFUSION_CONSTANT: f32 = 0.125;
 pub const GAS_LOSS_CONSTANT: f32 = 1.0 / GAS_DIFFUSION_CONSTANT;
 
 /// HEAT TRANSFER COEFFICIENTS
-
 /// Must be between 0 and 1. Values closer to 1 equalize temperature faster
-
 /// Should not exceed 0.4 else the algorithm will diverge
-
 pub const WALL_HEAT_TRANSFER_COEFFICIENT: f32 = 0.0;
 pub const OPEN_HEAT_TRANSFER_COEFFICIENT: f32 = 0.4;
 /// a hack for now
@@ -89,7 +85,6 @@ pub const RADIATION_FROM_SPACE: f64 =
 	STEFAN_BOLTZMANN_CONSTANT * SPACE_TEMP * SPACE_TEMP * SPACE_TEMP * SPACE_TEMP; // watts/meter^2
 
 /// FIRE
-
 pub const FIRE_MINIMUM_TEMPERATURE_TO_SPREAD: f32 = 150.0 + T0C;
 pub const FIRE_MINIMUM_TEMPERATURE_TO_EXIST: f32 = 100.0 + T0C;
 pub const FIRE_SPREAD_RADIOSITY_SCALE: f32 = 0.85;
@@ -101,7 +96,6 @@ pub const PLASMA_OXYGEN_FULLBURN: f32 = 10.0;
 pub const FIRE_MAXIMUM_BURN_RATE: f32 = 0.2;
 
 /// GASES
-
 pub const MIN_TOXIC_GAS_DAMAGE: i32 = 1;
 pub const MAX_TOXIC_GAS_DAMAGE: i32 = 10;
 /// Moles in a standard cell after which gases are visible
@@ -113,7 +107,6 @@ pub const FACTOR_GAS_VISIBLE_MAX: f32 = 20.0;
 pub const MOLES_GAS_VISIBLE_STEP: f32 = 0.25;
 
 /// REACTIONS
-
 // Maximum amount of ReactionIdentifiers in the TinyVec that all_reactions returns.
 // We can't guarantee the max number of reactions that will ever be registered,
 // so this is here to prevent that from getting out of control.

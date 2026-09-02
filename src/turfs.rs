@@ -11,13 +11,13 @@ pub mod katmos;
 #[cfg(feature = "superconductivity")]
 mod superconduct;
 
-use crate::{constants::*, gas::Mixture, GasArena};
+use crate::{GasArena, constants::*, gas::Mixture};
 use bitflags::bitflags;
 use byondapi::prelude::*;
 use eyre::{Context, Result};
 use indexmap::IndexMap;
-use parking_lot::{const_rwlock, RwLock, RwLockUpgradableReadGuard};
-use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef, Direction};
+use parking_lot::{RwLock, RwLockUpgradableReadGuard, const_rwlock};
+use petgraph::{Direction, graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef};
 use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
 use std::hash::{Hash, Hasher};
@@ -293,7 +293,7 @@ impl TurfGases {
 		self.graph.neighbors(index).filter(|&adj_index| {
 			self.graph
 				.node_weight(adj_index)
-				.map_or(false, |mix| mix.enabled())
+				.is_some_and(|mix| mix.enabled())
 		})
 	}
 
@@ -420,13 +420,13 @@ where
 fn hook_register_turf(src: ByondValue, flag: ByondValue) -> Result<ByondValue> {
 	let id = src.get_ref()?;
 	let flag = flag.get_number()? as i32;
-	if let Ok(blocks) = src.read_number_id(byond_string!("blocks_air")) {
-		if blocks > 0.0 {
-			with_turf_gases_write(|arena| arena.remove_turf(id));
-			#[cfg(feature = "superconductivity")]
-			superconduct::supercond_update_ref(src)?;
-			return Ok(ByondValue::null());
-		}
+	if let Ok(blocks) = src.read_number_id(byond_string!("blocks_air"))
+		&& blocks > 0.0
+	{
+		with_turf_gases_write(|arena| arena.remove_turf(id));
+		#[cfg(feature = "superconductivity")]
+		superconduct::supercond_update_ref(src)?;
+		return Ok(ByondValue::null());
 	}
 	if flag >= 0 {
 		let mut to_insert: TurfMixture = TurfMixture::default();
@@ -435,37 +435,35 @@ fn hook_register_turf(src: ByondValue, flag: ByondValue) -> Result<ByondValue> {
 		to_insert.flags = SimulationFlags::from_bits_truncate(flag as u8);
 		to_insert.id = id;
 
-		if let Ok(is_planet) = src.read_number_id(byond_string!("planetary_atmos")) {
-			if is_planet != 0.0 {
-				if let Ok(at_str) = src.read_string_id(byond_string!("initial_gas_mix")) {
-					with_planetary_atmos_upgradeable_read(|lock| {
-						to_insert.planetary_atmos = Some({
-							let mut state = rustc_hash::FxHasher::default();
-							at_str.hash(&mut state);
-							state.finish() as u32
-						});
-						if lock
-							.as_ref()
-							.unwrap()
-							.contains_key(&to_insert.planetary_atmos.unwrap())
-						{
-							return;
-						}
-
-						let mut write =
-							parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(lock);
-
-						write
-							.as_mut()
-							.unwrap()
-							.insert(to_insert.planetary_atmos.unwrap(), {
-								let mut gas = to_insert.get_gas_copy();
-								gas.mark_immutable();
-								gas
-							});
-					});
+		if let Ok(is_planet) = src.read_number_id(byond_string!("planetary_atmos"))
+			&& is_planet != 0.0
+			&& let Ok(at_str) = src.read_string_id(byond_string!("initial_gas_mix"))
+		{
+			with_planetary_atmos_upgradeable_read(|lock| {
+				to_insert.planetary_atmos = Some({
+					let mut state = rustc_hash::FxHasher::default();
+					at_str.hash(&mut state);
+					state.finish() as u32
+				});
+				if lock
+					.as_ref()
+					.unwrap()
+					.contains_key(&to_insert.planetary_atmos.unwrap())
+				{
+					return;
 				}
-			}
+
+				let mut write = parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(lock);
+
+				write
+					.as_mut()
+					.unwrap()
+					.insert(to_insert.planetary_atmos.unwrap(), {
+						let mut gas = to_insert.get_gas_copy();
+						gas.mark_immutable();
+						gas
+					});
+			});
 		}
 		with_turf_gases_write(|arena| arena.insert_turf(to_insert));
 	} else {

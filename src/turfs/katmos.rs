@@ -16,7 +16,7 @@ use std::{
 
 use hashbrown::{HashMap, HashSet};
 
-use parking_lot::{const_mutex, Mutex};
+use parking_lot::{Mutex, const_mutex};
 
 use eyre::{Context, Result};
 
@@ -194,23 +194,23 @@ fn give_to_takers(
 				if giver_info.mole_delta <= 0.0 {
 					break;
 				}
-				if let Some(adj_info) = info.get_mut(&adj_idx) {
-					if queue.insert(adj_idx) {
-						adj_info.curr_transfer_dir = Some(cur_index);
-						adj_info.curr_transfer_amount = 0.0;
-						if adj_info.mole_delta < 0.0 {
-							// this turf needs gas. Let's give it to 'em.
-							if -adj_info.mole_delta > giver_info.mole_delta {
-								// we don't have enough gas
-								adj_info.curr_transfer_amount -= giver_info.mole_delta;
-								adj_info.mole_delta += giver_info.mole_delta;
-								giver_info.mole_delta = 0.0;
-							} else {
-								// we have enough gas.
-								adj_info.curr_transfer_amount += adj_info.mole_delta;
-								giver_info.mole_delta += adj_info.mole_delta;
-								adj_info.mole_delta = 0.0;
-							}
+				if let Some(adj_info) = info.get_mut(&adj_idx)
+					&& queue.insert(adj_idx)
+				{
+					adj_info.curr_transfer_dir = Some(cur_index);
+					adj_info.curr_transfer_amount = 0.0;
+					if adj_info.mole_delta < 0.0 {
+						// this turf needs gas. Let's give it to 'em.
+						if -adj_info.mole_delta > giver_info.mole_delta {
+							// we don't have enough gas
+							adj_info.curr_transfer_amount -= giver_info.mole_delta;
+							adj_info.mole_delta += giver_info.mole_delta;
+							giver_info.mole_delta = 0.0;
+						} else {
+							// we have enough gas.
+							adj_info.curr_transfer_amount += adj_info.mole_delta;
+							giver_info.mole_delta += adj_info.mole_delta;
+							adj_info.mole_delta = 0.0;
 						}
 					}
 				}
@@ -224,17 +224,18 @@ fn give_to_takers(
 			let Some(&(mut turf_info)) = info.get(&cur_index) else {
 				continue;
 			};
-			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir.is_some() {
-				if let Some(adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap()) {
-					adjust_eq_movement(
-						cur_index,
-						turf_info.curr_transfer_dir.unwrap(),
-						turf_info.curr_transfer_amount,
-						eq_movement_graph,
-					);
-					adj_info.curr_transfer_amount += turf_info.curr_transfer_amount;
-					turf_info.curr_transfer_amount = 0.0;
-				}
+			if turf_info.curr_transfer_amount != 0.0
+				&& let Some(curr_dir) = turf_info.curr_transfer_dir
+				&& let Some(adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap())
+			{
+				adjust_eq_movement(
+					cur_index,
+					curr_dir,
+					turf_info.curr_transfer_amount,
+					eq_movement_graph,
+				);
+				adj_info.curr_transfer_amount += turf_info.curr_transfer_amount;
+				turf_info.curr_transfer_amount = 0.0;
 			}
 			info.entry(cur_index)
 				.and_modify(|cur_info| *cur_info = turf_info);
@@ -265,23 +266,23 @@ fn take_from_givers(
 				if taker_info.mole_delta >= 0.0 {
 					break;
 				}
-				if let Some(adj_info) = info.get_mut(&adj_index) {
-					if queue.insert(adj_index) {
-						adj_info.curr_transfer_dir = Some(cur_index);
-						adj_info.curr_transfer_amount = 0.0;
-						if adj_info.mole_delta > 0.0 {
-							// this turf has gas we can succ. Time to succ.
-							if adj_info.mole_delta > -taker_info.mole_delta {
-								// they have enough gase
-								adj_info.curr_transfer_amount -= taker_info.mole_delta;
-								adj_info.mole_delta += taker_info.mole_delta;
-								taker_info.mole_delta = 0.0;
-							} else {
-								// they don't have neough gas
-								adj_info.curr_transfer_amount += adj_info.mole_delta;
-								taker_info.mole_delta += adj_info.mole_delta;
-								adj_info.mole_delta = 0.0;
-							}
+				if let Some(adj_info) = info.get_mut(&adj_index)
+					&& queue.insert(adj_index)
+				{
+					adj_info.curr_transfer_dir = Some(cur_index);
+					adj_info.curr_transfer_amount = 0.0;
+					if adj_info.mole_delta > 0.0 {
+						// this turf has gas we can succ. Time to succ.
+						if adj_info.mole_delta > -taker_info.mole_delta {
+							// they have enough gase
+							adj_info.curr_transfer_amount -= taker_info.mole_delta;
+							adj_info.mole_delta += taker_info.mole_delta;
+							taker_info.mole_delta = 0.0;
+						} else {
+							// they don't have neough gas
+							adj_info.curr_transfer_amount += adj_info.mole_delta;
+							taker_info.mole_delta += adj_info.mole_delta;
+							adj_info.mole_delta = 0.0;
 						}
 					}
 				}
@@ -293,17 +294,18 @@ fn take_from_givers(
 			let Some(&(mut turf_info)) = info.get(&cur_index) else {
 				continue;
 			};
-			if turf_info.curr_transfer_amount != 0.0 && turf_info.curr_transfer_dir.is_some() {
-				if let Some(adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap()) {
-					adjust_eq_movement(
-						cur_index,
-						turf_info.curr_transfer_dir.unwrap(),
-						turf_info.curr_transfer_amount,
-						eq_movement_graph,
-					);
-					adj_info.curr_transfer_amount += turf_info.curr_transfer_amount;
-					turf_info.curr_transfer_amount = 0.0;
-				}
+			if turf_info.curr_transfer_amount != 0.0
+				&& let Some(curr_dir) = turf_info.curr_transfer_dir
+				&& let Some(adj_info) = info.get_mut(&turf_info.curr_transfer_dir.unwrap())
+			{
+				adjust_eq_movement(
+					cur_index,
+					curr_dir,
+					turf_info.curr_transfer_amount,
+					eq_movement_graph,
+				);
+				adj_info.curr_transfer_amount += turf_info.curr_transfer_amount;
+				turf_info.curr_transfer_amount = 0.0;
 			}
 			info.entry(cur_index)
 				.and_modify(|cur_info| *cur_info = turf_info);
@@ -404,22 +406,22 @@ fn explosively_depressurize(initial_index: TurfID, equalize_hard_turf_limit: usi
 				}
 
 				for adj_index in arena.adjacent_node_ids(cur_index) {
-					if let Some(adj_mixture) = arena.get(adj_index) {
-						if !adj_mixture.is_immutable() && progression_order.insert(adj_index) {
-							let adj_orig = info.entry(adj_index).or_default();
-							let mut adj_info = adj_orig.get();
+					if let Some(adj_mixture) = arena.get(adj_index)
+						&& !adj_mixture.is_immutable()
+						&& progression_order.insert(adj_index)
+					{
+						let adj_orig = info.entry(adj_index).or_default();
+						let mut adj_info = adj_orig.get();
 
-							adj_info.curr_transfer_dir = Some(cur_index);
+						adj_info.curr_transfer_dir = Some(cur_index);
 
-							let cur_target_turf =
-								ByondValue::new_ref(ValueType::Turf, cur_mixture.id)
-									.read_var_id(byond_string!("pressure_specific_target"))?;
-							ByondValue::new_ref(ValueType::Turf, adj_mixture.id).write_var_id(
-								byond_string!("pressure_specific_target"),
-								&cur_target_turf,
-							)?;
-							adj_orig.set(adj_info);
-						}
+						let cur_target_turf = ByondValue::new_ref(ValueType::Turf, cur_mixture.id)
+							.read_var_id(byond_string!("pressure_specific_target"))?;
+						ByondValue::new_ref(ValueType::Turf, adj_mixture.id).write_var_id(
+							byond_string!("pressure_specific_target"),
+							&cur_target_turf,
+						)?;
+						adj_orig.set(adj_info);
 					}
 				}
 			}

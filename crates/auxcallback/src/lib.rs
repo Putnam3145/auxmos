@@ -1,7 +1,6 @@
 use byondapi::prelude::*;
 use coarsetime::{Duration, Instant};
 use eyre::Result;
-use std::convert::TryInto;
 
 type DeferredFunc = Box<dyn FnOnce() -> Result<()> + Send + Sync>;
 type CallbackChannel = (flume::Sender<DeferredFunc>, flume::Receiver<DeferredFunc>);
@@ -34,12 +33,7 @@ fn process_callbacks() {
 			.try_iter()
 			.filter_map(|cb| cb().err())
 			.for_each(|e| {
-				let error_string = format!("{e:?}").try_into().unwrap();
-				byondapi::global_call::call_global_id(
-					byond_string!("byondapi_stack_trace"),
-					&[error_string],
-				)
-				.unwrap();
+				byondapi::runtime::byond_runtime(format!("{e:?}"));
 			})
 	})
 }
@@ -50,12 +44,7 @@ fn process_callbacks_for(duration: Duration) -> bool {
 	with_callback_receiver(|receiver| {
 		for callback in receiver.try_iter() {
 			if let Err(e) = callback() {
-				let error_string = format!("{e:?}").try_into().unwrap();
-				byondapi::global_call::call_global_id(
-					byond_string!("byondapi_stack_trace"),
-					&[error_string],
-				)
-				.unwrap();
+				byondapi::runtime::byond_runtime(format!("{e:?}"));
 			}
 			if timer.elapsed() >= duration {
 				return true;

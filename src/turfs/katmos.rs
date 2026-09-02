@@ -529,6 +529,11 @@ fn flood_fill_zones(
 	found_turfs.insert(index_turf);
 	let mut ignore_zone = false;
 	while let Some(cur_index) = border_turfs.pop_front() {
+		//we are already overtime, bail NOW
+		if start_time.elapsed() >= remaining_time {
+			return FloodFillResult::Overtime;
+		}
+
 		let cur_turf = arena.get(cur_index).unwrap();
 		let cur_turf_id = cur_turf.id;
 		//hard cap for planet atmos because very large open space
@@ -539,11 +544,6 @@ fn flood_fill_zones(
 			break;
 		}
 		total_moles += cur_turf.total_moles();
-
-		//we are already overtime, bail NOW
-		if start_time.elapsed() >= remaining_time {
-			return FloodFillResult::Overtime;
-		}
 
 		for (weight, adj_index, adj_mixture) in arena
 			.graph

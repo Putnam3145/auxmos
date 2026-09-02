@@ -2,7 +2,7 @@
 members = ["crates/*"]
 
 [workspace.dependencies]
-byondapi = "0.4.11"
+byondapi = "0.5.11"
 coarsetime = "0.1.35"
 flume = "0.11.1"
 eyre = "0.6.12"

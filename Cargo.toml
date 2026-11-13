@@ -62,7 +62,7 @@ tracing-subscriber = { version = "0.3.23", optional = true }
 
 [dependencies.tinyvec]
 version = "1.12.0"
-features = ["rustc_1_61", "alloc"]
+features = ["latest_stable_rust", "alloc"]
 
 [profile.release]
 lto = 'fat'

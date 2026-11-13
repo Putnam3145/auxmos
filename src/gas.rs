@@ -6,7 +6,7 @@ pub mod types;
 use byondapi::prelude::*;
 use eyre::Result;
 pub use mixture::Mixture;
-use parking_lot::{const_rwlock, RwLock};
+use parking_lot::RwLock;
 pub use types::*;
 
 pub type GasIDX = usize;
@@ -21,9 +21,9 @@ pub struct GasArena {}
 	of course, it has a RwLock preventing this, and you can't access the
 	vector directly. Seriously, please don't. I have the wrapper functions for a reason.
 */
-static GAS_MIXTURES: RwLock<Option<Vec<RwLock<Mixture>>>> = const_rwlock(None);
+static GAS_MIXTURES: RwLock<Option<Vec<RwLock<Mixture>>>> = RwLock::new(None);
 
-static NEXT_GAS_IDS: RwLock<Option<Vec<usize>>> = const_rwlock(None);
+static NEXT_GAS_IDS: RwLock<Option<Vec<usize>>> = RwLock::new(None);
 
 #[byondapi::init]
 pub fn initialize_gases() {

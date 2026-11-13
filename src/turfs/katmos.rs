@@ -16,11 +16,11 @@ use std::{
 
 use hashbrown::{HashMap, HashSet};
 
-use parking_lot::{Mutex, const_mutex};
+use parking_lot::Mutex;
 
 use eyre::{Context, Result};
 
-static EQUALIZE_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = const_mutex(None);
+static EQUALIZE_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = Mutex::new(None);
 
 pub fn flush_equalize_channel() {
 	*EQUALIZE_CHANNEL.lock() = None;

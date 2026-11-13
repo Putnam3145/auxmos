@@ -5,7 +5,7 @@ use byondapi::prelude::*;
 use dashmap::DashMap;
 use eyre::{Context, Result};
 use hashbrown::HashMap;
-use parking_lot::{const_rwlock, RwLock};
+use parking_lot::RwLock;
 use rustc_hash::FxBuildHasher;
 use std::{
 	cell::RefCell,
@@ -14,7 +14,7 @@ use std::{
 };
 
 static TOTAL_NUM_GASES: AtomicUsize = AtomicUsize::new(0);
-static REACTION_INFO: RwLock<Option<BTreeMap<ReactionPriority, Reaction>>> = const_rwlock(None);
+static REACTION_INFO: RwLock<Option<BTreeMap<ReactionPriority, Reaction>>> = RwLock::new(None);
 
 /// The temperature at which this gas can oxidize and how much fuel it can oxidize when it can.
 #[derive(Clone, Copy)]
@@ -208,11 +208,11 @@ impl GasType {
 }
 
 static GAS_INFO_BY_STRING: RwLock<Option<DashMap<Box<str>, GasType, FxBuildHasher>>> =
-	const_rwlock(None);
+	RwLock::new(None);
 
-static GAS_INFO_BY_IDX: RwLock<Option<Vec<GasType>>> = const_rwlock(None);
+static GAS_INFO_BY_IDX: RwLock<Option<Vec<GasType>>> = RwLock::new(None);
 
-static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = const_rwlock(None);
+static GAS_SPECIFIC_HEATS: RwLock<Option<Vec<f32>>> = RwLock::new(None);
 
 #[byondapi::init]
 pub fn initialize_gas_info_structs() {

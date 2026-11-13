@@ -16,7 +16,7 @@ use bitflags::bitflags;
 use byondapi::prelude::*;
 use eyre::{Context, Result};
 use indexmap::IndexMap;
-use parking_lot::{RwLock, RwLockUpgradableReadGuard, const_rwlock};
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use petgraph::{Direction, graph::NodeIndex, stable_graph::StableDiGraph, visit::EdgeRef};
 use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
@@ -354,13 +354,13 @@ impl TurfGases {
 	*/
 }
 
-static TURF_GASES: RwLock<Option<TurfGases>> = const_rwlock(None);
+static TURF_GASES: RwLock<Option<TurfGases>> = RwLock::new(None);
 
 // We store planetary atmos by hash of the initial atmos string here for speed.
-static PLANETARY_ATMOS: RwLock<Option<IndexMap<u32, Mixture, FxBuildHasher>>> = const_rwlock(None);
+static PLANETARY_ATMOS: RwLock<Option<IndexMap<u32, Mixture, FxBuildHasher>>> = RwLock::new(None);
 
 //whether there is any tasks running
-static TASKS: RwLock<()> = const_rwlock(());
+static TASKS: RwLock<()> = RwLock::new(());
 
 pub fn wait_for_tasks() {
 	match TASKS.try_write_for(Duration::from_secs(5)) {

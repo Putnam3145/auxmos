@@ -1,9 +1,9 @@
 use super::*;
 use coarsetime::{Duration, Instant};
-use parking_lot::{const_mutex, Mutex};
+use parking_lot::Mutex;
 use std::collections::{BTreeSet, HashSet, VecDeque};
 
-static GROUPS_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = const_mutex(None);
+static GROUPS_CHANNEL: Mutex<Option<BTreeSet<TurfID>>> = Mutex::new(None);
 
 pub fn flush_groups_channel() {
 	*GROUPS_CHANNEL.lock() = None;

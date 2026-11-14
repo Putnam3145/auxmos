@@ -1,5 +1,5 @@
 use super::*;
-use crate::{GasArena, react_hook};
+use crate::{react_hook, GasArena};
 use auxcallback::{byond_callback_sender, process_callbacks_for_millis};
 use byondapi::{byond_string, prelude::*};
 use coarsetime::{Duration, Instant};
@@ -255,7 +255,7 @@ fn fdm(
 					.map(|&idx| (idx, arena.get(idx).unwrap()))
 					.filter(|(index, mixture)| should_process(*index, mixture, all_mixtures, arena))
 					.filter_map(|(index, _)| process_cell(index, all_mixtures, arena))
-					.collect::<Vec<_>>();
+					.collect_vec_list();
 				/*
 					For the optimization-heads reading this: this is not an unnecessary collect().
 					Saving all this to the turfs_to_save vector is, in fact, the reason
@@ -266,6 +266,7 @@ fn fdm(
 				*/
 				let (low_pressure, high_pressure): (Vec<_>, Vec<_>) = turfs_to_save
 					.into_par_iter()
+					.flatten()
 					.filter_map(|(i, end_gas, mut pressure_diffs, adj_amount)| {
 						let m = arena.get(i).unwrap();
 						all_mixtures.get(m.mix).map(|entry| {
@@ -392,12 +393,11 @@ fn post_process() {
 						mix.enabled().then_some(mix)
 					})
 					.filter_map(|mixture| post_process_cell(mixture, &vis, all_mixtures, reactions))
-					.collect::<Vec<_>>()
+					.collect_vec_list()
 			})
 		});
-		processables
-			.into_par_iter()
-			.for_each(|(tmix, should_update_vis, should_react)| {
+		processables.into_par_iter().flatten().for_each(
+			|(tmix, should_update_vis, should_react)| {
 				let sender = byond_callback_sender();
 				let id = tmix.id;
 
@@ -424,6 +424,7 @@ fn post_process() {
 						Ok(())
 					})));
 				}
-			});
+			},
+		);
 	});
 }

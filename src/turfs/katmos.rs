@@ -847,7 +847,7 @@ fn equalize(
 					Some(&turfs_processed),
 				)
 			})
-			.collect::<Vec<_>>();
+			.collect_vec_list();
 
 		if start_time.elapsed() >= remaining_time {
 			return true;
@@ -855,13 +855,15 @@ fn equalize(
 
 		let final_pressures = turfs
 			.into_par_iter()
+			.flatten()
 			.filter_map(|graph| finalize_eq_zone(arena, graph))
-			.collect::<Vec<_>>();
+			.collect_vec_list();
 
 		let sender = byond_callback_sender();
 
 		final_pressures
 			.into_iter()
+			.flatten()
 			.for_each(|final_pressures| send_pressure_differences(final_pressures, &sender));
 		false
 	});
